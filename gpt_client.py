@@ -95,11 +95,11 @@ class GPTClient:
     def _request_json(self, instructions: str, payload: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
         self.logger.info("Calling OpenAI Responses API for %s", schema["name"])
         response = self.client.responses.create(
-            model="gpt-4.1",
+            model="gpt-5.4",
+            reasoning={"effort": "medium"},
             instructions=instructions,
             input=to_json(payload),
             tools=[{"type": "web_search"}],
-            include=["web_search_call.action.sources"],
             text={
                 "format": {
                     "type": "json_schema",
@@ -110,18 +110,6 @@ class GPTClient:
             },
         )
         result = json.loads(response.output_text)
-        sources: list[str] = []
-        for item in getattr(response, "output", []) or []:
-            if getattr(item, "type", "") != "web_search_call":
-                continue
-            action = getattr(item, "action", None)
-            for source in getattr(action, "sources", []) or []:
-                url = getattr(source, "url", None)
-                if url:
-                    sources.append(url)
-        if "web_search_sources" in result:
-            result["web_search_sources"] = result.get("web_search_sources") or sources
-        self.logger.info("GPT web search sources: %s", result.get("web_search_sources", sources))
         return result
 
     def build_symbol_payload(
