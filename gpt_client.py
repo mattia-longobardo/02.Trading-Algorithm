@@ -23,7 +23,6 @@ NEW_SIGNAL_SCHEMA = {
             "trailing_stop_distance": {"type": ["number", "null"]},
             "confidence": {"type": ["number", "null"]},
             "reasoning": {"type": "string"},
-            "web_search_sources": {"type": "array", "items": {"type": "string"}},
         },
         "required": [
             "action",
@@ -34,7 +33,6 @@ NEW_SIGNAL_SCHEMA = {
             "trailing_stop_distance",
             "confidence",
             "reasoning",
-            "web_search_sources",
         ],
         "additionalProperties": False,
     },
@@ -52,7 +50,6 @@ MANAGE_SIGNAL_SCHEMA = {
             "new_trailing_stop_distance": {"type": ["number", "null"]},
             "close_immediately": {"type": "boolean"},
             "reasoning": {"type": "string"},
-            "web_search_sources": {"type": "array", "items": {"type": "string"}},
         },
         "required": [
             "action",
@@ -62,7 +59,6 @@ MANAGE_SIGNAL_SCHEMA = {
             "new_trailing_stop_distance",
             "close_immediately",
             "reasoning",
-            "web_search_sources",
         ],
         "additionalProperties": False,
     },
@@ -141,7 +137,7 @@ class GPTClient:
     ) -> dict[str, Any]:
         instructions = (
             "You are a disciplined trading analyst. You must perform web search before deciding. "
-            "Use only LONG spot trading, never short, never ETF. Compute technical indicators yourself from OHLCV. "
+            "Use only LONG spot trading, never short. Compute technical indicators yourself from OHLCV. "
             f"For both stocks and crypto, use {self.config.currency} as the reference currency. "
             f"For crypto, only consider symbols quoted in {self.config.currency}. "
             "Return only JSON matching the schema. If risk/reward is unattractive, choose SKIP. "
@@ -177,21 +173,32 @@ class GPTClient:
             "Avoid warrants, rights, units, preferred shares, shell companies, and other non-common-stock instruments. "
             "Use the provided Alpaca candidate lists as the only allowed universe. "
             "Base the selection on tradability, liquidity proxies, business relevance, current news flow, and sentiment analysis from web search. "
+            "Prioritize symbols with strong growth potential, driven by fundamental or technical catalysts, while ensuring relative safety by avoiding highly speculative or penny stocks. "
+            "For stocks, prefer companies with solid earnings, revenue growth, and sector leadership. "
+            "For crypto, prefer established assets with solid market capitalization and active ecosystem participation. "
+            "Focus on positive momentum, strong fundamentals, and low downside risk in all selections. "
+            # ------------------------------------------------
             f"Use {self.config.currency} as the reference currency. "
             f"For crypto, return only symbols quoted in {self.config.currency}. "
             f"Crypto symbols must be returned in Alpaca pair format like BTC/{self.config.currency}, never bare tickers like BTC. "
             "Return only JSON matching the schema."
         )
+
         payload = {
             "stock_candidates": stock_candidates,
             "crypto_candidates": crypto_candidates,
             "selection_rules": {
                 "stocks_required": self.config.weekly_universe_stocks,
                 "crypto_required": self.config.weekly_universe_crypto,
-                "exclude_etf": True,
                 "currency": self.config.currency,
-                "must_choose_only_from_candidates": True,
-                "prefer_large_cap_and_high_attention": True,
+                "criteria": {
+                    "growth_potential": "fundamental or technical catalysts",
+                    "safety": "avoid highly speculative or penny stocks",
+                    "stocks_preference": "solid earnings, revenue growth, sector leadership",
+                    "crypto_preference": "established assets with solid market cap and ecosystem activity",
+                    "momentum_focus": "positive momentum, strong fundamentals, low downside risk"
+                }
             },
         }
+        
         return self._request_json(instructions, payload, UNIVERSE_SCHEMA)
