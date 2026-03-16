@@ -32,6 +32,7 @@ class AppConfig:
     currency: str = "EUR"
     log_level: str = "INFO"
     log_file: str = "logs/trading_bot.log"
+    universe_log_file: str = "logs/universe_candidates.log"
     db_market_data: str = "data/market_data.sqlite"
     db_trades: str = "data/trades.sqlite"
     lock_file: str = "run/trading_scheduler.lock"
@@ -63,11 +64,13 @@ def load_config() -> AppConfig:
         currency=os.getenv("CURRENCY", "EUR").upper(),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         log_file=os.getenv("LOG_FILE", "logs/trading_bot.log"),
+        universe_log_file=os.getenv("UNIVERSE_LOG_FILE", "logs/universe_candidates.log"),
         db_market_data=os.getenv("DB_MARKET_DATA", "data/market_data.sqlite"),
         db_trades=os.getenv("DB_TRADES", "data/trades.sqlite"),
         lock_file=os.getenv("LOCK_FILE", "run/trading_scheduler.lock"),
     )
     ensure_parent_dir(config.log_file)
+    ensure_parent_dir(config.universe_log_file)
     ensure_parent_dir(config.db_market_data)
     ensure_parent_dir(config.db_trades)
     ensure_parent_dir(config.lock_file)
