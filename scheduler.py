@@ -34,6 +34,30 @@ class TradingScheduler:
         self.scheduler = BlockingScheduler(timezone="UTC")
         self.lock = FileLock(config.lock_file, timeout=1)
 
+    @staticmethod
+    def _universe_is_empty(universe: dict[str, list[str]]) -> bool:
+        return not universe.get("STOCK") and not universe.get("CRYPTO")
+
+    def _missing_market_data(self, universe: dict[str, list[str]]) -> bool:
+        monitored = self.trade_manager.symbols_to_monitor(universe)
+        if not monitored:
+            return True
+        known_symbols = set(self.trade_manager.data_manager.get_known_symbols())
+        return any(symbol not in known_symbols for symbol in monitored)
+
+    def bootstrap_initial_run_if_needed(self) -> None:
+        universe = self.universe_manager.get_current_universe()
+        missing_universe = self._universe_is_empty(universe)
+
+        if missing_universe:
+            self.logger.info("Universe assente o vuoto: eseguo una bootstrap run prima dello scheduler")
+            universe = self.universe_manager.select_weekly_universe()
+
+        if self._missing_market_data(universe):
+            self.logger.info("Storico mancante per il bootstrap iniziale: eseguo il primo ciclo schedulato una volta")
+            self.job_download_market_data()
+            self.job_sync_and_analyze()
+
     def guarded(self, job_name: str, func: Callable[[], None]) -> Callable[[], None]:
         def wrapped() -> None:
             try:
@@ -103,6 +127,7 @@ class TradingScheduler:
         )
 
     def start(self) -> None:
+        self.bootstrap_initial_run_if_needed()
         self.register_jobs()
         self.logger.info("Scheduler started with UTC cron triggers")
         self.scheduler.start()

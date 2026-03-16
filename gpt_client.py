@@ -136,7 +136,12 @@ class GPTClient:
             "category": category,
             "ohlcv_daily": trim_ohlcv_payload(candles),
             "existing_trades": existing_trades,
-            "constraints": {"direction": "LONG", "web_search_required": True, "no_etf": True},
+            "constraints": {
+                "direction": "LONG",
+                "web_search_required": True,
+                "no_etf": True,
+                "currency": self.config.currency,
+            },
         }
 
     def request_new_signal(
@@ -149,7 +154,10 @@ class GPTClient:
         instructions = (
             "You are a disciplined trading analyst. You must perform web search before deciding. "
             "Use only LONG spot trading, never short, never ETF. Compute technical indicators yourself from OHLCV. "
-            "Return only JSON matching the schema. If risk/reward is unattractive, choose SKIP."
+            f"For both stocks and crypto, use {self.config.currency} as the reference currency. "
+            f"For crypto, only consider symbols quoted in {self.config.currency}. "
+            "Return only JSON matching the schema. If risk/reward is unattractive, choose SKIP. "
+            "If you choose OPEN, entry_price, take_profit, stop_loss, and trailing_stop_distance must all be non-null positive numbers."
         )
         payload = self.build_symbol_payload(symbol, category, candles, existing_trades)
         return self._request_json(instructions, payload, NEW_SIGNAL_SCHEMA)
@@ -163,20 +171,39 @@ class GPTClient:
     ) -> dict[str, Any]:
         instructions = (
             "You are managing an existing long trade or pending order. You must perform web search before deciding. "
+            f"For both stocks and crypto, use {self.config.currency} as the reference currency. "
+            f"For crypto, keep all reasoning aligned with symbols quoted in {self.config.currency}. "
             "You may HOLD, UPDATE, CLOSE, or CANCEL. Do not propose a new entry. Return only JSON matching the schema."
         )
         payload = self.build_symbol_payload(symbol, category, candles, existing_trades)
         return self._request_json(instructions, payload, MANAGE_SIGNAL_SCHEMA)
 
-    def request_weekly_universe(self, stock_candidates: list[str], crypto_candidates: list[str]) -> dict[str, Any]:
+    def request_weekly_universe(
+        self,
+        stock_candidates: list[dict[str, Any]],
+        crypto_candidates: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         instructions = (
-            "Select exactly 10 stock symbols and 10 crypto symbols for the coming week. "
+            f"Select exactly {self.config.weekly_universe_stocks} stock symbols and {self.config.weekly_universe_crypto} crypto symbols for the coming week. "
             "Do mandatory web search before choosing. Exclude ETFs and avoid illiquid names. "
+            "Avoid warrants, rights, units, preferred shares, shell companies, and other non-common-stock instruments. "
+            "Use the provided Alpaca candidate lists as the only allowed universe. "
+            "Base the selection on tradability, liquidity proxies, business relevance, current news flow, and sentiment analysis from web search. "
+            f"Use {self.config.currency} as the reference currency. "
+            f"For crypto, return only symbols quoted in {self.config.currency}. "
+            f"Crypto symbols must be returned in Alpaca pair format like BTC/{self.config.currency}, never bare tickers like BTC. "
             "Return only JSON matching the schema."
         )
         payload = {
-            "stock_candidates": stock_candidates[:200],
-            "crypto_candidates": crypto_candidates[:100],
-            "selection_rules": {"stocks_required": 10, "crypto_required": 10, "exclude_etf": True},
+            "stock_candidates": stock_candidates,
+            "crypto_candidates": crypto_candidates,
+            "selection_rules": {
+                "stocks_required": self.config.weekly_universe_stocks,
+                "crypto_required": self.config.weekly_universe_crypto,
+                "exclude_etf": True,
+                "currency": self.config.currency,
+                "must_choose_only_from_candidates": True,
+                "prefer_large_cap_and_high_attention": True,
+            },
         }
         return self._request_json(instructions, payload, UNIVERSE_SCHEMA)

@@ -90,6 +90,15 @@ class TradeManager:
             )
         self.logger.info("Stored new pending trade for %s", signal["symbol"])
 
+    def _signal_has_required_levels(self, signal: dict[str, Any]) -> bool:
+        required_fields = ("entry_price", "take_profit", "stop_loss", "trailing_stop_distance")
+        for field in required_fields:
+            value = signal.get(field)
+            if not isinstance(value, (int, float)) or float(value) <= 0:
+                self.logger.warning("GPT returned OPEN for %s with invalid %s=%s; skipping trade", signal.get("symbol"), field, value)
+                return False
+        return True
+
     def maybe_open_trade(self, category: str, symbol: str) -> None:
         if self.get_symbol_trades(symbol):
             return
@@ -105,6 +114,8 @@ class TradeManager:
         signal = self.gpt_client.request_new_signal(symbol, category, candles, [])
         if signal["action"] != "OPEN":
             self.logger.info("GPT skipped %s", symbol)
+            return
+        if not self._signal_has_required_levels(signal):
             return
 
         allocated_capital = self.compute_allocated_capital()
@@ -202,6 +213,27 @@ class TradeManager:
                 self.logger.warning("Could not cancel order %s before refresh", trade["alpaca_order_id"], exc_info=True)
 
     def _recreate_updated_order(self, trade: dict[str, Any], decision: dict[str, Any]) -> None:
+        if not self.alpaca_client.supports_advanced_orders(trade["category"], float(trade["quantity"])):
+            take_profit = float(decision["new_take_profit"] or trade["take_profit"] or 0.0)
+            stop_loss = float(decision["new_stop_loss"] or trade["stop_loss"] or 0.0)
+            with db_cursor(self.config.db_trades) as cursor:
+                cursor.execute(
+                    """
+                    UPDATE trades
+                    SET take_profit = ?, stop_loss = ?, trailing_stop_distance = ?, reasoning = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (
+                        take_profit if take_profit > 0 else None,
+                        stop_loss if stop_loss > 0 else None,
+                        decision["new_trailing_stop_distance"] or trade["trailing_stop_distance"],
+                        decision["reasoning"],
+                        trade["id"],
+                    ),
+                )
+            self.logger.info("Trade %s updated in DB only because %s does not support bracket refresh", trade["id"], trade["category"])
+            return
+
         self._cancel_existing_order_if_needed(trade)
         take_profit = float(decision["new_take_profit"] or trade["take_profit"])
         stop_loss = float(decision["new_stop_loss"] or trade["stop_loss"])

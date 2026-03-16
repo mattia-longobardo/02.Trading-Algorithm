@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from alpaca.data.historical.crypto import CryptoHistoricalDataClient
 from alpaca.data.historical.stock import StockHistoricalDataClient
+from alpaca.data.enums import DataFeed
 from alpaca.data.requests import CryptoBarsRequest, StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
@@ -93,11 +94,20 @@ class AlpacaClient:
     def _time_in_force_for_category(self, category: str) -> TimeInForce:
         return TimeInForce.GTC if category == "CRYPTO" else TimeInForce.DAY
 
-    def _calculate_quantity(self, symbol_price: float, allocated_capital: float) -> float:
+    def _calculate_quantity(self, symbol_price: float, allocated_capital: float, category: str) -> float:
         if symbol_price <= 0:
             raise ValueError("symbol_price must be positive")
         raw_qty = allocated_capital / symbol_price
+        if category == "STOCK":
+            return math.floor(raw_qty * 1000000) / 1000000
         return math.floor(raw_qty * 1000000) / 1000000
+
+    def supports_advanced_orders(self, category: str, quantity: float | None = None) -> bool:
+        if category == "CRYPTO":
+            return False
+        if quantity is None:
+            return True
+        return float(quantity).is_integer()
 
     @retry()
     def place_limit_bracket_order(
@@ -109,21 +119,38 @@ class AlpacaClient:
         stop_loss: float,
         allocated_capital: float,
     ) -> dict[str, Any]:
-        qty = self._calculate_quantity(entry_price, allocated_capital)
+        qty = self._calculate_quantity(entry_price, allocated_capital, category)
+        if qty <= 0:
+            raise ValueError(f"Allocated capital {allocated_capital} is insufficient to buy any quantity of {symbol} at {entry_price}")
         client_order_id = f"bot-{symbol.replace('/', '-')}-{uuid4().hex[:18]}"
-        order = LimitOrderRequest(
-            symbol=symbol,
-            qty=qty,
-            side=OrderSide.BUY,
-            time_in_force=self._time_in_force_for_category(category),
-            limit_price=entry_price,
-            order_class=OrderClass.BRACKET,
-            take_profit=TakeProfitRequest(limit_price=take_profit),
-            stop_loss=StopLossRequest(stop_price=stop_loss),
-            client_order_id=client_order_id,
-            extended_hours=False,
-        )
-        self.logger.info("Submitting bracket order for %s (%s)", symbol, category)
+        if self.supports_advanced_orders(category, qty):
+            order = LimitOrderRequest(
+                symbol=symbol,
+                qty=qty,
+                side=OrderSide.BUY,
+                time_in_force=self._time_in_force_for_category(category),
+                limit_price=entry_price,
+                order_class=OrderClass.BRACKET,
+                take_profit=TakeProfitRequest(limit_price=take_profit),
+                stop_loss=StopLossRequest(stop_price=stop_loss),
+                client_order_id=client_order_id,
+                extended_hours=False,
+            )
+            self.logger.info("Submitting bracket order for %s (%s)", symbol, category)
+        else:
+            order = LimitOrderRequest(
+                symbol=symbol,
+                qty=qty,
+                side=OrderSide.BUY,
+                time_in_force=self._time_in_force_for_category(category),
+                limit_price=entry_price,
+                client_order_id=client_order_id,
+            )
+            self.logger.info(
+                "Submitting simple limit entry for %s (%s); advanced bracket order not available for this quantity/category",
+                symbol,
+                category,
+            )
         submitted = self.trading_client.submit_order(order_data=order)
         return {"order": submitted, "quantity": qty, "client_order_id": client_order_id}
 
@@ -143,7 +170,13 @@ class AlpacaClient:
     def get_bars(self, symbol: str, category: str, start: datetime, end: datetime | None = None) -> list[dict[str, Any]]:
         end = end or utc_now()
         if category == "STOCK":
-            request = StockBarsRequest(symbol_or_symbols=symbol, timeframe=TimeFrame.Day, start=start, end=end)
+            request = StockBarsRequest(
+                symbol_or_symbols=symbol,
+                timeframe=TimeFrame.Day,
+                start=start,
+                end=end,
+                feed=DataFeed.IEX,
+            )
             bars = self.stock_data_client.get_stock_bars(request)
         else:
             request = CryptoBarsRequest(symbol_or_symbols=symbol, timeframe=TimeFrame.Day, start=start, end=end)

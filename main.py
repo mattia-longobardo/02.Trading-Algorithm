@@ -28,11 +28,6 @@ def main() -> None:
     universe_manager = UniverseManager(config, logger, alpaca_client, gpt_client)
     report_generator = ReportGenerator(logger, trade_manager)
 
-    current_universe = universe_manager.get_current_universe()
-    if not current_universe.get("STOCK") and not current_universe.get("CRYPTO"):
-        logger.info("Universe file is empty, generating an initial weekly universe before starting the scheduler")
-        universe_manager.select_weekly_universe()
-
     scheduler = TradingScheduler(config, logger, trade_manager, universe_manager, report_generator)
     scheduler.start()
 
