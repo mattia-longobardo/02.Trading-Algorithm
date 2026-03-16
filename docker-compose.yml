@@ -19,7 +19,7 @@ services:
     volumes:
       - ./logs:/srv
     networks:
-      - proxy-public
+      - proxy_public
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy_public"
@@ -30,5 +30,5 @@ services:
 networks:
   projects:
     external: true
-  proxy-public:
+  proxy_public:
     external: true
