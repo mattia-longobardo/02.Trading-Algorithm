@@ -50,4 +50,14 @@ python main.py
 
 ## Limite importante Alpaca
 
-Alpaca supporta ordini bracket con `take_profit` e `stop_loss`, ma non supporta un trailing stop come gamba nativa dello stesso bracket. In questo progetto il valore `trailing_stop_distance` viene mantenuto nel DB e nella logica GPT, mentre gli ordini inviati a Alpaca usano il bracket supportato nativamente. Se vuoi una gestione trailing realmente autonoma lato broker, servirà una strategia alternativa o un broker/API che la supporti nella stessa struttura ordine.
+Alpaca supporta ordini bracket con `take_profit` e `stop_loss`, ma non supporta un trailing stop come gamba nativa dello stesso bracket. Per questo il bot usa due modalita`:
+
+- `BRACKET`: per i trade standard, il bot usa `LimitOrderRequest` con `order_class=BRACKET`, `take_profit` e `stop_loss`
+- `TRAILING_STOP`: per i trade compatibili, il bot invia prima un ordine di ingresso semplice; dopo il fill piazza un `TrailingStopOrderRequest` separato lato broker
+
+Limitazioni esplicite della modalita` `TRAILING_STOP`:
+
+- il trailing stop e` un ordine singolo separato, quindi non esiste un take-profit broker-side collegato in OCO con lo stesso trailing stop
+- `take_profit` resta quindi gestito dal bot e non da Alpaca come ordine linked
+- `stop_loss` resta contesto strategico per GPT, mentre la protezione broker-side reale e` la distanza `trailing_stop_distance`
+- i trailing stop Alpaca non sono validi come leg di bracket/OCO e non proteggono fuori regular trading hours

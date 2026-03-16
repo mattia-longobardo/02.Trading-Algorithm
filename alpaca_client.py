@@ -14,8 +14,8 @@ from alpaca.data.enums import DataFeed
 from alpaca.data.requests import CryptoBarsRequest, StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import AssetClass, OrderClass, OrderSide, OrderStatus, QueryOrderStatus, TimeInForce
-from alpaca.trading.requests import GetAssetsRequest, GetOrdersRequest, LimitOrderRequest, MarketOrderRequest, ReplaceOrderRequest, StopLossRequest, TakeProfitRequest
+from alpaca.trading.enums import AssetClass, OrderClass, OrderSide, OrderStatus, OrderType, QueryOrderStatus, TimeInForce
+from alpaca.trading.requests import GetAssetsRequest, GetOrdersRequest, LimitOrderRequest, MarketOrderRequest, ReplaceOrderRequest, StopLossRequest, TakeProfitRequest, TrailingStopOrderRequest
 
 from utils import AppConfig, retry, utc_now
 
@@ -91,8 +91,73 @@ class AlpacaClient:
         request = ReplaceOrderRequest(limit_price=limit_price, stop_price=stop_price)
         return self.trading_client.replace_order_by_id(order_id, order_data=request)
 
+    def _order_type_name(self, order: Any) -> str:
+        return str(getattr(order, "type", getattr(order, "order_type", ""))).lower()
+
+    def _order_status_name(self, order: Any) -> str:
+        return str(getattr(order, "status", "")).lower()
+
+    def _is_cancelable_order(self, order: Any) -> bool:
+        return self._order_status_name(order) not in {"filled", "canceled", "cancelled", "expired", "rejected", "replaced"}
+
+    def _classify_exit_leg(self, order: Any) -> str | None:
+        order_type = self._order_type_name(order)
+        if "stop" in order_type:
+            return "stop_loss"
+        if "limit" in order_type:
+            return "take_profit"
+        return None
+
+    def get_order_legs(self, order_id: str) -> dict[str, Any]:
+        order = self.get_order(order_id)
+        classified: dict[str, Any] = {"parent": order}
+        for leg in getattr(order, "legs", None) or []:
+            leg_kind = self._classify_exit_leg(leg)
+            if leg_kind and leg_kind not in classified:
+                classified[leg_kind] = leg
+        return classified
+
+    def cancel_order_chain(self, order_id: str) -> None:
+        orders = self.get_order_legs(order_id)
+        for leg_name in ("take_profit", "stop_loss"):
+            leg = orders.get(leg_name)
+            if leg and self._is_cancelable_order(leg):
+                self.cancel_order(str(getattr(leg, "id")))
+        parent = orders["parent"]
+        if self._is_cancelable_order(parent):
+            self.cancel_order(str(getattr(parent, "id")))
+
+    def replace_bracket_exit_orders(
+        self,
+        parent_order_id: str,
+        take_profit: float | None = None,
+        stop_loss: float | None = None,
+    ) -> dict[str, Any]:
+        orders = self.get_order_legs(parent_order_id)
+        replacements: dict[str, Any] = {}
+        if take_profit is not None:
+            take_profit_leg = orders.get("take_profit")
+            if take_profit_leg is None:
+                raise ValueError(f"Bracket order {parent_order_id} has no take-profit leg to replace")
+            replacements["take_profit"] = self.replace_order(
+                str(getattr(take_profit_leg, "id")),
+                limit_price=take_profit,
+            )
+        if stop_loss is not None:
+            stop_loss_leg = orders.get("stop_loss")
+            if stop_loss_leg is None:
+                raise ValueError(f"Bracket order {parent_order_id} has no stop-loss leg to replace")
+            replacements["stop_loss"] = self.replace_order(
+                str(getattr(stop_loss_leg, "id")),
+                stop_price=stop_loss,
+            )
+        return replacements
+
     def _time_in_force_for_category(self, category: str) -> TimeInForce:
         return TimeInForce.GTC if category == "CRYPTO" else TimeInForce.DAY
+
+    def _protection_time_in_force_for_category(self, category: str) -> TimeInForce:
+        return TimeInForce.GTC
 
     def _calculate_quantity(self, symbol_price: float, allocated_capital: float, category: str) -> float:
         if symbol_price <= 0:
@@ -108,6 +173,37 @@ class AlpacaClient:
         if quantity is None:
             return True
         return float(quantity).is_integer()
+
+    def supports_broker_side_trailing_stop(self, category: str, quantity: float | None = None) -> bool:
+        if category == "CRYPTO":
+            return False
+        if quantity is None:
+            return True
+        return float(quantity).is_integer()
+
+    @retry()
+    def place_limit_entry_order(
+        self,
+        symbol: str,
+        category: str,
+        entry_price: float,
+        allocated_capital: float,
+    ) -> dict[str, Any]:
+        qty = self._calculate_quantity(entry_price, allocated_capital, category)
+        if qty <= 0:
+            raise ValueError(f"Allocated capital {allocated_capital} is insufficient to buy any quantity of {symbol} at {entry_price}")
+        client_order_id = f"entry-{symbol.replace('/', '-')}-{uuid4().hex[:18]}"
+        order = LimitOrderRequest(
+            symbol=symbol,
+            qty=qty,
+            side=OrderSide.BUY,
+            time_in_force=self._time_in_force_for_category(category),
+            limit_price=entry_price,
+            client_order_id=client_order_id,
+        )
+        self.logger.info("Submitting simple limit entry order for %s (%s)", symbol, category)
+        submitted = self.trading_client.submit_order(order_data=order)
+        return {"order": submitted, "quantity": qty, "client_order_id": client_order_id}
 
     @retry()
     def place_limit_bracket_order(
@@ -167,6 +263,32 @@ class AlpacaClient:
         return self.trading_client.submit_order(order_data=order)
 
     @retry()
+    def place_trailing_stop_order(self, symbol: str, quantity: float, category: str, trail_price: float) -> dict[str, Any]:
+        if trail_price <= 0:
+            raise ValueError("trail_price must be positive")
+        client_order_id = f"trail-{symbol.replace('/', '-')}-{uuid4().hex[:18]}"
+        order = TrailingStopOrderRequest(
+            symbol=symbol,
+            qty=quantity,
+            side=OrderSide.SELL,
+            type=OrderType.TRAILING_STOP,
+            time_in_force=self._protection_time_in_force_for_category(category),
+            trail_price=trail_price,
+            client_order_id=client_order_id,
+        )
+        self.logger.info("Submitting trailing stop order for %s with trail price %s", symbol, trail_price)
+        submitted = self.trading_client.submit_order(order_data=order)
+        return {"order": submitted, "client_order_id": client_order_id}
+
+    @retry()
+    def replace_trailing_stop_order(self, order_id: str, trail_price: float) -> Any:
+        if trail_price <= 0:
+            raise ValueError("trail_price must be positive")
+        self.logger.info("Replacing trailing stop order %s with trail price %s", order_id, trail_price)
+        request = ReplaceOrderRequest(trail=trail_price)
+        return self.trading_client.replace_order_by_id(order_id, order_data=request)
+
+    @retry()
     def get_bars(self, symbol: str, category: str, start: datetime, end: datetime | None = None) -> list[dict[str, Any]]:
         end = end or utc_now()
         if category == "STOCK":
@@ -204,10 +326,13 @@ class AlpacaClient:
     def infer_close_reason(self, order: Any) -> str:
         """Infer the close reason from nested orders when possible."""
 
+        order_type = self._order_type_name(order)
+        if "trailing" in order_type and self._order_status_name(order) == str(OrderStatus.FILLED).lower():
+            return "TRAILING_STOP"
         legs = getattr(order, "legs", None) or []
         for leg in legs:
-            leg_type = str(getattr(leg, "type", "")).lower()
-            status = str(getattr(leg, "status", "")).lower()
+            leg_type = self._order_type_name(leg)
+            status = self._order_status_name(leg)
             if status != str(OrderStatus.FILLED).lower():
                 continue
             if "limit" in leg_type:
