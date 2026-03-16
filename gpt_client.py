@@ -141,7 +141,9 @@ class GPTClient:
             f"For both stocks and crypto, use {self.config.currency} as the reference currency. "
             f"For crypto, only consider symbols quoted in {self.config.currency}. "
             "Return only JSON matching the schema. If risk/reward is unattractive, choose SKIP. "
-            "If you choose OPEN, entry_price, take_profit, stop_loss, and trailing_stop_distance must all be non-null positive numbers."
+            "If you choose OPEN, entry_price, take_profit, stop_loss, and trailing_stop_distance must all be non-null positive numbers. "
+            "Important: when Alpaca supports it, this bot opens the position first and then places a broker-side trailing stop as a separate sell order. "
+            "Alpaca does not support a trailing stop as a native bracket leg, so take_profit is then bot-managed metadata rather than a linked broker-side take-profit order."
         )
         payload = self.build_symbol_payload(symbol, category, candles, existing_trades)
         return self._request_json(instructions, payload, NEW_SIGNAL_SCHEMA)
@@ -157,7 +159,10 @@ class GPTClient:
             "You are managing an existing long trade or pending order. You must perform web search before deciding. "
             f"For both stocks and crypto, use {self.config.currency} as the reference currency. "
             f"For crypto, keep all reasoning aligned with symbols quoted in {self.config.currency}. "
-            "You may HOLD, UPDATE, CLOSE, or CANCEL. Do not propose a new entry. Return only JSON matching the schema."
+            "You may HOLD, UPDATE, CLOSE, or CANCEL. Do not propose a new entry. "
+            "When updating levels, remember that Alpaca trailing stops are supported only as separate single orders, not as bracket legs. "
+            "So for trailing-stop trades, the broker-managed value is trailing_stop_distance, while take_profit remains bot-managed and stop_loss is analytical context. "
+            "Return only JSON matching the schema."
         )
         payload = self.build_symbol_payload(symbol, category, candles, existing_trades)
         return self._request_json(instructions, payload, MANAGE_SIGNAL_SCHEMA)

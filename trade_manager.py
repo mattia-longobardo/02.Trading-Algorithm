@@ -62,7 +62,24 @@ class TradeManager:
         available_slots = max(slots - active, 1)
         return round(cash / available_slots, 2)
 
-    def _save_new_trade(self, category: str, signal: dict[str, Any], order_payload: dict[str, Any], allocated_capital: float) -> None:
+    def _uses_broker_side_trailing_stop(
+        self,
+        category: str,
+        quantity: float | None,
+        trailing_stop_distance: float | None,
+    ) -> bool:
+        if not trailing_stop_distance or trailing_stop_distance <= 0:
+            return False
+        return self.alpaca_client.supports_broker_side_trailing_stop(category, quantity)
+
+    def _save_new_trade(
+        self,
+        category: str,
+        signal: dict[str, Any],
+        order_payload: dict[str, Any],
+        allocated_capital: float,
+        broker_protection_type: str,
+    ) -> None:
         order = order_payload["order"]
         with db_cursor(self.config.db_trades) as cursor:
             cursor.execute(
@@ -70,8 +87,8 @@ class TradeManager:
                 INSERT INTO trades (
                     symbol, category, direction, status, entry_price, quantity, allocated_capital,
                     take_profit, stop_loss, trailing_stop_distance, alpaca_order_id, client_order_id,
-                    reasoning, confidence
-                ) VALUES (?, ?, 'LONG', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    broker_protection_type, reasoning, confidence
+                ) VALUES (?, ?, 'LONG', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     signal["symbol"],
@@ -84,6 +101,7 @@ class TradeManager:
                     signal["trailing_stop_distance"],
                     str(getattr(order, "id", "")),
                     order_payload["client_order_id"],
+                    broker_protection_type,
                     signal.get("reasoning"),
                     signal.get("confidence"),
                 ),
@@ -119,15 +137,58 @@ class TradeManager:
             return
 
         allocated_capital = self.compute_allocated_capital()
-        order_payload = self.alpaca_client.place_limit_bracket_order(
-            symbol=symbol,
-            category=category,
-            entry_price=float(signal["entry_price"]),
-            take_profit=float(signal["take_profit"]),
-            stop_loss=float(signal["stop_loss"]),
-            allocated_capital=allocated_capital,
+        estimated_qty = allocated_capital / float(signal["entry_price"])
+        use_trailing_stop = self._uses_broker_side_trailing_stop(
+            category,
+            estimated_qty,
+            float(signal["trailing_stop_distance"]),
         )
-        self._save_new_trade(category, signal, order_payload, allocated_capital)
+        if use_trailing_stop:
+            order_payload = self.alpaca_client.place_limit_entry_order(
+                symbol=symbol,
+                category=category,
+                entry_price=float(signal["entry_price"]),
+                allocated_capital=allocated_capital,
+            )
+            broker_protection_type = "TRAILING_STOP"
+        else:
+            order_payload = self.alpaca_client.place_limit_bracket_order(
+                symbol=symbol,
+                category=category,
+                entry_price=float(signal["entry_price"]),
+                take_profit=float(signal["take_profit"]),
+                stop_loss=float(signal["stop_loss"]),
+                allocated_capital=allocated_capital,
+            )
+            broker_protection_type = "BRACKET"
+        self._save_new_trade(category, signal, order_payload, allocated_capital, broker_protection_type)
+
+    def _place_or_refresh_trailing_stop(self, trade: dict[str, Any], trail_price: float | None = None) -> dict[str, str] | None:
+        trail_price = float(trail_price or trade.get("trailing_stop_distance") or 0.0)
+        if trail_price <= 0:
+            self.logger.warning("Trade %s has invalid trailing stop distance %s", trade["id"], trail_price)
+            return None
+        protection_payload = self.alpaca_client.place_trailing_stop_order(
+            symbol=trade["symbol"],
+            quantity=float(trade["quantity"]),
+            category=trade["category"],
+            trail_price=trail_price,
+        )
+        protection_order = protection_payload["order"]
+        protection_data = {
+            "protection_order_id": str(getattr(protection_order, "id", "")),
+            "protection_client_order_id": protection_payload["client_order_id"],
+        }
+        with db_cursor(self.config.db_trades) as cursor:
+            cursor.execute(
+                """
+                UPDATE trades
+                SET protection_order_id = ?, protection_client_order_id = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (protection_data["protection_order_id"], protection_data["protection_client_order_id"], trade["id"]),
+            )
+        return protection_data
 
     def sync_pending_trade(self, trade: dict[str, Any]) -> None:
         if not trade.get("alpaca_order_id"):
@@ -137,14 +198,22 @@ class TradeManager:
         if status == "filled":
             filled_at = getattr(order, "filled_at", None) or utc_now()
             avg_fill_price = float(getattr(order, "filled_avg_price", trade["entry_price"]) or trade["entry_price"])
+            protection_order_id = trade.get("protection_order_id")
+            protection_client_order_id = trade.get("protection_client_order_id")
+            if trade.get("broker_protection_type") == "TRAILING_STOP":
+                protection_data = self._place_or_refresh_trailing_stop(trade)
+                if protection_data:
+                    protection_order_id = protection_data["protection_order_id"]
+                    protection_client_order_id = protection_data["protection_client_order_id"]
             with db_cursor(self.config.db_trades) as cursor:
                 cursor.execute(
                     """
                     UPDATE trades
-                    SET status = 'OPEN', open_timestamp = ?, entry_price = ?, updated_at = CURRENT_TIMESTAMP
+                    SET status = 'OPEN', open_timestamp = ?, entry_price = ?, protection_order_id = ?, protection_client_order_id = ?,
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
-                    (isoformat_utc(filled_at), avg_fill_price, trade["id"]),
+                    (isoformat_utc(filled_at), avg_fill_price, protection_order_id, protection_client_order_id, trade["id"]),
                 )
             self.logger.info("Trade %s moved from PENDING to OPEN", trade["id"])
             return
@@ -165,7 +234,11 @@ class TradeManager:
         if position is None:
             close_price = float(trade.get("current_price") or trade["entry_price"])
             close_reason = "GPT_SIGNAL"
-            if trade.get("alpaca_order_id"):
+            if trade.get("broker_protection_type") == "TRAILING_STOP" and trade.get("protection_order_id"):
+                order = self.alpaca_client.get_order(str(trade["protection_order_id"]))
+                close_reason = self.alpaca_client.infer_close_reason(order)
+                close_price = float(getattr(order, "filled_avg_price", close_price) or close_price)
+            elif trade.get("alpaca_order_id"):
                 order = self.alpaca_client.get_order(str(trade["alpaca_order_id"]))
                 close_reason = self.alpaca_client.infer_close_reason(order)
                 close_price = float(getattr(order, "filled_avg_price", close_price) or close_price)
@@ -184,6 +257,21 @@ class TradeManager:
             return
 
         current_price = float(getattr(position, "current_price", trade["entry_price"]) or trade["entry_price"])
+        if trade.get("broker_protection_type") == "TRAILING_STOP":
+            if trade.get("take_profit") and current_price >= float(trade["take_profit"]):
+                self.logger.info(
+                    "Trade %s reached bot-managed take profit while broker-side trailing stop remained active",
+                    trade["id"],
+                )
+                self._close_trade_immediately(
+                    trade,
+                    "Bot take-profit reached while trailing stop was active",
+                    close_reason="TAKE_PROFIT",
+                    close_price_override=current_price,
+                )
+                return
+            if not trade.get("protection_order_id"):
+                self._place_or_refresh_trailing_stop(trade)
         pnl = (current_price - float(trade["entry_price"])) * float(trade["quantity"])
         with db_cursor(self.config.db_trades) as cursor:
             cursor.execute(
@@ -206,13 +294,84 @@ class TradeManager:
                 self.logger.exception("Failed to sync trade %s", trade["id"])
 
     def _cancel_existing_order_if_needed(self, trade: dict[str, Any]) -> None:
-        if trade.get("alpaca_order_id"):
-            try:
-                self.alpaca_client.cancel_order(str(trade["alpaca_order_id"]))
-            except Exception:
-                self.logger.warning("Could not cancel order %s before refresh", trade["alpaca_order_id"], exc_info=True)
+        order_id = None
+        try:
+            if trade.get("broker_protection_type") == "TRAILING_STOP":
+                if trade["status"] == "PENDING":
+                    order_id = trade.get("alpaca_order_id")
+                    if order_id:
+                        self.alpaca_client.cancel_order(str(order_id))
+                else:
+                    order_id = trade.get("protection_order_id")
+                    if order_id:
+                        self.alpaca_client.cancel_order(str(order_id))
+            elif trade.get("alpaca_order_id"):
+                order_id = trade.get("alpaca_order_id")
+                self.alpaca_client.cancel_order_chain(str(order_id))
+        except Exception:
+            self.logger.warning("Could not cancel order %s before refresh", order_id, exc_info=True)
 
     def _recreate_updated_order(self, trade: dict[str, Any], decision: dict[str, Any]) -> None:
+        if trade.get("broker_protection_type") == "TRAILING_STOP":
+            take_profit = float(decision["new_take_profit"] or trade["take_profit"] or 0.0)
+            stop_loss = float(decision["new_stop_loss"] or trade["stop_loss"] or 0.0)
+            trailing_stop_distance = float(decision["new_trailing_stop_distance"] or trade["trailing_stop_distance"] or 0.0)
+            if trade["status"] == "PENDING":
+                self._cancel_existing_order_if_needed(trade)
+                order_payload = self.alpaca_client.place_limit_entry_order(
+                    symbol=trade["symbol"],
+                    category=trade["category"],
+                    entry_price=float(trade["entry_price"]),
+                    allocated_capital=float(trade["allocated_capital"]),
+                )
+                with db_cursor(self.config.db_trades) as cursor:
+                    cursor.execute(
+                        """
+                        UPDATE trades
+                        SET take_profit = ?, stop_loss = ?, trailing_stop_distance = ?, alpaca_order_id = ?, client_order_id = ?,
+                            reasoning = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (
+                            take_profit if take_profit > 0 else None,
+                            stop_loss if stop_loss > 0 else None,
+                            trailing_stop_distance if trailing_stop_distance > 0 else None,
+                            str(getattr(order_payload["order"], "id", "")),
+                            order_payload["client_order_id"],
+                            decision["reasoning"],
+                            trade["id"],
+                        ),
+                    )
+                self.logger.info("Trade %s pending entry refreshed with trailing-stop strategy", trade["id"])
+                return
+            if decision["new_trailing_stop_distance"] and trade.get("protection_order_id"):
+                self.alpaca_client.replace_trailing_stop_order(
+                    str(trade["protection_order_id"]),
+                    trailing_stop_distance,
+                )
+            elif not trade.get("protection_order_id"):
+                self._place_or_refresh_trailing_stop(trade, trailing_stop_distance)
+            with db_cursor(self.config.db_trades) as cursor:
+                cursor.execute(
+                    """
+                    UPDATE trades
+                    SET take_profit = ?, stop_loss = ?, trailing_stop_distance = ?, reasoning = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (
+                        take_profit if take_profit > 0 else None,
+                        stop_loss if stop_loss > 0 else None,
+                        trailing_stop_distance if trailing_stop_distance > 0 else None,
+                        decision["reasoning"],
+                        trade["id"],
+                    ),
+                )
+            self.logger.info(
+                "Trade %s updated bot take-profit metadata and broker-side trailing stop protection",
+                trade["id"],
+            )
+            return
+
         if not self.alpaca_client.supports_advanced_orders(trade["category"], float(trade["quantity"])):
             take_profit = float(decision["new_take_profit"] or trade["take_profit"] or 0.0)
             stop_loss = float(decision["new_stop_loss"] or trade["stop_loss"] or 0.0)
@@ -234,53 +393,91 @@ class TradeManager:
             self.logger.info("Trade %s updated in DB only because %s does not support bracket refresh", trade["id"], trade["category"])
             return
 
-        self._cancel_existing_order_if_needed(trade)
         take_profit = float(decision["new_take_profit"] or trade["take_profit"])
         stop_loss = float(decision["new_stop_loss"] or trade["stop_loss"])
-        order_payload = self.alpaca_client.place_limit_bracket_order(
-            symbol=trade["symbol"],
-            category=trade["category"],
-            entry_price=float(trade["entry_price"]),
+        trailing_stop_distance = decision["new_trailing_stop_distance"] or trade["trailing_stop_distance"]
+
+        if trade["status"] == "PENDING":
+            self._cancel_existing_order_if_needed(trade)
+            order_payload = self.alpaca_client.place_limit_bracket_order(
+                symbol=trade["symbol"],
+                category=trade["category"],
+                entry_price=float(trade["entry_price"]),
+                take_profit=take_profit,
+                stop_loss=stop_loss,
+                allocated_capital=float(trade["allocated_capital"]),
+            )
+            with db_cursor(self.config.db_trades) as cursor:
+                cursor.execute(
+                    """
+                    UPDATE trades
+                    SET take_profit = ?, stop_loss = ?, trailing_stop_distance = ?, alpaca_order_id = ?, client_order_id = ?,
+                        reasoning = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (
+                        take_profit,
+                        stop_loss,
+                        trailing_stop_distance,
+                        str(getattr(order_payload["order"], "id", "")),
+                        order_payload["client_order_id"],
+                        decision["reasoning"],
+                        trade["id"],
+                    ),
+                )
+            self.logger.info("Trade %s pending entry refreshed with a new bracket order", trade["id"])
+            return
+
+        self.alpaca_client.replace_bracket_exit_orders(
+            str(trade["alpaca_order_id"]),
             take_profit=take_profit,
             stop_loss=stop_loss,
-            allocated_capital=float(trade["allocated_capital"]),
         )
         with db_cursor(self.config.db_trades) as cursor:
             cursor.execute(
                 """
                 UPDATE trades
-                SET take_profit = ?, stop_loss = ?, trailing_stop_distance = ?, alpaca_order_id = ?, client_order_id = ?,
-                    reasoning = ?, updated_at = CURRENT_TIMESTAMP
+                SET take_profit = ?, stop_loss = ?, trailing_stop_distance = ?, reasoning = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
                 (
                     take_profit,
                     stop_loss,
-                    decision["new_trailing_stop_distance"] or trade["trailing_stop_distance"],
-                    str(getattr(order_payload["order"], "id", "")),
-                    order_payload["client_order_id"],
+                    trailing_stop_distance,
                     decision["reasoning"],
                     trade["id"],
                 ),
             )
-        self.logger.info("Trade %s updated with refreshed bracket order", trade["id"])
+        if decision["new_trailing_stop_distance"]:
+            self.logger.info(
+                "Trade %s updated stop-loss/take-profit at broker level; trailing stop remains strategy metadata because Alpaca does not support it as a bracket leg",
+                trade["id"],
+            )
+        else:
+            self.logger.info("Trade %s updated existing bracket exit legs", trade["id"])
 
-    def _close_trade_immediately(self, trade: dict[str, Any], reasoning: str) -> None:
+    def _close_trade_immediately(
+        self,
+        trade: dict[str, Any],
+        reasoning: str,
+        close_reason: str = "GPT_SIGNAL",
+        close_price_override: float | None = None,
+    ) -> None:
         self._cancel_existing_order_if_needed(trade)
         self.alpaca_client.place_market_exit_order(trade["symbol"], float(trade["quantity"]), trade["category"])
-        close_price = float(trade.get("current_price") or trade["entry_price"])
+        close_price = float(close_price_override or trade.get("current_price") or trade["entry_price"])
         pnl = (close_price - float(trade["entry_price"])) * float(trade["quantity"])
         with db_cursor(self.config.db_trades) as cursor:
             cursor.execute(
                 """
                 UPDATE trades
-                SET status = 'CLOSED', close_price = ?, close_timestamp = ?, close_reason = 'GPT_SIGNAL',
+                SET status = 'CLOSED', close_price = ?, close_timestamp = ?, close_reason = ?,
                     pnl = ?, reasoning = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (close_price, isoformat_utc(utc_now()), pnl, reasoning, trade["id"]),
+                (close_price, isoformat_utc(utc_now()), close_reason, pnl, reasoning, trade["id"]),
             )
-        self.logger.info("Trade %s closed immediately by GPT signal", trade["id"])
+        self.logger.info("Trade %s closed immediately with reason %s", trade["id"], close_reason)
 
     def manage_existing_trade(self, trade: dict[str, Any]) -> None:
         candles = self.data_manager.get_symbol_history(trade["symbol"])

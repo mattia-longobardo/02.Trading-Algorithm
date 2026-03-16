@@ -52,6 +52,12 @@ CREATE INDEX IF NOT EXISTS idx_trades_symbol_status ON trades(symbol, status);
 CREATE INDEX IF NOT EXISTS idx_trades_category_status ON trades(category, status);
 """
 
+TRADE_OPTIONAL_COLUMNS: dict[str, str] = {
+    "broker_protection_type": "TEXT NOT NULL DEFAULT 'BRACKET'",
+    "protection_order_id": "TEXT",
+    "protection_client_order_id": "TEXT",
+}
+
 
 def _connect(db_path: str) -> sqlite3.Connection:
     connection = sqlite3.connect(Path(db_path))
@@ -59,6 +65,17 @@ def _connect(db_path: str) -> sqlite3.Connection:
     connection.execute("PRAGMA journal_mode=WAL;")
     connection.execute("PRAGMA foreign_keys=ON;")
     return connection
+
+
+def _ensure_optional_trade_columns(connection: sqlite3.Connection) -> None:
+    existing_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(trades)").fetchall()
+    }
+    for column, definition in TRADE_OPTIONAL_COLUMNS.items():
+        if column in existing_columns:
+            continue
+        connection.execute(f"ALTER TABLE trades ADD COLUMN {column} {definition}")
 
 
 def initialize_databases(market_db_path: str, trades_db_path: str) -> None:
@@ -69,6 +86,7 @@ def initialize_databases(market_db_path: str, trades_db_path: str) -> None:
         market_conn.commit()
     with _connect(trades_db_path) as trade_conn:
         trade_conn.executescript(TRADES_SCHEMA)
+        _ensure_optional_trade_columns(trade_conn)
         trade_conn.commit()
 
 
