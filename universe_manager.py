@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from json import dumps
 
 from alpaca_client import AlpacaClient
 from gpt_client import GPTClient
@@ -18,8 +19,22 @@ class UniverseManager:
     def __init__(self, config: AppConfig, logger: logging.Logger, alpaca_client: AlpacaClient, gpt_client: GPTClient) -> None:
         self.config = config
         self.logger = logger.getChild("universe")
+        self.candidate_logger = logging.getLogger("trading_bot.universe.candidates")
         self.alpaca_client = alpaca_client
         self.gpt_client = gpt_client
+
+    def _log_candidate_lists(
+        self,
+        stock_payload: list[dict[str, str | bool | float | None]],
+        crypto_payload: list[dict[str, str | bool | float | None]],
+    ) -> None:
+        self.candidate_logger.info(
+            "Weekly universe candidates | stocks_count=%s | crypto_count=%s | stocks=%s | crypto=%s",
+            len(stock_payload),
+            len(crypto_payload),
+            dumps(stock_payload, ensure_ascii=True, sort_keys=True),
+            dumps(crypto_payload, ensure_ascii=True, sort_keys=True),
+        )
 
     @staticmethod
     def _looks_like_etf(asset: object) -> bool:
@@ -128,6 +143,7 @@ class UniverseManager:
     def select_weekly_universe(self) -> dict[str, list[str]]:
         stock_payload = self._get_stock_candidate_payload()
         crypto_payload = self._get_crypto_candidate_payload()
+        self._log_candidate_lists(stock_payload, crypto_payload)
         stock_candidates = [str(asset["symbol"]) for asset in stock_payload]
         crypto_candidates = [str(asset["symbol"]) for asset in crypto_payload]
         try:

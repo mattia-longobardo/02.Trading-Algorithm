@@ -40,6 +40,7 @@ class UniverseManagerCandidateTests(unittest.TestCase):
             alpaca_client=self.alpaca_client,
             gpt_client=self.gpt_client,
         )
+        self.manager.candidate_logger = Mock()
 
     def test_get_stock_candidates_filters_invalid_assets_sorts_and_deduplicates(self) -> None:
         self.alpaca_client.list_assets.return_value = [
@@ -72,6 +73,35 @@ class UniverseManagerCandidateTests(unittest.TestCase):
 
         self.alpaca_client.list_assets.assert_called_once_with("CRYPTO")
         self.assertEqual(candidates, ["BTC/EUR", "eth/eur"])
+
+    def test_select_weekly_universe_logs_all_stock_and_crypto_candidates_to_dedicated_logger(self) -> None:
+        self.manager._get_stock_candidate_payload = Mock(
+            return_value=[
+                {"symbol": "AAPL", "name": "Apple Inc.", "status": "active", "tradable": True, "fractionable": True},
+                {"symbol": "MSFT", "name": "Microsoft Corporation", "status": "active", "tradable": True, "fractionable": True},
+            ]
+        )
+        self.manager._get_crypto_candidate_payload = Mock(
+            return_value=[
+                {"symbol": "BTC/EUR", "name": "Bitcoin", "status": "active", "tradable": True, "fractionable": True},
+                {"symbol": "ETH/EUR", "name": "Ethereum", "status": "active", "tradable": True, "fractionable": True},
+            ]
+        )
+        self.gpt_client.request_weekly_universe.return_value = {
+            "stocks": ["MSFT"],
+            "crypto": ["BTC/EUR"],
+        }
+
+        universe = self.manager.select_weekly_universe()
+
+        self.assertEqual(universe, {"STOCK": ["MSFT"], "CRYPTO": ["BTC/EUR"]})
+        self.manager.candidate_logger.info.assert_called_once()
+        logged_message, *logged_args = self.manager.candidate_logger.info.call_args[0]
+        self.assertIn("Weekly universe candidates", logged_message)
+        self.assertEqual(logged_args[0], 2)
+        self.assertEqual(logged_args[1], 2)
+        self.assertIn('"symbol": "AAPL"', logged_args[2])
+        self.assertIn('"symbol": "BTC/EUR"', logged_args[3])
 
 
 if __name__ == "__main__":
