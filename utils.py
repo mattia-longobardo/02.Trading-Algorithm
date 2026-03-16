@@ -27,6 +27,8 @@ class AppConfig:
     alpaca_base_url: str
     max_open_trades_stock: int = 3
     max_open_trades_crypto: int = 3
+    weekly_universe_stocks: int = 5
+    weekly_universe_crypto: int = 5
     currency: str = "EUR"
     log_level: str = "INFO"
     log_file: str = "logs/trading_bot.log"
@@ -56,6 +58,8 @@ def load_config() -> AppConfig:
         alpaca_base_url=os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets"),
         max_open_trades_stock=int(os.getenv("MAX_OPEN_TRADES_STOCK", "3")),
         max_open_trades_crypto=int(os.getenv("MAX_OPEN_TRADES_CRYPTO", "3")),
+        weekly_universe_stocks=int(os.getenv("WEEKLY_UNIVERSE_STOCKS", "5")),
+        weekly_universe_crypto=int(os.getenv("WEEKLY_UNIVERSE_CRYPTO", "5")),
         currency=os.getenv("CURRENCY", "EUR").upper(),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         log_file=os.getenv("LOG_FILE", "logs/trading_bot.log"),
