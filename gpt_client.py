@@ -38,32 +38,6 @@ NEW_SIGNAL_SCHEMA = {
     },
 }
 
-MANAGE_SIGNAL_SCHEMA = {
-    "name": "manage_trade_signal",
-    "schema": {
-        "type": "object",
-        "properties": {
-            "action": {"type": "string", "enum": ["HOLD", "UPDATE", "CLOSE", "CANCEL"]},
-            "symbol": {"type": "string"},
-            "new_take_profit": {"type": ["number", "null"]},
-            "new_stop_loss": {"type": ["number", "null"]},
-            "new_trailing_stop_distance": {"type": ["number", "null"]},
-            "close_immediately": {"type": "boolean"},
-            "reasoning": {"type": "string"},
-        },
-        "required": [
-            "action",
-            "symbol",
-            "new_take_profit",
-            "new_stop_loss",
-            "new_trailing_stop_distance",
-            "close_immediately",
-            "reasoning",
-        ],
-        "additionalProperties": False,
-    },
-}
-
 UNIVERSE_SCHEMA = {
     "name": "weekly_universe",
     "schema": {
@@ -89,10 +63,10 @@ class GPTClient:
 
     @retry(exceptions=(APIError, APIStatusError, RateLimitError, ValueError))
     def _request_json(self, instructions: str, payload: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
-        self.logger.info("Calling OpenAI Responses API for %s", schema["name"])
+        self.logger.debug("Calling OpenAI Responses API for %s", schema["name"])
         response = self.client.responses.create(
-            model="gpt-5.4",
-            reasoning={"effort": "medium"},
+            model="gpt-5.2",
+            reasoning={"effort": "low"},
             instructions=instructions,
             input=to_json(payload),
             tools=[{"type": "web_search"}],
@@ -125,6 +99,11 @@ class GPTClient:
                 "web_search_required": True,
                 "no_etf": True,
                 "currency": self.config.currency,
+                "strategy_style": "medium_long_term_position_trading",
+                "target_holding_period_days": {
+                    "min": self.config.strategy_horizon_days_min,
+                    "max": self.config.strategy_horizon_days_max,
+                },
             },
         }
 
@@ -138,49 +117,36 @@ class GPTClient:
         instructions = (
             "You are a disciplined trading analyst. You must perform web search before deciding. "
             "Use only LONG spot trading, never short. Compute technical indicators yourself from OHLCV. "
+            "This strategy is medium-long term position trading, not daily trading or intraday speculation. "
+            f"Prefer setups that can reasonably be held for about {self.config.strategy_horizon_days_min}-{self.config.strategy_horizon_days_max} days, and can remain open for 3-4 months when the thesis stays valid. "
+            "Do not optimize for quick daily flips, small intraday moves, or noise-driven momentum. "
             f"For both stocks and crypto, use {self.config.currency} as the reference currency. "
             f"For crypto, only consider symbols quoted in {self.config.currency}. "
             "Return only JSON matching the schema. If risk/reward is unattractive, choose SKIP. "
-            "If you choose OPEN, entry_price, take_profit, stop_loss, and trailing_stop_distance must all be non-null positive numbers. "
-            "Important: when Alpaca supports it, this bot opens the position first and then places a broker-side trailing stop as a separate sell order. "
-            "Alpaca does not support a trailing stop as a native bracket leg, so take_profit is then bot-managed metadata rather than a linked broker-side take-profit order."
+            "If you choose OPEN, entry_price, take_profit, and stop_loss must be non-null positive numbers. "
+            "trailing_stop_distance may be null when no trailing stop is desired, otherwise it must be a positive number. "
+            "Base the decision primarily on medium-term trend structure, macro or fundamental catalysts, business or ecosystem strength, and multi-week or multi-month risk/reward. "
+            "The script manages take-profit, stop-loss, and trailing-stop logic internally after entry; Alpaca is used only to place the entry order and to close the position at market when a rule triggers."
         )
         payload = self.build_symbol_payload(symbol, category, candles, existing_trades)
         return self._request_json(instructions, payload, NEW_SIGNAL_SCHEMA)
 
-    def request_trade_management(
-        self,
-        symbol: str,
-        category: str,
-        candles: list[dict[str, Any]],
-        existing_trades: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        instructions = (
-            "You are managing an existing long trade or pending order. You must perform web search before deciding. "
-            f"For both stocks and crypto, use {self.config.currency} as the reference currency. "
-            f"For crypto, keep all reasoning aligned with symbols quoted in {self.config.currency}. "
-            "You may HOLD, UPDATE, CLOSE, or CANCEL. Do not propose a new entry. "
-            "When updating levels, remember that Alpaca trailing stops are supported only as separate single orders, not as bracket legs. "
-            "So for trailing-stop trades, the broker-managed value is trailing_stop_distance, while take_profit remains bot-managed and stop_loss is analytical context. "
-            "Return only JSON matching the schema."
-        )
-        payload = self.build_symbol_payload(symbol, category, candles, existing_trades)
-        return self._request_json(instructions, payload, MANAGE_SIGNAL_SCHEMA)
-
-    def request_weekly_universe(
+    def request_trading_universe(
         self,
         stock_candidates: list[dict[str, Any]],
         crypto_candidates: list[dict[str, Any]],
     ) -> dict[str, Any]:
         instructions = (
-            f"Select exactly {self.config.weekly_universe_stocks} stock symbols and {self.config.weekly_universe_crypto} crypto symbols for the coming week. "
+            f"Select exactly {self.config.weekly_universe_stocks} stock symbols and {self.config.weekly_universe_crypto} crypto symbols for the next trading cycle. "
             "Do mandatory web search before choosing. Exclude ETFs and avoid illiquid names. "
             "Avoid warrants, rights, units, preferred shares, shell companies, and other non-common-stock instruments. "
             "Use the provided Alpaca candidate lists as the only allowed universe. "
+            "This strategy is medium-long term position trading, not daily trading. "
+            f"Favor assets suitable for holding roughly {self.config.strategy_horizon_days_min}-{self.config.strategy_horizon_days_max} days, and potentially 3-4 months if the thesis remains intact. "
             "Base the selection on tradability, liquidity proxies, business relevance, current news flow, and sentiment analysis from web search. "
             "Prioritize symbols with strong growth potential, driven by fundamental or technical catalysts, while ensuring relative safety by avoiding highly speculative or penny stocks. "
-            "For stocks, prefer companies with solid earnings, revenue growth, and sector leadership. "
-            "For crypto, prefer established assets with solid market capitalization and active ecosystem participation. "
+            "For stocks, prefer companies with solid earnings, revenue growth, sector leadership, and catalysts that can play out over multiple weeks or months. "
+            "For crypto, prefer established assets with solid market capitalization, active ecosystem participation, and durable narratives rather than short-lived hype. "
             "Focus on positive momentum, strong fundamentals, and low downside risk in all selections. "
             # ------------------------------------------------
             f"Use {self.config.currency} as the reference currency. "
@@ -196,14 +162,26 @@ class GPTClient:
                 "stocks_required": self.config.weekly_universe_stocks,
                 "crypto_required": self.config.weekly_universe_crypto,
                 "currency": self.config.currency,
+                "strategy_style": "medium_long_term_position_trading",
+                "target_holding_period_days": {
+                    "min": self.config.strategy_horizon_days_min,
+                    "max": self.config.strategy_horizon_days_max,
+                },
                 "criteria": {
                     "growth_potential": "fundamental or technical catalysts",
                     "safety": "avoid highly speculative or penny stocks",
-                    "stocks_preference": "solid earnings, revenue growth, sector leadership",
-                    "crypto_preference": "established assets with solid market cap and ecosystem activity",
-                    "momentum_focus": "positive momentum, strong fundamentals, low downside risk"
+                    "stocks_preference": "solid earnings, revenue growth, sector leadership, multi-week or multi-month catalysts",
+                    "crypto_preference": "established assets with solid market cap, ecosystem activity, and durable narratives",
+                    "momentum_focus": "positive medium-term momentum, strong fundamentals, low downside risk"
                 }
             },
         }
         
         return self._request_json(instructions, payload, UNIVERSE_SCHEMA)
+
+    def request_weekly_universe(
+        self,
+        stock_candidates: list[dict[str, Any]],
+        crypto_candidates: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return self.request_trading_universe(stock_candidates, crypto_candidates)

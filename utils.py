@@ -30,6 +30,9 @@ class AppConfig:
     weekly_universe_stocks: int = 5
     weekly_universe_crypto: int = 5
     currency: str = "EUR"
+    strategy_horizon_days_min: int = 90
+    strategy_horizon_days_max: int = 120
+    log_profile: str = "PRODUCTION"
     log_level: str = "INFO"
     log_file: str = "logs/trading_bot.log"
     universe_log_file: str = "logs/universe_candidates.log"
@@ -40,6 +43,10 @@ class AppConfig:
     @property
     def paper(self) -> bool:
         return "paper" in self.alpaca_base_url.lower() or "sandbox" in self.alpaca_base_url.lower()
+
+    @property
+    def debug_logging(self) -> bool:
+        return self.log_profile.upper() == "DEBUG" or self.log_level.upper() == "DEBUG"
 
 
 def ensure_parent_dir(file_path: str | Path) -> None:
@@ -62,6 +69,9 @@ def load_config() -> AppConfig:
         weekly_universe_stocks=int(os.getenv("WEEKLY_UNIVERSE_STOCKS", "5")),
         weekly_universe_crypto=int(os.getenv("WEEKLY_UNIVERSE_CRYPTO", "5")),
         currency=os.getenv("CURRENCY", "EUR").upper(),
+        strategy_horizon_days_min=int(os.getenv("STRATEGY_HORIZON_DAYS_MIN", "90")),
+        strategy_horizon_days_max=int(os.getenv("STRATEGY_HORIZON_DAYS_MAX", "120")),
+        log_profile=os.getenv("LOG_PROFILE", "PRODUCTION").upper(),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         log_file=os.getenv("LOG_FILE", "logs/trading_bot.log"),
         universe_log_file=os.getenv("UNIVERSE_LOG_FILE", "logs/universe_candidates.log"),
@@ -121,14 +131,33 @@ def retry(
                 except exceptions as exc:  # type: ignore[arg-type]
                     last_error = exc
                     if logger:
-                        logger.warning(
-                            "Attempt %s/%s failed in %s: %s",
-                            attempt,
-                            max_attempts,
-                            func.__name__,
-                            exc,
-                            exc_info=True,
-                        )
+                        config = getattr(args[0], "config", None) if args else None
+                        debug_logging = bool(getattr(config, "debug_logging", False))
+                        if debug_logging:
+                            logger.warning(
+                                "Attempt %s/%s failed in %s: %s",
+                                attempt,
+                                max_attempts,
+                                func.__name__,
+                                exc,
+                                exc_info=True,
+                            )
+                        elif attempt == max_attempts:
+                            logger.warning(
+                                "Attempt %s/%s failed in %s: %s",
+                                attempt,
+                                max_attempts,
+                                func.__name__,
+                                exc,
+                            )
+                        else:
+                            logger.debug(
+                                "Attempt %s/%s failed in %s: %s",
+                                attempt,
+                                max_attempts,
+                                func.__name__,
+                                exc,
+                            )
                     if attempt == max_attempts:
                         break
                     time.sleep(base_delay * (2 ** (attempt - 1)))

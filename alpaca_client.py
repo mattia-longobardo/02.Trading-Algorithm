@@ -8,14 +8,15 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
+from alpaca.common.exceptions import APIError
 from alpaca.data.historical.crypto import CryptoHistoricalDataClient
 from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.enums import DataFeed
-from alpaca.data.requests import CryptoBarsRequest, StockBarsRequest
+from alpaca.data.requests import CryptoBarsRequest, CryptoLatestTradeRequest, StockBarsRequest, StockLatestTradeRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import AssetClass, OrderClass, OrderSide, OrderStatus, OrderType, QueryOrderStatus, TimeInForce
-from alpaca.trading.requests import GetAssetsRequest, GetOrdersRequest, LimitOrderRequest, MarketOrderRequest, ReplaceOrderRequest, StopLossRequest, TakeProfitRequest, TrailingStopOrderRequest
+from alpaca.trading.requests import GetAssetsRequest, GetOrderByIdRequest, GetOrdersRequest, LimitOrderRequest, MarketOrderRequest, ReplaceOrderRequest, StopLossRequest, TakeProfitRequest, TrailingStopOrderRequest
 
 from utils import AppConfig, retry, utc_now
 
@@ -48,7 +49,11 @@ class AlpacaClient:
 
     def get_available_cash(self) -> float:
         account = self.get_account()
-        return float(getattr(account, "cash", 0.0) or 0.0)
+        non_marginable_buying_power = float(getattr(account, "non_marginable_buying_power", 0.0) or 0.0)
+        cash = float(getattr(account, "cash", 0.0) or 0.0)
+        if non_marginable_buying_power > 0:
+            return min(non_marginable_buying_power, cash) if cash > 0 else non_marginable_buying_power
+        return cash
 
     @retry()
     def list_assets(self, asset_class: str) -> list[Any]:
@@ -64,20 +69,96 @@ class AlpacaClient:
     @retry()
     def get_order(self, order_id: str) -> Any:
         self.logger.debug("Fetching order %s", order_id)
-        return self.trading_client.get_order_by_id(order_id, nested=True)
+        return self.trading_client.get_order_by_id(order_id, filter=GetOrderByIdRequest(nested=True))
+
+    @staticmethod
+    def _normalized_symbol_key(symbol: str) -> str:
+        return str(symbol).replace("/", "").upper().strip()
+
+    def _position_matches_symbol(self, position: Any, symbol: str) -> bool:
+        candidate_keys = {
+            self._normalized_symbol_key(symbol),
+            str(symbol).upper().strip(),
+        }
+        for attr_name in ("symbol", "asset_symbol"):
+            value = getattr(position, attr_name, None)
+            if value and self._normalized_symbol_key(str(value)) in candidate_keys:
+                return True
+        return False
+
+    @staticmethod
+    def _is_missing_position_error(exc: Exception) -> bool:
+        if isinstance(exc, APIError) and exc.status_code == 404:
+            return True
+        message = str(exc).lower()
+        return (
+            "position does not exist" in message
+            or "symbol not found" in message
+            or "not found" in message
+        )
+
+    @staticmethod
+    def is_insufficient_balance_error(exc: Exception) -> bool:
+        if isinstance(exc, APIError):
+            try:
+                if exc.code == 40310000:
+                    return True
+            except Exception:
+                pass
+        return "insufficient balance" in str(exc).lower()
+
+    @retry()
+    def list_open_positions(self) -> list[Any]:
+        self.logger.debug("Listing Alpaca open positions")
+        return self.trading_client.get_all_positions()
+
+    def _find_open_position_by_scan(self, symbol: str) -> Any | None:
+        for position in self.list_open_positions():
+            if self._position_matches_symbol(position, symbol):
+                return position
+        return None
 
     @retry()
     def get_open_position(self, symbol: str) -> Any | None:
+        if "/" in symbol:
+            return self._find_open_position_by_scan(symbol)
         try:
             return self.trading_client.get_open_position(symbol)
         except Exception as exc:
-            if "position does not exist" in str(exc).lower():
+            if self._is_missing_position_error(exc):
+                scanned = self._find_open_position_by_scan(symbol)
+                if scanned is not None:
+                    return scanned
                 return None
             raise
 
     @retry()
+    def get_latest_price(self, symbol: str, category: str) -> float:
+        self.logger.debug("Fetching latest price for %s (%s)", symbol, category)
+        if category == "STOCK":
+            request = StockLatestTradeRequest(symbol_or_symbols=symbol, feed=DataFeed.IEX)
+            response = self.stock_data_client.get_stock_latest_trade(request)
+        else:
+            request = CryptoLatestTradeRequest(symbol_or_symbols=symbol)
+            response = self.crypto_data_client.get_crypto_latest_trade(request)
+
+        if isinstance(response, dict):
+            trade = response.get(symbol) or response.get(str(symbol).upper())
+        else:
+            trade = response
+        price = getattr(trade, "price", None)
+        if price is None:
+            raise ValueError(f"Latest price unavailable for {symbol}")
+        return float(price)
+
+    @retry()
     def close_position_market(self, symbol: str) -> Any:
         self.logger.info("Closing position at market for %s", symbol)
+        if "/" in symbol:
+            position = self._find_open_position_by_scan(symbol)
+            asset_id = getattr(position, "asset_id", None) if position is not None else None
+            if asset_id:
+                return self.trading_client.close_position(str(asset_id))
         return self.trading_client.close_position(symbol)
 
     @retry()

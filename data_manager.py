@@ -74,7 +74,7 @@ class DataManager:
                     )
                     inserted += cursor.rowcount
         self.cleanup_old_records(symbol)
-        self.logger.info("Updated %s with %s new bars", symbol, inserted)
+        self.logger.debug("Updated %s with %s new bars", symbol, inserted)
         return inserted
 
     def cleanup_old_records(self, symbol: str | None = None) -> None:

@@ -34,7 +34,7 @@ def make_config(db_path: str) -> AppConfig:
     )
 
 
-class TradeManagerOrderUpdateTests(unittest.TestCase):
+class TradeManagerScriptManagedTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.market_db_path = str(Path(self.temp_dir.name) / "market.sqlite3")
@@ -61,32 +61,46 @@ class TradeManagerOrderUpdateTests(unittest.TestCase):
     def _insert_trade(
         self,
         status: str,
-        broker_protection_type: str = "BRACKET",
-        protection_order_id: str | None = None,
+        *,
+        symbol: str = "AAPL",
+        entry_price: float = 100.0,
+        target_entry_price: float | None = None,
+        quantity: float = 2.0,
+        take_profit: float = 120.0,
+        stop_loss: float = 95.0,
+        trailing_stop_distance: float | None = 3.0,
+        high_water_mark: float | None = None,
+        trailing_stop_price: float | None = None,
+        alpaca_order_id: str = "entry-order",
+        exit_order_id: str | None = None,
+        pending_close_reason: str | None = None,
     ) -> int:
         connection = sqlite3.connect(self.db_path)
         connection.execute(
             """
             INSERT INTO trades (
-                symbol, category, direction, status, entry_price, quantity, allocated_capital,
-                take_profit, stop_loss, trailing_stop_distance, alpaca_order_id, client_order_id, broker_protection_type,
-                protection_order_id, reasoning
-            ) VALUES (?, ?, 'LONG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                symbol, category, direction, status, entry_price, target_entry_price, quantity, allocated_capital,
+                take_profit, stop_loss, trailing_stop_distance, high_water_mark, trailing_stop_price,
+                alpaca_order_id, client_order_id, exit_order_id, pending_close_reason, reasoning
+            ) VALUES (?, ?, 'LONG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                "AAPL",
+                symbol,
                 "STOCK",
                 status,
-                100.0,
-                2.0,
+                entry_price,
+                target_entry_price if target_entry_price is not None else entry_price,
+                quantity,
                 200.0,
-                120.0,
-                95.0,
-                3.0,
-                "parent-order",
+                take_profit,
+                stop_loss,
+                trailing_stop_distance,
+                high_water_mark,
+                trailing_stop_price,
+                alpaca_order_id,
                 "client-order",
-                broker_protection_type,
-                protection_order_id,
+                exit_order_id,
+                pending_close_reason,
                 "initial",
             ),
         )
@@ -95,127 +109,7 @@ class TradeManagerOrderUpdateTests(unittest.TestCase):
         connection.close()
         return int(trade_id)
 
-    def test_update_open_trade_replaces_existing_exit_legs_without_creating_new_entry(self) -> None:
-        trade_id = self._insert_trade("OPEN")
-        trade = self.manager.get_trade(trade_id)
-        assert trade is not None
-
-        decision = {
-            "new_take_profit": 125.0,
-            "new_stop_loss": 97.5,
-            "new_trailing_stop_distance": 4.0,
-            "reasoning": "raise protection",
-        }
-
-        self.alpaca_client.supports_advanced_orders.return_value = True
-
-        self.manager._recreate_updated_order(trade, decision)
-
-        self.alpaca_client.replace_bracket_exit_orders.assert_called_once_with(
-            "parent-order",
-            take_profit=125.0,
-            stop_loss=97.5,
-        )
-        self.alpaca_client.place_limit_bracket_order.assert_not_called()
-        self.alpaca_client.cancel_order_chain.assert_not_called()
-
-        updated_trade = self.manager.get_trade(trade_id)
-        assert updated_trade is not None
-        self.assertEqual(updated_trade["take_profit"], 125.0)
-        self.assertEqual(updated_trade["stop_loss"], 97.5)
-        self.assertEqual(updated_trade["trailing_stop_distance"], 4.0)
-        self.assertEqual(updated_trade["alpaca_order_id"], "parent-order")
-
-    def test_update_pending_trade_cancels_and_recreates_parent_bracket(self) -> None:
-        trade_id = self._insert_trade("PENDING")
-        trade = self.manager.get_trade(trade_id)
-        assert trade is not None
-
-        decision = {
-            "new_take_profit": 126.0,
-            "new_stop_loss": 96.5,
-            "new_trailing_stop_distance": 5.0,
-            "reasoning": "refresh pending setup",
-        }
-
-        self.alpaca_client.supports_advanced_orders.return_value = True
-        self.alpaca_client.place_limit_bracket_order.return_value = {
-            "order": type("Order", (), {"id": "replacement-parent"})(),
-            "client_order_id": "replacement-client",
-            "quantity": 2.0,
-        }
-
-        self.manager._recreate_updated_order(trade, decision)
-
-        self.alpaca_client.cancel_order_chain.assert_called_once_with("parent-order")
-        self.alpaca_client.place_limit_bracket_order.assert_called_once()
-        self.alpaca_client.replace_bracket_exit_orders.assert_not_called()
-
-        updated_trade = self.manager.get_trade(trade_id)
-        assert updated_trade is not None
-        self.assertEqual(updated_trade["alpaca_order_id"], "replacement-parent")
-        self.assertEqual(updated_trade["client_order_id"], "replacement-client")
-        self.assertEqual(updated_trade["take_profit"], 126.0)
-        self.assertEqual(updated_trade["stop_loss"], 96.5)
-        self.assertEqual(updated_trade["trailing_stop_distance"], 5.0)
-
-    def test_sync_pending_trailing_stop_trade_places_broker_side_protection_after_fill(self) -> None:
-        trade_id = self._insert_trade("PENDING", broker_protection_type="TRAILING_STOP")
-        trade = self.manager.get_trade(trade_id)
-        assert trade is not None
-
-        self.alpaca_client.get_order.return_value = type(
-            "Order",
-            (),
-            {"status": "filled", "filled_at": None, "filled_avg_price": 101.5},
-        )()
-        self.alpaca_client.place_trailing_stop_order.return_value = {
-            "order": type("Order", (), {"id": "trail-order"})(),
-            "client_order_id": "trail-client",
-        }
-
-        self.manager.sync_pending_trade(trade)
-
-        self.alpaca_client.place_trailing_stop_order.assert_called_once_with(
-            symbol="AAPL",
-            quantity=2.0,
-            category="STOCK",
-            trail_price=3.0,
-        )
-        updated_trade = self.manager.get_trade(trade_id)
-        assert updated_trade is not None
-        self.assertEqual(updated_trade["status"], "OPEN")
-        self.assertEqual(updated_trade["entry_price"], 101.5)
-        self.assertEqual(updated_trade["protection_order_id"], "trail-order")
-        self.assertEqual(updated_trade["protection_client_order_id"], "trail-client")
-
-    def test_update_open_trailing_stop_trade_replaces_trailing_order(self) -> None:
-        trade_id = self._insert_trade(
-            "OPEN",
-            broker_protection_type="TRAILING_STOP",
-            protection_order_id="trail-order",
-        )
-        trade = self.manager.get_trade(trade_id)
-        assert trade is not None
-
-        decision = {
-            "new_take_profit": 130.0,
-            "new_stop_loss": 99.0,
-            "new_trailing_stop_distance": 4.5,
-            "reasoning": "widen trail",
-        }
-
-        self.manager._recreate_updated_order(trade, decision)
-
-        self.alpaca_client.replace_trailing_stop_order.assert_called_once_with("trail-order", 4.5)
-        self.alpaca_client.replace_bracket_exit_orders.assert_not_called()
-        updated_trade = self.manager.get_trade(trade_id)
-        assert updated_trade is not None
-        self.assertEqual(updated_trade["take_profit"], 130.0)
-        self.assertEqual(updated_trade["stop_loss"], 99.0)
-        self.assertEqual(updated_trade["trailing_stop_distance"], 4.5)
-
-    def test_maybe_open_trade_uses_simple_entry_for_broker_side_trailing_stop_strategy(self) -> None:
+    def test_maybe_open_trade_stores_script_managed_pending_trade(self) -> None:
         self.data_manager.get_symbol_history.return_value = [{"close": 100.0}]
         self.gpt_client.request_new_signal.return_value = {
             "action": "OPEN",
@@ -227,8 +121,8 @@ class TradeManagerOrderUpdateTests(unittest.TestCase):
             "confidence": 0.8,
             "reasoning": "trend setup",
         }
+        self.alpaca_client.get_open_position.return_value = None
         self.alpaca_client.get_available_cash.return_value = 1000.0
-        self.alpaca_client.supports_broker_side_trailing_stop.return_value = True
         self.alpaca_client.place_limit_entry_order.return_value = {
             "order": type("Order", (), {"id": "entry-order"})(),
             "client_order_id": "entry-client",
@@ -238,10 +132,135 @@ class TradeManagerOrderUpdateTests(unittest.TestCase):
         self.manager.maybe_open_trade("STOCK", "AAPL")
 
         self.alpaca_client.place_limit_entry_order.assert_called_once()
-        self.alpaca_client.place_limit_bracket_order.assert_not_called()
         trade = self.manager.get_open_or_pending_trades()[0]
-        self.assertEqual(trade["broker_protection_type"], "TRAILING_STOP")
-        self.assertEqual(trade["alpaca_order_id"], "entry-order")
+        self.assertEqual(trade["status"], "PENDING")
+        self.assertEqual(trade["target_entry_price"], 100.0)
+        self.assertEqual(trade["trailing_stop_distance"], 3.0)
+        self.assertEqual(trade["exit_order_id"], None)
+
+    def test_maybe_open_trade_skips_symbol_with_existing_active_trade(self) -> None:
+        self._insert_trade("OPEN")
+
+        self.manager.maybe_open_trade("STOCK", "AAPL")
+
+        self.alpaca_client.place_limit_entry_order.assert_not_called()
+        self.assertEqual(len(self.manager.get_open_or_pending_trades()), 1)
+
+    def test_maybe_open_trade_skips_when_alpaca_rejects_for_insufficient_balance(self) -> None:
+        self.data_manager.get_symbol_history.return_value = [{"close": 100.0}]
+        self.gpt_client.request_new_signal.return_value = {
+            "action": "OPEN",
+            "symbol": "AAPL",
+            "entry_price": 100.0,
+            "take_profit": 120.0,
+            "stop_loss": 95.0,
+            "trailing_stop_distance": 3.0,
+            "confidence": 0.8,
+            "reasoning": "trend setup",
+        }
+        self.alpaca_client.get_open_position.return_value = None
+        self.alpaca_client.get_available_cash.return_value = 1000.0
+        self.alpaca_client.is_insufficient_balance_error.return_value = True
+        self.alpaca_client.place_limit_entry_order.side_effect = RuntimeError("insufficient balance")
+
+        self.manager.maybe_open_trade("STOCK", "AAPL")
+
+        self.assertEqual(self.manager.get_open_or_pending_trades(), [])
+
+    def test_sync_pending_trade_promotes_filled_entry_to_open_and_initializes_trailing_state(self) -> None:
+        trade_id = self._insert_trade("PENDING")
+        trade = self.manager.get_trade(trade_id)
+        assert trade is not None
+
+        self.alpaca_client.get_order.return_value = type(
+            "Order",
+            (),
+            {"status": "filled", "filled_at": None, "filled_avg_price": 101.5, "filled_qty": 2.0},
+        )()
+        self.alpaca_client.get_open_position.return_value = type(
+            "Position",
+            (),
+            {"qty": "2", "avg_entry_price": "101.5", "current_price": "103.0"},
+        )()
+        self.alpaca_client.get_latest_price.return_value = 103.0
+
+        self.manager.sync_pending_trade(trade)
+
+        updated_trade = self.manager.get_trade(trade_id)
+        assert updated_trade is not None
+        self.assertEqual(updated_trade["status"], "OPEN")
+        self.assertEqual(updated_trade["entry_price"], 101.5)
+        self.assertEqual(updated_trade["quantity"], 2.0)
+        self.assertEqual(updated_trade["high_water_mark"], 103.0)
+        self.assertEqual(updated_trade["trailing_stop_price"], 100.0)
+        self.assertIsNotNone(updated_trade["open_timestamp"])
+
+    def test_sync_open_trade_requests_market_close_when_take_profit_is_hit(self) -> None:
+        trade_id = self._insert_trade("OPEN", take_profit=105.0, stop_loss=95.0, high_water_mark=104.0)
+        trade = self.manager.get_trade(trade_id)
+        assert trade is not None
+
+        self.alpaca_client.get_open_position.return_value = type(
+            "Position",
+            (),
+            {"qty": "2", "current_price": "106.0"},
+        )()
+        self.alpaca_client.get_latest_price.return_value = 106.0
+        self.alpaca_client.close_position_market.return_value = type(
+            "Order",
+            (),
+            {"id": "exit-order", "client_order_id": "exit-client"},
+        )()
+        self.alpaca_client.get_order.return_value = type(
+            "Order",
+            (),
+            {"status": "filled", "filled_avg_price": 106.2, "filled_at": None},
+        )()
+
+        self.manager.sync_open_trade(trade)
+
+        self.alpaca_client.close_position_market.assert_called_once_with("AAPL")
+        updated_trade = self.manager.get_trade(trade_id)
+        assert updated_trade is not None
+        self.assertEqual(updated_trade["status"], "CLOSED")
+        self.assertEqual(updated_trade["close_reason"], "TAKE_PROFIT")
+        self.assertEqual(updated_trade["close_price"], 106.2)
+
+    def test_sync_open_trade_uses_trailing_stop_when_it_is_tighter_than_stop_loss(self) -> None:
+        trade_id = self._insert_trade(
+            "OPEN",
+            take_profit=130.0,
+            stop_loss=95.0,
+            high_water_mark=110.0,
+            trailing_stop_distance=3.0,
+        )
+        trade = self.manager.get_trade(trade_id)
+        assert trade is not None
+
+        self.alpaca_client.get_open_position.return_value = type(
+            "Position",
+            (),
+            {"qty": "2", "current_price": "106.0"},
+        )()
+        self.alpaca_client.get_latest_price.return_value = 106.0
+        self.alpaca_client.close_position_market.return_value = type(
+            "Order",
+            (),
+            {"id": "exit-order", "client_order_id": "exit-client"},
+        )()
+        self.alpaca_client.get_order.return_value = type(
+            "Order",
+            (),
+            {"status": "filled", "filled_avg_price": 105.5, "filled_at": None},
+        )()
+
+        self.manager.sync_open_trade(trade)
+
+        updated_trade = self.manager.get_trade(trade_id)
+        assert updated_trade is not None
+        self.assertEqual(updated_trade["status"], "CLOSED")
+        self.assertEqual(updated_trade["close_reason"], "TRAILING_STOP")
+        self.assertEqual(updated_trade["close_price"], 105.5)
 
 
 if __name__ == "__main__":

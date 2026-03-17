@@ -11,7 +11,7 @@ from utils import AppConfig, read_universe_file, write_universe_file
 
 
 class UniverseManager:
-    """Select and persist the weekly trading universe."""
+    """Select and persist the active trading universe."""
 
     MAX_STOCK_CANDIDATES_FOR_GPT = 120
     MAX_CRYPTO_CANDIDATES_FOR_GPT = 80
@@ -29,7 +29,7 @@ class UniverseManager:
         crypto_payload: list[dict[str, str | bool | float | None]],
     ) -> None:
         self.candidate_logger.info(
-            "Weekly universe candidates | stocks_count=%s | crypto_count=%s | stocks=%s | crypto=%s",
+            "Trading universe candidates | stocks_count=%s | crypto_count=%s | stocks=%s | crypto=%s",
             len(stock_payload),
             len(crypto_payload),
             dumps(stock_payload, ensure_ascii=True, sort_keys=True),
@@ -140,19 +140,19 @@ class UniverseManager:
                     break
         return selected
 
-    def select_weekly_universe(self) -> dict[str, list[str]]:
+    def select_trading_universe(self) -> dict[str, list[str]]:
         stock_payload = self._get_stock_candidate_payload()
         crypto_payload = self._get_crypto_candidate_payload()
         self._log_candidate_lists(stock_payload, crypto_payload)
         stock_candidates = [str(asset["symbol"]) for asset in stock_payload]
         crypto_candidates = [str(asset["symbol"]) for asset in crypto_payload]
         try:
-            result = self.gpt_client.request_weekly_universe(stock_payload, crypto_payload)
+            result = self.gpt_client.request_trading_universe(stock_payload, crypto_payload)
         except Exception:
-            self.logger.exception("GPT weekly universe failed; saving empty universe")
+            self.logger.exception("GPT trading universe selection failed; saving empty universe")
             universe = {"STOCK": [], "CRYPTO": []}
             write_universe_file(universe)
-            self.logger.info("Selected empty weekly universe after GPT failure")
+            self.logger.info("Selected empty trading universe after GPT failure")
             return universe
         valid_stock_candidates = set(stock_candidates)
         valid_crypto_candidates = set(crypto_candidates)
@@ -163,8 +163,11 @@ class UniverseManager:
             "CRYPTO": crypto[: self.config.weekly_universe_crypto],
         }
         write_universe_file(universe)
-        self.logger.info("Selected weekly universe: %s", universe)
+        self.logger.info("Selected trading universe: %s", universe)
         return universe
+
+    def select_weekly_universe(self) -> dict[str, list[str]]:
+        return self.select_trading_universe()
 
     def get_current_universe(self) -> dict[str, list[str]]:
         return read_universe_file()
