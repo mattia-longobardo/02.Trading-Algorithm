@@ -74,7 +74,7 @@ class UniverseManagerCandidateTests(unittest.TestCase):
         self.alpaca_client.list_assets.assert_called_once_with("CRYPTO")
         self.assertEqual(candidates, ["BTC/EUR", "eth/eur"])
 
-    def test_select_weekly_universe_logs_all_stock_and_crypto_candidates_to_dedicated_logger(self) -> None:
+    def test_select_trading_universe_logs_all_stock_and_crypto_candidates_to_dedicated_logger(self) -> None:
         self.manager._get_stock_candidate_payload = Mock(
             return_value=[
                 {"symbol": "AAPL", "name": "Apple Inc.", "status": "active", "tradable": True, "fractionable": True},
@@ -87,17 +87,17 @@ class UniverseManagerCandidateTests(unittest.TestCase):
                 {"symbol": "ETH/EUR", "name": "Ethereum", "status": "active", "tradable": True, "fractionable": True},
             ]
         )
-        self.gpt_client.request_weekly_universe.return_value = {
+        self.gpt_client.request_trading_universe.return_value = {
             "stocks": ["MSFT"],
             "crypto": ["BTC/EUR"],
         }
 
-        universe = self.manager.select_weekly_universe()
+        universe = self.manager.select_trading_universe()
 
         self.assertEqual(universe, {"STOCK": ["MSFT"], "CRYPTO": ["BTC/EUR"]})
         self.manager.candidate_logger.info.assert_called_once()
         logged_message, *logged_args = self.manager.candidate_logger.info.call_args[0]
-        self.assertIn("Weekly universe candidates", logged_message)
+        self.assertIn("Trading universe candidates", logged_message)
         self.assertEqual(logged_args[0], 2)
         self.assertEqual(logged_args[1], 2)
         self.assertIn('"symbol": "AAPL"', logged_args[2])
