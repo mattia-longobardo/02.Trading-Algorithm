@@ -16,7 +16,7 @@ services:
     image: tsl0922/ttyd
     container_name: log-trading
     restart: unless-stopped
-    command: ttyd -p 8080 tail -f /app/logs/trading_bot.log
+    command: ttyd -p 8080 tail -n 1000 -f /app/logs/trading_bot.log
     volumes:
       - ./logs:/app/logs
     networks:
