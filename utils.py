@@ -14,7 +14,8 @@ from typing import Any, Callable, TypeVar
 from dotenv import load_dotenv
 
 F = TypeVar("F", bound=Callable[..., Any])
-UNIVERSE_FILE = Path("data/universe.json")
+BASE_DIR = Path(__file__).resolve().parent
+UNIVERSE_FILE = BASE_DIR / "data/universe.json"
 
 
 @dataclass(slots=True)
@@ -55,6 +56,15 @@ def ensure_parent_dir(file_path: str | Path) -> None:
     Path(file_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
 
 
+def resolve_runtime_path(file_path: str | Path) -> str:
+    """Resolve application runtime files relative to the project root."""
+
+    candidate = Path(file_path).expanduser()
+    if not candidate.is_absolute():
+        candidate = BASE_DIR / candidate
+    return str(candidate.resolve())
+
+
 def load_config() -> AppConfig:
     """Load environment variables into the application config."""
 
@@ -79,6 +89,11 @@ def load_config() -> AppConfig:
         db_trades=os.getenv("DB_TRADES", "data/trades.sqlite"),
         lock_file=os.getenv("LOCK_FILE", "run/trading_scheduler.lock"),
     )
+    config.log_file = resolve_runtime_path(config.log_file)
+    config.universe_log_file = resolve_runtime_path(config.universe_log_file)
+    config.db_market_data = resolve_runtime_path(config.db_market_data)
+    config.db_trades = resolve_runtime_path(config.db_trades)
+    config.lock_file = resolve_runtime_path(config.lock_file)
     ensure_parent_dir(config.log_file)
     ensure_parent_dir(config.universe_log_file)
     ensure_parent_dir(config.db_market_data)
@@ -195,6 +210,13 @@ def write_universe_file(payload: dict[str, list[str]]) -> None:
 
     ensure_parent_dir(UNIVERSE_FILE)
     UNIVERSE_FILE.write_text(to_json(payload), encoding="utf-8")
+
+
+def write_json_file(file_path: str | Path, payload: Any) -> None:
+    """Persist arbitrary JSON payloads to disk."""
+
+    ensure_parent_dir(file_path)
+    Path(file_path).write_text(to_json(payload), encoding="utf-8")
 
 
 def market_data_start(first_download: bool) -> datetime:
