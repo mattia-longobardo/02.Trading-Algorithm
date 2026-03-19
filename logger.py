@@ -21,23 +21,6 @@ class ProductionNoiseFilter(logging.Filter):
         return True
 
 
-def _ensure_universe_logger(config: AppConfig, formatter: logging.Formatter) -> None:
-    universe_logger = logging.getLogger("trading_bot.universe.candidates")
-    universe_logger.setLevel(logging.INFO)
-    universe_logger.propagate = False
-    if universe_logger.handlers:
-        return
-
-    universe_handler = RotatingFileHandler(
-        config.universe_log_file,
-        maxBytes=10 * 1024 * 1024,
-        backupCount=5,
-        encoding="utf-8",
-    )
-    universe_handler.setFormatter(formatter)
-    universe_logger.addHandler(universe_handler)
-
-
 def _configure_external_loggers(config: AppConfig) -> None:
     if config.debug_logging:
         third_party_level = logging.INFO
@@ -81,6 +64,5 @@ def setup_logging(config: AppConfig) -> logging.Logger:
     root_logger.setLevel(getattr(logging, config.log_level, logging.INFO))
     _configure_handlers(config, formatter, root_logger)
     _configure_external_loggers(config)
-    _ensure_universe_logger(config, formatter)
 
     return logging.getLogger("trading_bot")
