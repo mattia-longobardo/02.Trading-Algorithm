@@ -30,6 +30,7 @@ class AppConfig:
     max_open_trades_crypto: int = 3
     weekly_universe_stocks: int = 5
     weekly_universe_crypto: int = 5
+    risk_tolerance: int = 5
     currency: str = "EUR"
     strategy_horizon_days_min: int = 90
     strategy_horizon_days_max: int = 120
@@ -78,6 +79,7 @@ def load_config() -> AppConfig:
         max_open_trades_crypto=int(os.getenv("MAX_OPEN_TRADES_CRYPTO", "3")),
         weekly_universe_stocks=int(os.getenv("WEEKLY_UNIVERSE_STOCKS", "5")),
         weekly_universe_crypto=int(os.getenv("WEEKLY_UNIVERSE_CRYPTO", "5")),
+        risk_tolerance=max(1, min(10, int(os.getenv("RISK_TOLERANCE", "5")))),
         currency=os.getenv("CURRENCY", "EUR").upper(),
         strategy_horizon_days_min=int(os.getenv("STRATEGY_HORIZON_DAYS_MIN", "90")),
         strategy_horizon_days_max=int(os.getenv("STRATEGY_HORIZON_DAYS_MAX", "120")),

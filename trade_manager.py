@@ -154,8 +154,8 @@ class TradeManager:
                 INSERT INTO trades (
                     symbol, category, direction, status, entry_price, target_entry_price, quantity, allocated_capital,
                     take_profit, stop_loss, trailing_stop_distance, alpaca_order_id, client_order_id,
-                    reasoning, confidence
-                ) VALUES (?, ?, 'LONG', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    reasoning, confidence, trade_score
+                ) VALUES (?, ?, 'LONG', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     symbol,
@@ -171,6 +171,7 @@ class TradeManager:
                     order_payload["client_order_id"],
                     signal.get("reasoning"),
                     signal.get("confidence"),
+                    self._as_float(signal.get("trade_score")),
                 ),
             )
         self.logger.info("Stored new pending trade for %s", symbol)
@@ -198,30 +199,50 @@ class TradeManager:
             return False
         return True
 
-    def maybe_open_trade(self, category: str, symbol: str) -> None:
+    def _available_trade_slots(self, category: str) -> int:
+        max_trades = self.config.max_open_trades_stock if category == "STOCK" else self.config.max_open_trades_crypto
+        return max(max_trades - self.count_active_trades(category), 0)
+
+    def _build_batch_payloads(
+        self,
+        category: str,
+        symbols: list[str],
+    ) -> list[dict[str, Any]]:
+        payloads: list[dict[str, Any]] = []
+        for symbol in symbols:
+            if self.get_symbol_trades(symbol):
+                self.logger.debug("Skipping %s because an active trade already exists for the symbol", symbol)
+                continue
+            if self.alpaca_client.get_open_position(symbol) is not None:
+                self.logger.debug("Skipping %s because Alpaca already reports an open position", symbol)
+                continue
+            candles = self.data_manager.get_symbol_history(symbol, limit=260)
+            if not candles:
+                self.logger.warning("No market data found for %s, skipping batch analysis", symbol)
+                continue
+            payloads.append(self.gpt_client.build_symbol_payload(symbol, category, candles, []))
+        return payloads
+
+    def _rank_signals(self, signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        def sort_key(signal: dict[str, Any]) -> tuple[float, float]:
+            score = self._as_float(signal.get("trade_score")) or 0.0
+            confidence = self._as_float(signal.get("confidence")) or 0.0
+            return (score, confidence)
+
+        return sorted(signals, key=sort_key, reverse=True)
+
+    def _open_trade_from_signal(self, category: str, symbol: str, signal: dict[str, Any]) -> bool:
         if self.get_symbol_trades(symbol):
             self.logger.debug("Skipping %s because an active trade already exists for the symbol", symbol)
-            return
+            return False
         if self.alpaca_client.get_open_position(symbol) is not None:
             self.logger.debug("Skipping %s because Alpaca already reports an open position", symbol)
-            return
-
-        max_trades = self.config.max_open_trades_stock if category == "STOCK" else self.config.max_open_trades_crypto
-        if self.count_active_trades(category) >= max_trades:
-            self.logger.debug("Skipping %s because the max number of active %s trades has been reached", symbol, category)
-            return
-
-        candles = self.data_manager.get_symbol_history(symbol)
-        if not candles:
-            self.logger.warning("No market data found for %s, skipping new trade decision", symbol)
-            return
-
-        signal = self.gpt_client.request_new_signal(symbol, category, candles, [])
-        if signal["action"] != "OPEN":
-            self.logger.debug("GPT skipped %s", symbol)
-            return
+            return False
+        if self._available_trade_slots(category) <= 0:
+            self.logger.debug("Skipping %s because no %s slots are available", symbol, category)
+            return False
         if not self._signal_has_required_levels(signal):
-            return
+            return False
 
         allocated_capital = self.compute_allocated_capital()
         try:
@@ -237,9 +258,32 @@ class TradeManager:
                     "Skipping %s because available capital is insufficient for the proposed entry",
                     symbol,
                 )
-                return
+                return False
             raise
         self._save_new_trade(category, symbol, signal, order_payload, allocated_capital)
+        return True
+
+    def maybe_open_trade(self, category: str, symbol: str) -> None:
+        if self.get_symbol_trades(symbol):
+            self.logger.debug("Skipping %s because an active trade already exists for the symbol", symbol)
+            return
+        if self.alpaca_client.get_open_position(symbol) is not None:
+            self.logger.debug("Skipping %s because Alpaca already reports an open position", symbol)
+            return
+        if self._available_trade_slots(category) <= 0:
+            self.logger.debug("Skipping %s because the max number of active %s trades has been reached", symbol, category)
+            return
+
+        candles = self.data_manager.get_symbol_history(symbol)
+        if not candles:
+            self.logger.warning("No market data found for %s, skipping new trade decision", symbol)
+            return
+
+        signal = self.gpt_client.request_new_signal(symbol, category, candles, [])
+        if signal["action"] != "OPEN":
+            self.logger.debug("GPT skipped %s", symbol)
+            return
+        self._open_trade_from_signal(category, symbol, signal)
 
     def _activate_trade_from_entry_fill(self, trade: dict[str, Any], order: Any) -> None:
         position = self.alpaca_client.get_open_position(trade["symbol"])
@@ -467,11 +511,53 @@ class TradeManager:
 
     def evaluate_cycle(self, universe: dict[str, list[str]]) -> None:
         for category, symbols in universe.items():
-            for symbol in symbols:
-                try:
-                    self.maybe_open_trade(category, symbol)
-                except Exception:
-                    self.logger.exception("Failed to evaluate symbol %s", symbol)
+            try:
+                available_slots = self._available_trade_slots(category)
+                if available_slots <= 0:
+                    self.logger.debug("Skipping %s batch evaluation because no slots are available", category)
+                    continue
+
+                symbol_payloads = self._build_batch_payloads(category, list(symbols))
+                if not symbol_payloads:
+                    continue
+
+                batch_response = self.gpt_client.request_batch_trade_signals(
+                    category=category,
+                    symbol_payloads=symbol_payloads,
+                    existing_trades=[],
+                    max_new_trades=available_slots,
+                )
+                by_symbol = {payload["symbol"]: payload for payload in symbol_payloads}
+                candidate_signals = [
+                    signal
+                    for signal in batch_response.get("signals", [])
+                    if signal.get("action") == "OPEN" and str(signal.get("symbol")) in by_symbol
+                ]
+                ranked_signals = self._rank_signals(candidate_signals)
+                if ranked_signals:
+                    self.logger.info(
+                        "Top %s signals: %s",
+                        category,
+                        [
+                            {
+                                "symbol": signal.get("symbol"),
+                                "trade_score": self._as_float(signal.get("trade_score")),
+                                "confidence": self._as_float(signal.get("confidence")),
+                            }
+                            for signal in ranked_signals
+                        ],
+                    )
+
+                opened = 0
+                for signal in ranked_signals:
+                    if self._available_trade_slots(category) <= 0:
+                        break
+                    symbol = str(signal["symbol"])
+                    if self._open_trade_from_signal(category, symbol, signal):
+                        opened += 1
+                self.logger.info("Opened %s new %s trades in this cycle", opened, category)
+            except Exception:
+                self.logger.exception("Failed to evaluate %s universe batch", category)
 
     def symbols_to_monitor(self, universe: dict[str, list[str]]) -> dict[str, str]:
         monitored = {symbol: "STOCK" for symbol in universe.get("STOCK", [])}

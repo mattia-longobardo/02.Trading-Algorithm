@@ -137,6 +137,7 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
         self.assertEqual(trade["target_entry_price"], 100.0)
         self.assertEqual(trade["trailing_stop_distance"], 3.0)
         self.assertEqual(trade["exit_order_id"], None)
+        self.assertEqual(trade["trade_score"], None)
 
     def test_maybe_open_trade_skips_symbol_with_existing_active_trade(self) -> None:
         self._insert_trade("OPEN")
@@ -166,6 +167,77 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
         self.manager.maybe_open_trade("STOCK", "AAPL")
 
         self.assertEqual(self.manager.get_open_or_pending_trades(), [])
+
+    def test_evaluate_cycle_opens_highest_scored_batch_signals_first(self) -> None:
+        self.config.max_open_trades_stock = 2
+        self.data_manager.get_symbol_history.side_effect = [
+            [{"close": 100.0}],
+            [{"close": 200.0}],
+            [{"close": 300.0}],
+        ]
+        self.alpaca_client.get_open_position.return_value = None
+        self.alpaca_client.get_available_cash.return_value = 1000.0
+        self.alpaca_client.place_limit_entry_order.side_effect = [
+            {
+                "order": type("Order", (), {"id": "entry-1"})(),
+                "client_order_id": "entry-client-1",
+                "quantity": 2.0,
+            },
+            {
+                "order": type("Order", (), {"id": "entry-2"})(),
+                "client_order_id": "entry-client-2",
+                "quantity": 1.0,
+            },
+        ]
+        self.gpt_client.build_symbol_payload.side_effect = lambda symbol, category, candles, existing: {
+            "symbol": symbol,
+            "category": category,
+            "ohlcv_daily": candles,
+        }
+        self.gpt_client.request_batch_trade_signals.return_value = {
+            "signals": [
+                {
+                    "action": "OPEN",
+                    "symbol": "MSFT",
+                    "entry_price": 200.0,
+                    "take_profit": 240.0,
+                    "stop_loss": 180.0,
+                    "trailing_stop_distance": 5.0,
+                    "trade_score": 91.0,
+                    "confidence": 0.7,
+                    "reasoning": "best",
+                },
+                {
+                    "action": "OPEN",
+                    "symbol": "AAPL",
+                    "entry_price": 100.0,
+                    "take_profit": 115.0,
+                    "stop_loss": 92.0,
+                    "trailing_stop_distance": 4.0,
+                    "trade_score": 88.0,
+                    "confidence": 0.8,
+                    "reasoning": "second",
+                },
+                {
+                    "action": "OPEN",
+                    "symbol": "NVDA",
+                    "entry_price": 300.0,
+                    "take_profit": 360.0,
+                    "stop_loss": 270.0,
+                    "trailing_stop_distance": 8.0,
+                    "trade_score": 72.0,
+                    "confidence": 0.9,
+                    "reasoning": "third",
+                },
+            ],
+            "reasoning": "ranked batch",
+        }
+
+        self.manager.evaluate_cycle({"STOCK": ["AAPL", "MSFT", "NVDA"]})
+
+        trades = self.manager.get_open_or_pending_trades()
+        self.assertEqual([trade["symbol"] for trade in trades], ["MSFT", "AAPL"])
+        self.assertEqual([trade["trade_score"] for trade in trades], [91.0, 88.0])
 
     def test_sync_pending_trade_promotes_filled_entry_to_open_and_initializes_trailing_state(self) -> None:
         trade_id = self._insert_trade("PENDING")

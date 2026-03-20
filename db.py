@@ -70,6 +70,7 @@ TRADE_OPTIONAL_COLUMNS: dict[str, str] = {
     "exit_order_id": "TEXT",
     "exit_client_order_id": "TEXT",
     "exit_requested_at": "TEXT",
+    "trade_score": "REAL",
 }
 
 
@@ -82,14 +83,16 @@ def _connect(db_path: str) -> sqlite3.Connection:
 
 
 def _ensure_optional_trade_columns(connection: sqlite3.Connection) -> None:
-    existing_columns = {
-        row["name"]
-        for row in connection.execute("PRAGMA table_info(trades)").fetchall()
-    }
+    cursor = connection.execute("PRAGMA table_info(trades)")
+    try:
+        existing_columns = {row["name"] for row in cursor.fetchall()}
+    finally:
+        cursor.close()
     for column, definition in TRADE_OPTIONAL_COLUMNS.items():
         if column in existing_columns:
             continue
-        connection.execute(f"ALTER TABLE trades ADD COLUMN {column} {definition}")
+        alter_cursor = connection.execute(f"ALTER TABLE trades ADD COLUMN {column} {definition}")
+        alter_cursor.close()
 
 
 def initialize_databases(market_db_path: str, trades_db_path: str) -> None:
@@ -125,7 +128,11 @@ def fetch_all(db_path: str, query: str, params: tuple[Any, ...] = ()) -> list[di
     """Return all rows for a query as dictionaries."""
 
     with _connect(db_path) as connection:
-        rows = connection.execute(query, params).fetchall()
+        cursor = connection.execute(query, params)
+        try:
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
     return [dict(row) for row in rows]
 
 
@@ -133,5 +140,9 @@ def fetch_one(db_path: str, query: str, params: tuple[Any, ...] = ()) -> dict[st
     """Return the first row for a query as a dictionary."""
 
     with _connect(db_path) as connection:
-        row = connection.execute(query, params).fetchone()
+        cursor = connection.execute(query, params)
+        try:
+            row = cursor.fetchone()
+        finally:
+            cursor.close()
     return dict(row) if row else None
