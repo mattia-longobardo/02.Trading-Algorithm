@@ -52,7 +52,8 @@ class TradingScheduler:
 
         if missing_universe:
             self.logger.info("Universe assente o vuoto: eseguo una bootstrap run prima dello scheduler")
-            self.job_refresh_universe_and_signals()
+            self.job_refresh_universe()
+            self.job_evaluate_signals()
             return
 
         if self._missing_market_data(universe):
@@ -84,15 +85,23 @@ class TradingScheduler:
     def job_monitor_trades(self) -> None:
         self.trade_manager.sync_alpaca_state()
 
-    def job_refresh_universe_and_signals(self) -> None:
+    def job_evaluate_signals(self) -> None:
         self.trade_manager.sync_alpaca_state()
-        universe = self.universe_manager.select_trading_universe()
+        universe = self.universe_manager.get_current_universe()
+        if self._universe_is_empty(universe):
+            universe = self.universe_manager.select_trading_universe()
         monitored = self.trade_manager.symbols_to_monitor(universe)
         self.trade_manager.data_manager.update_symbols(monitored)
         self.trade_manager.evaluate_cycle(universe)
 
+    def job_refresh_universe_and_signals(self) -> None:
+        self.job_refresh_universe()
+        self.job_evaluate_signals()
+
     def job_refresh_universe(self) -> None:
-        self.universe_manager.select_trading_universe()
+        universe = self.universe_manager.select_trading_universe()
+        monitored = self.trade_manager.symbols_to_monitor(universe)
+        self.trade_manager.data_manager.update_symbols(monitored)
 
     def job_weekly_report(self) -> None:
         self.report_generator.generate_weekly_report()
@@ -105,15 +114,21 @@ class TradingScheduler:
             replace_existing=True,
         )
         self.scheduler.add_job(
-            self.guarded("refresh_universe_and_signals_0010", self.job_refresh_universe_and_signals),
+            self.guarded("evaluate_signals_0010", self.job_evaluate_signals),
             CronTrigger(hour=0, minute=10),
-            id="refresh_universe_and_signals_0010",
+            id="evaluate_signals_0010",
             replace_existing=True,
         )
         self.scheduler.add_job(
-            self.guarded("refresh_universe_and_signals_1210", self.job_refresh_universe_and_signals),
+            self.guarded("evaluate_signals_1210", self.job_evaluate_signals),
             CronTrigger(hour=12, minute=10),
-            id="refresh_universe_and_signals_1210",
+            id="evaluate_signals_1210",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self.guarded("refresh_universe_weekly", self.job_refresh_universe),
+            CronTrigger(day_of_week="sun", hour=22, minute=0),
+            id="refresh_universe_weekly",
             replace_existing=True,
         )
         self.scheduler.add_job(

@@ -26,6 +26,7 @@ pip install -r requirements.txt
 
 Compila `.env` con le tue chiavi OpenAI e Alpaca. Per default il sistema usa Alpaca Paper Trading.
 La valuta di riferimento del bot e` configurabile con `CURRENCY` ed e` usata in modo coerente sia per stock sia per crypto. Per Alpaca crypto in pratica conviene usare `USD`.
+Il profilo di rischio utente e` configurabile con `RISK_TOLERANCE` da `1` a `10`: valori bassi rendono la selezione e i trade piu` conservativi, valori alti permettono setup piu` aggressivi.
 L'orizzonte strategico e` configurabile con `STRATEGY_HORIZON_DAYS_MIN` e `STRATEGY_HORIZON_DAYS_MAX`. Di default il bot ragiona come position trader su circa 90-120 giorni, quindi non e` ottimizzato per il daily trading.
 Il logging supporta due profili: `LOG_PROFILE=PRODUCTION` per log sintetici e orientati agli eventi principali, oppure `LOG_PROFILE=DEBUG` per mantenere il dettaglio completo durante troubleshooting.
 
@@ -38,19 +39,22 @@ python main.py
 ## Job schedulati
 
 - Ogni minuto: sync stato ordini/posizioni Alpaca e gestione script-managed di TP, SL e TSL
-- Ogni giorno `00:10 UTC` e `12:10 UTC`: refresh universe + aggiornamento segnali + apertura eventuali nuovi ordini
+- Ogni giorno `00:10 UTC` e `12:10 UTC`: analisi batch dell'universo corrente + apertura eventuali nuovi ordini ordinati per `trade_score`
+- Ogni domenica `22:00 UTC`: refresh settimanale dell'universo stock/crypto
 - Ogni domenica `23:00 UTC`: report performance
 
 ## Note operative
 
 - Solo operazioni `LONG`
 - Strategia di medio-lungo periodo: il modello cerca setup da position trading, non da daily trading
-- Universe separato tra `STOCK` e `CRYPTO`
+- Universe separato tra `STOCK` e `CRYPTO`, ricreato una volta a settimana
 - Un solo trade attivo (`PENDING` o `OPEN`) per simbolo/coppia
 - TP, SL e trailing stop sono gestiti internamente dal bot e salvati nel DB trade
 - ETF esclusi nella selezione dell'universo
 - Retry automatico su OpenAI e Alpaca con backoff esponenziale
 - Tutte le decisioni GPT richiedono web search
+- La selezione settimanale dell'universo usa tutti i candidati Alpaca: vengono analizzati in batch sequenziali e poi consolidati in una selezione finale
+- L'analisi GPT dei segnali e` eseguita in batch per categoria, riducendo il numero di chiamate rispetto all'analisi simbolo per simbolo
 
 ## Logica ordini
 
