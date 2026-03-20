@@ -2,10 +2,11 @@ services:
   trading:
     build: .
     container_name: trading
+    user: 1000:1000
     init: true
     restart: always
     stop_signal: SIGTERM
-    stop_grace_period: 45s
+    stop_grace_period: 20s
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
@@ -19,6 +20,7 @@ services:
   log-trading:
     image: tsl0922/ttyd
     container_name: log-trading
+    user: 1000:1000
     restart: unless-stopped
     command: ttyd -p 8080 tail -n 1000 -f /app/logs/trading_bot.log
     volumes:

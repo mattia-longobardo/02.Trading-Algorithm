@@ -120,7 +120,7 @@ class GPTClient:
     def _request_json(self, instructions: str, payload: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
         self.logger.debug("Calling OpenAI Responses API for %s", schema["name"])
         response = self.client.responses.create(
-            model="gpt-5.2",
+            model="gpt-5.4",
             reasoning={"effort": "low"},
             instructions=instructions,
             input=to_json(payload),
