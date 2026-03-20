@@ -336,9 +336,26 @@ class TradeManager:
         self.logger.info("Trade %s moved from PENDING to OPEN", trade["id"])
 
     def sync_pending_trade(self, trade: dict[str, Any]) -> None:
-        if not trade.get("alpaca_order_id"):
+        order = None
+        if trade.get("alpaca_order_id"):
+            try:
+                order = self.alpaca_client.get_order(str(trade["alpaca_order_id"]))
+            except Exception:
+                self.logger.warning(
+                    "Could not fetch entry order %s for trade %s; falling back to position lookup",
+                    trade["alpaca_order_id"],
+                    trade["id"],
+                    exc_info=True,
+                )
+
+        position = self.alpaca_client.get_open_position(trade["symbol"])
+        if position is not None:
+            self._activate_trade_from_entry_fill(trade, order or position)
             return
-        order = self.alpaca_client.get_order(str(trade["alpaca_order_id"]))
+
+        if order is None:
+            return
+
         status = self._order_status(order)
         if status in self.FILLED_ENTRY_STATUSES:
             if status == "partially_filled":

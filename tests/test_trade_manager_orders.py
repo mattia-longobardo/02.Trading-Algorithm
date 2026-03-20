@@ -267,6 +267,33 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
         self.assertEqual(updated_trade["trailing_stop_price"], 100.0)
         self.assertIsNotNone(updated_trade["open_timestamp"])
 
+    def test_sync_pending_trade_promotes_when_position_exists_even_if_order_is_not_filled(self) -> None:
+        trade_id = self._insert_trade("PENDING", symbol="AAVE/USD", entry_price=111.87, quantity=27.560293)
+        trade = self.manager.get_trade(trade_id)
+        assert trade is not None
+
+        self.alpaca_client.get_order.return_value = type(
+            "Order",
+            (),
+            {"status": "new", "filled_at": None, "filled_avg_price": None, "filled_qty": None},
+        )()
+        self.alpaca_client.get_open_position.return_value = type(
+            "Position",
+            (),
+            {"qty": "27.560293", "avg_entry_price": "111.87", "current_price": "112.4"},
+        )()
+        self.alpaca_client.get_latest_price.return_value = 112.4
+
+        self.manager.sync_pending_trade(trade)
+
+        updated_trade = self.manager.get_trade(trade_id)
+        assert updated_trade is not None
+        self.assertEqual(updated_trade["status"], "OPEN")
+        self.assertEqual(updated_trade["entry_price"], 111.87)
+        self.assertEqual(updated_trade["quantity"], 27.560293)
+        self.assertEqual(updated_trade["current_price"], 112.4)
+        self.assertIsNotNone(updated_trade["open_timestamp"])
+
     def test_sync_open_trade_requests_market_close_when_take_profit_is_hit(self) -> None:
         trade_id = self._insert_trade("OPEN", take_profit=105.0, stop_loss=95.0, high_water_mark=104.0)
         trade = self.manager.get_trade(trade_id)
