@@ -143,3 +143,11 @@ class TradingScheduler:
         self.register_jobs()
         self.logger.info("Scheduler started with UTC cron triggers")
         self.scheduler.start()
+
+    def shutdown(self, wait: bool = True) -> None:
+        """Stop the scheduler gracefully when the process receives a shutdown signal."""
+
+        if not self.scheduler.running:
+            return
+        self.logger.info("Shutting down scheduler")
+        self.scheduler.shutdown(wait=wait)

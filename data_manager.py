@@ -6,7 +6,7 @@ import logging
 from datetime import timedelta
 
 from alpaca_client import AlpacaClient
-from db import db_cursor, fetch_all, fetch_one
+from db import db_cursor, ensure_market_symbol_table, fetch_all, get_market_symbol_table, list_market_symbols
 from utils import AppConfig, market_data_start, parse_datetime, retry, utc_now
 
 
@@ -19,51 +19,63 @@ class DataManager:
         self.alpaca_client = alpaca_client
 
     def get_known_symbols(self) -> list[str]:
-        rows = fetch_all(self.config.db_market_data, "SELECT DISTINCT symbol FROM ohlcv ORDER BY symbol")
+        rows = list_market_symbols(self.config.db_market_data)
         return [row["symbol"] for row in rows]
 
     def get_symbol_history(self, symbol: str, limit: int | None = None) -> list[dict]:
-        sql = "SELECT symbol, timestamp, open, high, low, close, volume FROM ohlcv WHERE symbol = ? ORDER BY timestamp"
-        params: tuple = (symbol,)
+        normalized_symbol = str(symbol).upper().strip()
+        table_name = get_market_symbol_table(self.config.db_market_data, normalized_symbol)
+        if table_name is None:
+            return []
+        sql = (
+            f"SELECT ? AS symbol, timestamp, open, high, low, close, volume "
+            f'FROM "{table_name}" ORDER BY timestamp'
+        )
+        params: tuple = (normalized_symbol,)
         if limit:
             sql = (
-                "SELECT symbol, timestamp, open, high, low, close, volume "
-                "FROM (SELECT * FROM ohlcv WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?) ORDER BY timestamp"
+                f"SELECT ? AS symbol, timestamp, open, high, low, close, volume "
+                f'FROM (SELECT * FROM "{table_name}" ORDER BY timestamp DESC LIMIT ?) ORDER BY timestamp'
             )
-            params = (symbol, limit)
+            params = (normalized_symbol, limit)
         return fetch_all(self.config.db_market_data, sql, params)
 
     def get_last_timestamp(self, symbol: str) -> str | None:
-        row = fetch_one(
+        normalized_symbol = str(symbol).upper().strip()
+        table_name = get_market_symbol_table(self.config.db_market_data, normalized_symbol)
+        if table_name is None:
+            return None
+        rows = fetch_all(
             self.config.db_market_data,
-            "SELECT timestamp FROM ohlcv WHERE symbol = ? ORDER BY timestamp DESC LIMIT 1",
-            (symbol,),
+            f'SELECT timestamp FROM "{table_name}" ORDER BY timestamp DESC LIMIT 1',
         )
+        row = rows[0] if rows else None
         return row["timestamp"] if row else None
 
     @retry()
     def update_symbol(self, symbol: str, category: str) -> int:
-        last_timestamp = self.get_last_timestamp(symbol)
+        normalized_symbol = str(symbol).upper().strip()
+        last_timestamp = self.get_last_timestamp(normalized_symbol)
         first_download = last_timestamp is None
         start = market_data_start(first_download)
         if last_timestamp:
             start = parse_datetime(last_timestamp) + timedelta(days=1)
         if start >= utc_now():
-            self.cleanup_old_records(symbol)
+            self.cleanup_old_records(normalized_symbol)
             return 0
 
-        rows = self.alpaca_client.get_bars(symbol=symbol, category=category, start=start)
+        rows = self.alpaca_client.get_bars(symbol=normalized_symbol, category=category, start=start)
         inserted = 0
         if rows:
             with db_cursor(self.config.db_market_data) as cursor:
+                table_name = ensure_market_symbol_table(cursor.connection, normalized_symbol)
                 for row in rows:
                     cursor.execute(
-                        """
-                        INSERT OR IGNORE INTO ohlcv(symbol, timestamp, open, high, low, close, volume)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        f"""
+                        INSERT OR IGNORE INTO "{table_name}"(timestamp, open, high, low, close, volume)
+                        VALUES (?, ?, ?, ?, ?, ?)
                         """,
                         (
-                            row["symbol"],
                             row["timestamp"],
                             row["open"],
                             row["high"],
@@ -73,19 +85,19 @@ class DataManager:
                         ),
                     )
                     inserted += cursor.rowcount
-        self.cleanup_old_records(symbol)
-        self.logger.debug("Updated %s with %s new bars", symbol, inserted)
+        self.cleanup_old_records(normalized_symbol)
+        self.logger.debug("Updated %s with %s new bars", normalized_symbol, inserted)
         return inserted
 
     def cleanup_old_records(self, symbol: str | None = None) -> None:
         cutoff = (utc_now() - timedelta(days=365 * 5)).isoformat()
-        query = "DELETE FROM ohlcv WHERE timestamp < ?"
-        params: tuple = (cutoff,)
+        targets = list_market_symbols(self.config.db_market_data)
         if symbol:
-            query += " AND symbol = ?"
-            params = (cutoff, symbol)
-        with db_cursor(self.config.db_market_data) as cursor:
-            cursor.execute(query, params)
+            normalized_symbol = str(symbol).upper().strip()
+            targets = [row for row in targets if row["symbol"] == normalized_symbol]
+        for row in targets:
+            with db_cursor(self.config.db_market_data) as cursor:
+                cursor.execute(f'DELETE FROM "{row["table_name"]}" WHERE timestamp < ?', (cutoff,))
 
     def update_symbols(self, symbol_categories: dict[str, str]) -> None:
         for symbol, category in symbol_categories.items():

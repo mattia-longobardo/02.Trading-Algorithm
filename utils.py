@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from uuid import uuid4
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import wraps
@@ -211,14 +212,19 @@ def write_universe_file(payload: dict[str, list[str]]) -> None:
     """Persist the current universe to disk."""
 
     ensure_parent_dir(UNIVERSE_FILE)
-    UNIVERSE_FILE.write_text(to_json(payload), encoding="utf-8")
+    temp_path = UNIVERSE_FILE.with_name(f"{UNIVERSE_FILE.name}.{uuid4().hex}.tmp")
+    temp_path.write_text(to_json(payload), encoding="utf-8")
+    temp_path.replace(UNIVERSE_FILE)
 
 
 def write_json_file(file_path: str | Path, payload: Any) -> None:
     """Persist arbitrary JSON payloads to disk."""
 
-    ensure_parent_dir(file_path)
-    Path(file_path).write_text(to_json(payload), encoding="utf-8")
+    destination = Path(file_path)
+    ensure_parent_dir(destination)
+    temp_path = destination.with_name(f"{destination.name}.{uuid4().hex}.tmp")
+    temp_path.write_text(to_json(payload), encoding="utf-8")
+    temp_path.replace(destination)
 
 
 def market_data_start(first_download: bool) -> datetime:

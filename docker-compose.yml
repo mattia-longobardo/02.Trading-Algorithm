@@ -2,7 +2,10 @@ services:
   trading:
     build: .
     container_name: trading
+    init: true
     restart: always
+    stop_signal: SIGTERM
+    stop_grace_period: 45s
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
