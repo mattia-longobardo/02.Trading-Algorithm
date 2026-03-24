@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from enum import Enum
 from types import ModuleType
 from unittest.mock import Mock
 
@@ -266,6 +267,53 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
         self.assertEqual(updated_trade["high_water_mark"], 103.0)
         self.assertEqual(updated_trade["trailing_stop_price"], 100.0)
         self.assertIsNotNone(updated_trade["open_timestamp"])
+
+    def test_sync_pending_trade_closes_canceled_entry_when_status_is_enum_value(self) -> None:
+        class FakeOrderStatus(Enum):
+            CANCELED = "canceled"
+
+        trade_id = self._insert_trade("PENDING", symbol="RENDER/USD")
+        trade = self.manager.get_trade(trade_id)
+        assert trade is not None
+
+        self.alpaca_client.get_order.return_value = type(
+            "Order",
+            (),
+            {
+                "status": FakeOrderStatus.CANCELED,
+                "canceled_at": "2026-03-24T18:38:32+00:00",
+                "updated_at": "2026-03-24T18:38:32+00:00",
+            },
+        )()
+        self.alpaca_client.get_open_position.return_value = None
+
+        self.manager.sync_pending_trade(trade)
+
+        updated_trade = self.manager.get_trade(trade_id)
+        assert updated_trade is not None
+        self.assertEqual(updated_trade["status"], "CANCELLED")
+        self.assertEqual(updated_trade["close_reason"], "CANCELED")
+
+    def test_review_stale_pending_trade_cancels_order_when_gpt_says_cancel(self) -> None:
+        trade_id = self._insert_trade("PENDING", symbol="HYPE/USD", entry_price=20.0, target_entry_price=19.5, alpaca_order_id="stale-order")
+        trade = self.manager.get_trade(trade_id)
+        assert trade is not None
+
+        self.data_manager.get_symbol_history.return_value = [{"close": 20.0}, {"close": 21.0}]
+        self.gpt_client.request_pending_trade_review.return_value = {
+            "action": "CANCEL",
+            "confidence": 0.91,
+            "reasoning": "Momentum and catalysts have weakened materially.",
+        }
+
+        self.manager._review_single_stale_pending_trade(trade)
+
+        self.alpaca_client.cancel_order.assert_called_once_with("stale-order")
+        updated_trade = self.manager.get_trade(trade_id)
+        assert updated_trade is not None
+        self.assertEqual(updated_trade["status"], "CANCELLED")
+        self.assertEqual(updated_trade["close_reason"], "STALE_PENDING_CANCELED")
+        self.assertEqual(updated_trade["reasoning"], "Momentum and catalysts have weakened materially.")
 
     def test_sync_pending_trade_promotes_when_position_exists_even_if_order_is_not_filled(self) -> None:
         trade_id = self._insert_trade("PENDING", symbol="AAVE/USD", entry_price=111.87, quantity=27.560293)

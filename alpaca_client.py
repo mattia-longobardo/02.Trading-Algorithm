@@ -176,7 +176,8 @@ class AlpacaClient:
         return str(getattr(order, "type", getattr(order, "order_type", ""))).lower()
 
     def _order_status_name(self, order: Any) -> str:
-        return str(getattr(order, "status", "")).lower()
+        status = getattr(order, "status", "")
+        return str(getattr(status, "value", status)).lower()
 
     def _is_cancelable_order(self, order: Any) -> bool:
         return self._order_status_name(order) not in {"filled", "canceled", "cancelled", "expired", "rejected", "replaced"}

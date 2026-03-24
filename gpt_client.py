@@ -107,6 +107,20 @@ UNIVERSE_FINAL_SCHEMA = {
     },
 }
 
+PENDING_REVIEW_SCHEMA = {
+    "name": "pending_trade_review",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["KEEP", "CANCEL"]},
+            "confidence": {"type": ["number", "null"]},
+            "reasoning": {"type": "string"},
+        },
+        "required": ["action", "confidence", "reasoning"],
+        "additionalProperties": False,
+    },
+}
+
 
 class GPTClient:
     """OpenAI Responses API wrapper with mandatory web search."""
@@ -317,3 +331,36 @@ class GPTClient:
             },
         }
         return self._request_json(instructions, payload, UNIVERSE_FINAL_SCHEMA)
+
+    def request_pending_trade_review(
+        self,
+        trade: dict[str, Any],
+        candles: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        instructions = (
+            "You are reviewing an existing LONG entry order that has remained pending for more than seven days. "
+            "You must perform web search before deciding. "
+            "Decide whether the order thesis is still valid today. "
+            "Return KEEP only if opening the trade at this stage is still attractive for a medium-long term position trade. "
+            "Return CANCEL if the thesis is stale, invalidated, materially weaker, or no longer worth opening now. "
+            f"Use {self.config.currency} as the reference currency and keep the user's risk tolerance of {self.config.risk_tolerance} in mind. "
+            "Base the review on current news, medium-term trend structure, catalysts, and whether the original pending entry still offers good risk/reward. "
+            "Return only JSON matching the schema."
+        )
+        payload = {
+            "trade": trade,
+            "ohlcv_daily": trim_ohlcv_payload(candles),
+            "constraints": {
+                "direction": "LONG",
+                "web_search_required": True,
+                "currency": self.config.currency,
+                "risk_tolerance": self.config.risk_tolerance,
+                "strategy_style": "medium_long_term_position_trading",
+                "pending_days_threshold": 7,
+                "target_holding_period_days": {
+                    "min": self.config.strategy_horizon_days_min,
+                    "max": self.config.strategy_horizon_days_max,
+                },
+            },
+        }
+        return self._request_json(instructions, payload, PENDING_REVIEW_SCHEMA)

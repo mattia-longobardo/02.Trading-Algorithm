@@ -51,7 +51,8 @@ class TradeManager:
 
     @staticmethod
     def _order_status(order: Any) -> str:
-        return str(getattr(order, "status", "")).lower()
+        status = getattr(order, "status", "")
+        return str(getattr(status, "value", status)).lower()
 
     def _order_timestamp(self, order: Any, *field_names: str) -> datetime | None:
         for field_name in field_names:
@@ -114,6 +115,19 @@ class TradeManager:
         return fetch_all(
             self.config.db_trades,
             "SELECT * FROM trades WHERE status IN ('PENDING', 'OPEN') ORDER BY created_at",
+        )
+
+    def get_stale_pending_trades(self, min_age_days: int = 7) -> list[dict[str, Any]]:
+        return fetch_all(
+            self.config.db_trades,
+            """
+            SELECT *
+            FROM trades
+            WHERE status = 'PENDING'
+              AND datetime(created_at) <= datetime('now', ?)
+            ORDER BY created_at
+            """,
+            (f"-{int(min_age_days)} days",),
         )
 
     def get_symbol_trades(self, symbol: str) -> list[dict[str, Any]]:
@@ -371,12 +385,70 @@ class TradeManager:
                 cursor.execute(
                     """
                     UPDATE trades
-                    SET status = 'CLOSED', close_reason = ?, close_timestamp = ?, updated_at = CURRENT_TIMESTAMP
+                    SET status = 'CANCELLED', close_reason = ?, close_timestamp = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
                     (self.TERMINAL_PENDING_STATUSES[status], isoformat_utc(close_timestamp), trade["id"]),
                 )
-            self.logger.info("Pending trade %s closed with status %s", trade["id"], status)
+            self.logger.info("Pending trade %s cancelled with status %s", trade["id"], status)
+
+    def review_stale_pending_trades(self, min_age_days: int = 7) -> None:
+        stale_trades = self.get_stale_pending_trades(min_age_days=min_age_days)
+        if not stale_trades:
+            self.logger.debug("No stale pending trades found for GPT review")
+            return
+
+        for trade in stale_trades:
+            try:
+                self._review_single_stale_pending_trade(trade)
+            except Exception:
+                self.logger.exception("Failed to review stale pending trade %s", trade["id"])
+
+    def _review_single_stale_pending_trade(self, trade: dict[str, Any]) -> None:
+        symbol = str(trade["symbol"])
+        candles = self.data_manager.get_symbol_history(symbol, limit=260)
+        if not candles:
+            self.logger.warning("No market data found for stale pending trade %s (%s); skipping GPT review", trade["id"], symbol)
+            return
+
+        review = self.gpt_client.request_pending_trade_review(trade, candles)
+        action = str(review.get("action", "")).upper()
+        reasoning = str(review.get("reasoning", "")).strip()
+        self.logger.info(
+            "GPT stale pending review for trade %s (%s): %s - %s",
+            trade["id"],
+            symbol,
+            action or "UNKNOWN",
+            reasoning or "no reasoning provided",
+        )
+
+        if action != "CANCEL":
+            return
+
+        order_id = trade.get("alpaca_order_id")
+        if order_id:
+            try:
+                self.alpaca_client.cancel_order(str(order_id))
+            except Exception as exc:
+                if "not found" not in str(exc).lower():
+                    raise
+
+        close_price = self._as_float(trade.get("target_entry_price")) or self._as_float(trade.get("entry_price")) or 0.0
+        with db_cursor(self.config.db_trades) as cursor:
+            cursor.execute(
+                """
+                UPDATE trades
+                SET status = 'CANCELLED', close_reason = ?, close_timestamp = ?, reasoning = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    "STALE_PENDING_CANCELED",
+                    isoformat_utc(utc_now()),
+                    reasoning or trade.get("reasoning"),
+                    trade["id"],
+                ),
+            )
+        self.logger.info("Cancelled stale pending trade %s after GPT cancel review", trade["id"])
 
     def _mark_trade_closed(
         self,
@@ -593,6 +665,7 @@ class TradeManager:
             or (parse_datetime(row.get("close_timestamp")) and parse_datetime(row.get("close_timestamp")) >= cutoff)
         ]
         closed = [row for row in rows if row["status"] == "CLOSED"]
+        cancelled = [row for row in rows if row["status"] == "CANCELLED"]
         winners = [row for row in closed if (row.get("pnl") or 0) > 0]
         pnls = [row.get("pnl") or 0 for row in closed]
         best_trade = max(closed, key=lambda row: row.get("pnl") or float("-inf"), default=None)
@@ -605,6 +678,7 @@ class TradeManager:
             "open_trades": [row for row in rows if row["status"] == "OPEN"],
             "pending_trades": [row for row in rows if row["status"] == "PENDING"],
             "closed_trades": closed,
+            "cancelled_trades": cancelled,
             "pnl_total": round(sum(pnls), 2),
             "pnl_by_category": {key: round(value, 2) for key, value in pnl_by_category.items()},
             "win_rate": round(len(winners) / len(closed), 4) if closed else 0.0,

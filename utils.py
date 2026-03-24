@@ -39,9 +39,12 @@ class AppConfig:
     log_level: str = "INFO"
     log_file: str = "logs/trading_bot.log"
     universe_log_file: str = "logs/universe_candidates.log"
+    report_dir: str = "data/reports"
     db_market_data: str = "data/market_data.sqlite"
     db_trades: str = "data/trades.sqlite"
     lock_file: str = "run/trading_scheduler.lock"
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
 
     @property
     def paper(self) -> bool:
@@ -88,17 +91,22 @@ def load_config() -> AppConfig:
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         log_file=os.getenv("LOG_FILE", "logs/trading_bot.log"),
         universe_log_file=os.getenv("UNIVERSE_LOG_FILE", "logs/universe_candidates.log"),
+        report_dir=os.getenv("REPORT_DIR", "data/reports"),
         db_market_data=os.getenv("DB_MARKET_DATA", "data/market_data.sqlite"),
         db_trades=os.getenv("DB_TRADES", "data/trades.sqlite"),
         lock_file=os.getenv("LOCK_FILE", "run/trading_scheduler.lock"),
+        api_host=os.getenv("API_HOST", "0.0.0.0"),
+        api_port=int(os.getenv("API_PORT", "8000")),
     )
     config.log_file = resolve_runtime_path(config.log_file)
     config.universe_log_file = resolve_runtime_path(config.universe_log_file)
+    config.report_dir = resolve_runtime_path(config.report_dir)
     config.db_market_data = resolve_runtime_path(config.db_market_data)
     config.db_trades = resolve_runtime_path(config.db_trades)
     config.lock_file = resolve_runtime_path(config.lock_file)
     ensure_parent_dir(config.log_file)
     ensure_parent_dir(config.universe_log_file)
+    Path(config.report_dir).mkdir(parents=True, exist_ok=True)
     ensure_parent_dir(config.db_market_data)
     ensure_parent_dir(config.db_trades)
     ensure_parent_dir(config.lock_file)
