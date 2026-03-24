@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from collections.abc import Callable
+from typing import Any
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -13,6 +14,10 @@ from report import ReportGenerator
 from trade_manager import TradeManager
 from universe_manager import UniverseManager
 from utils import AppConfig
+
+
+class JobExecutionLockedError(RuntimeError):
+    """Raised when a manual or scheduled job cannot acquire the shared lock."""
 
 
 class TradingScheduler:
@@ -77,6 +82,16 @@ class TradingScheduler:
 
         return wrapped
 
+    def run_with_lock(self, job_name: str, func: Callable[[], Any]) -> Any:
+        try:
+            with self.lock:
+                self.logger.info("Starting manual job: %s", job_name)
+                result = func()
+                self.logger.info("Completed manual job: %s", job_name)
+                return result
+        except Timeout as exc:
+            raise JobExecutionLockedError(f"Job {job_name} is already running") from exc
+
     def job_download_market_data(self) -> None:
         universe = self.universe_manager.get_current_universe()
         monitored = self.trade_manager.symbols_to_monitor(universe)
@@ -106,6 +121,38 @@ class TradingScheduler:
     def job_weekly_report(self) -> None:
         self.report_generator.generate_weekly_report()
 
+    def job_review_stale_pending_orders(self) -> None:
+        self.trade_manager.review_stale_pending_trades(min_age_days=7)
+
+    def run_manual_refresh_universe(self) -> dict[str, list[str]]:
+        def execute() -> dict[str, list[str]]:
+            universe = self.universe_manager.select_trading_universe()
+            monitored = self.trade_manager.symbols_to_monitor(universe)
+            self.trade_manager.data_manager.update_symbols(monitored)
+            return universe
+
+        return self.run_with_lock("manual_refresh_universe", execute)
+
+    def run_manual_generate_new_orders(self) -> dict[str, object]:
+        def execute() -> dict[str, object]:
+            before_trades = self.trade_manager.get_open_or_pending_trades()
+            before_ids = {int(trade["id"]) for trade in before_trades}
+            self.job_evaluate_signals()
+            universe = self.universe_manager.get_current_universe()
+            after_trades = self.trade_manager.get_open_or_pending_trades()
+            new_trades = [trade for trade in after_trades if int(trade["id"]) not in before_ids]
+            return {
+                "universe": universe,
+                "new_orders": new_trades,
+                "new_orders_count": len(new_trades),
+                "active_trades_count": len(after_trades),
+            }
+
+        return self.run_with_lock("manual_generate_new_orders", execute)
+
+    def run_manual_weekly_report(self) -> dict:
+        return self.run_with_lock("manual_weekly_report", self.report_generator.generate_weekly_report)
+
     def register_jobs(self) -> None:
         self.scheduler.add_job(
             self.guarded("monitor_trades", self.job_monitor_trades),
@@ -117,6 +164,12 @@ class TradingScheduler:
             self.guarded("evaluate_signals_0010", self.job_evaluate_signals),
             CronTrigger(hour=0, minute=10),
             id="evaluate_signals_0010",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self.guarded("review_stale_pending_orders_1200", self.job_review_stale_pending_orders),
+            CronTrigger(hour=12, minute=0),
+            id="review_stale_pending_orders_1200",
             replace_existing=True,
         )
         self.scheduler.add_job(

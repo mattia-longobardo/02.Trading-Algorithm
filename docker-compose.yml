@@ -15,27 +15,14 @@ services:
     environment:
       - TZ=Europe/Rome
     networks:
-      - projects
-
-  log-trading:
-    image: tsl0922/ttyd
-    container_name: log-trading
-    user: 1000:1000
-    restart: unless-stopped
-    command: ttyd -p 8080 tail -n 1000 -f /app/logs/trading_bot.log
-    volumes:
-      - ./logs:/app/logs
-    networks:
       - proxy_public
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy_public"
       - "traefik.http.routers.log-trading-router.rule=Host(`trading.local`)"
       - "traefik.http.routers.log-trading-router.entrypoints=web"
-      - "traefik.http.services.log-trading-service.loadbalancer.server.port=8080"
+      - "traefik.http.services.log-trading-service.loadbalancer.server.port=8000"
 
 networks:
-  projects:
-    external: true
   proxy_public:
     external: true

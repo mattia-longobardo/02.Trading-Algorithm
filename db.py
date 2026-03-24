@@ -9,6 +9,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+TRADE_STATUS_VALUES = "'PENDING', 'OPEN', 'CLOSED', 'CANCELLED'"
+
 MARKET_SCHEMA = """
 CREATE TABLE IF NOT EXISTS market_symbols (
     symbol TEXT PRIMARY KEY,
@@ -23,7 +25,7 @@ CREATE TABLE IF NOT EXISTS trades (
     symbol TEXT NOT NULL,
     category TEXT NOT NULL CHECK(category IN ('STOCK', 'CRYPTO')),
     direction TEXT NOT NULL DEFAULT 'LONG',
-    status TEXT NOT NULL CHECK(status IN ('PENDING', 'OPEN', 'CLOSED')),
+    status TEXT NOT NULL CHECK(status IN (""" + TRADE_STATUS_VALUES + """)),
     entry_price REAL NOT NULL,
     target_entry_price REAL,
     quantity REAL NOT NULL,

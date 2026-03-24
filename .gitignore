@@ -9,3 +9,6 @@ __pycache__/
 # Ignore data and logs directories
 data/*
 logs/*
+
+# Others
+.vscode
