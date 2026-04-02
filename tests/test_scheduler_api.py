@@ -167,6 +167,17 @@ class TradingSchedulerManualApiTests(unittest.TestCase):
 
         self.trade_manager.review_stale_pending_trades.assert_called_once_with(min_age_days=7)
 
+    def test_job_evaluate_signals_refreshes_open_trade_protections_before_new_entries(self) -> None:
+        self.universe_manager.get_current_universe.return_value = {"STOCK": ["AAPL"], "CRYPTO": []}
+        self.trade_manager.symbols_to_monitor.return_value = {"AAPL": "STOCK"}
+
+        self.scheduler.job_evaluate_signals()
+
+        self.trade_manager.sync_alpaca_state.assert_called_once()
+        self.trade_manager.data_manager.update_symbols.assert_called_once_with({"AAPL": "STOCK"})
+        self.trade_manager.refresh_open_trade_protections.assert_called_once()
+        self.trade_manager.evaluate_cycle.assert_called_once_with({"STOCK": ["AAPL"], "CRYPTO": []})
+
 
 class TradingApiServerTests(unittest.TestCase):
     def setUp(self) -> None:
