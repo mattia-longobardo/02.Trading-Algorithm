@@ -19,6 +19,7 @@ NEW_SIGNAL_SCHEMA = {
             "symbol": {"type": "string"},
             "entry_price": {"type": ["number", "null"]},
             "take_profit": {"type": ["number", "null"]},
+            "trailing_take_profit_distance": {"type": ["number", "null"]},
             "stop_loss": {"type": ["number", "null"]},
             "trailing_stop_distance": {"type": ["number", "null"]},
             "trade_score": {"type": ["number", "null"]},
@@ -30,6 +31,7 @@ NEW_SIGNAL_SCHEMA = {
             "symbol",
             "entry_price",
             "take_profit",
+            "trailing_take_profit_distance",
             "stop_loss",
             "trailing_stop_distance",
             "trade_score",
@@ -54,6 +56,7 @@ BATCH_SIGNALS_SCHEMA = {
                         "symbol": {"type": "string"},
                         "entry_price": {"type": ["number", "null"]},
                         "take_profit": {"type": ["number", "null"]},
+                        "trailing_take_profit_distance": {"type": ["number", "null"]},
                         "stop_loss": {"type": ["number", "null"]},
                         "trailing_stop_distance": {"type": ["number", "null"]},
                         "trade_score": {"type": ["number", "null"]},
@@ -65,6 +68,7 @@ BATCH_SIGNALS_SCHEMA = {
                         "symbol",
                         "entry_price",
                         "take_profit",
+                        "trailing_take_profit_distance",
                         "stop_loss",
                         "trailing_stop_distance",
                         "trade_score",
@@ -117,6 +121,19 @@ PENDING_REVIEW_SCHEMA = {
             "reasoning": {"type": "string"},
         },
         "required": ["action", "confidence", "reasoning"],
+        "additionalProperties": False,
+    },
+}
+
+OPEN_PROTECTION_REVIEW_SCHEMA = {
+    "name": "open_trade_protection_review",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "trailing_take_profit_distance": {"type": ["number", "null"]},
+            "reasoning": {"type": "string"},
+        },
+        "required": ["trailing_take_profit_distance", "reasoning"],
         "additionalProperties": False,
     },
 }
@@ -196,10 +213,13 @@ class GPTClient:
             "Use that setting explicitly: low values should favor resilient, liquid, lower-volatility setups with tighter downside control; high values may accept more volatility and more aggressive upside theses. "
             "Return only JSON matching the schema. If risk/reward is unattractive, choose SKIP. "
             "If you choose OPEN, entry_price, take_profit, and stop_loss must be non-null positive numbers. "
+            "trailing_take_profit_distance may be null when no trailing take profit is desired, otherwise it must be a positive number. "
             "trailing_stop_distance may be null when no trailing stop is desired, otherwise it must be a positive number. "
             "trade_score must be a 0-100 score balancing expected profitability against risk after considering the user risk tolerance. "
             "Base the decision primarily on medium-term trend structure, macro or fundamental catalysts, business or ecosystem strength, and multi-week or multi-month risk/reward. "
-            "The script manages take-profit, stop-loss, and trailing-stop logic internally after entry; Alpaca is used only to place the entry order and to close the position at market when a rule triggers."
+            "The script manages take-profit, trailing-take-profit, stop-loss, and trailing-stop logic internally after entry; "
+            "Alpaca is used only to place the entry order and to close the position at market when a rule triggers. "
+            "A trailing take profit, when provided, activates only after price has reached the take_profit level, then trails the high-water mark by the specified distance."
         )
         payload = self.build_symbol_payload(symbol, category, candles, existing_trades)
         return self._request_json(instructions, payload, NEW_SIGNAL_SCHEMA)
@@ -222,7 +242,9 @@ class GPTClient:
             "High risk tolerance can accept more volatility, wider stops, and more speculative catalysts if the upside is compelling. "
             f"The portfolio can open at most {max_new_trades} new {category} trades in this cycle. "
             "For every symbol return OPEN or SKIP. OPEN means the setup is attractive today. "
-            "When OPEN is chosen, entry_price, take_profit, and stop_loss must be positive numbers. trailing_stop_distance may be null or a positive number. "
+            "When OPEN is chosen, entry_price, take_profit, and stop_loss must be positive numbers. "
+            "trailing_take_profit_distance may be null or a positive number. "
+            "trailing_stop_distance may be null or a positive number. "
             "trade_score must be a 0-100 score balancing profitability and risk for this user; the highest scores should represent the best risk-adjusted opportunities to open first. "
             "Return only JSON matching the schema."
         )
@@ -364,3 +386,37 @@ class GPTClient:
             },
         }
         return self._request_json(instructions, payload, PENDING_REVIEW_SCHEMA)
+
+    def request_open_trade_protection_review(
+        self,
+        trade: dict[str, Any],
+        candles: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        instructions = (
+            "You are reviewing an already OPEN LONG swing-position trade. "
+            "You must perform web search before deciding. "
+            "Your only task is to reassess the trailing take profit distance for this open trade. "
+            "Return the full desired trailing_take_profit_distance for the trade right now: keep the current value if no change is needed, "
+            "return a different positive number to tighten or loosen it, or return null to disable the trailing take profit. "
+            "Do not propose entry, stop loss, or hard take profit changes here. "
+            f"Use {self.config.currency} as the reference currency and keep the user's risk tolerance of {self.config.risk_tolerance} in mind. "
+            "Base the review on current news, catalyst evolution, medium-term trend structure, current profit cushion, and whether upside should be given more room or protected more tightly. "
+            "Return only JSON matching the schema."
+        )
+        payload = {
+            "trade": trade,
+            "ohlcv_daily": trim_ohlcv_payload(candles),
+            "constraints": {
+                "direction": "LONG",
+                "web_search_required": True,
+                "currency": self.config.currency,
+                "risk_tolerance": self.config.risk_tolerance,
+                "strategy_style": "medium_long_term_position_trading",
+                "review_frequency": "twice_daily",
+                "target_holding_period_days": {
+                    "min": self.config.strategy_horizon_days_min,
+                    "max": self.config.strategy_horizon_days_max,
+                },
+            },
+        }
+        return self._request_json(instructions, payload, OPEN_PROTECTION_REVIEW_SCHEMA)

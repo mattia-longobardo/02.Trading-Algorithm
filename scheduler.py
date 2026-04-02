@@ -107,6 +107,7 @@ class TradingScheduler:
             universe = self.universe_manager.select_trading_universe()
         monitored = self.trade_manager.symbols_to_monitor(universe)
         self.trade_manager.data_manager.update_symbols(monitored)
+        self.trade_manager.refresh_open_trade_protections()
         self.trade_manager.evaluate_cycle(universe)
 
     def job_refresh_universe_and_signals(self) -> None:

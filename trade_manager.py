@@ -89,6 +89,21 @@ class TradeManager:
         return round(high_water_mark - trailing_stop_distance, 8)
 
     @staticmethod
+    def _compute_trailing_take_profit_price(
+        high_water_mark: float,
+        take_profit: float | None,
+        trailing_take_profit_distance: float | None,
+    ) -> float | None:
+        if (
+            take_profit is None
+            or trailing_take_profit_distance is None
+            or trailing_take_profit_distance <= 0
+            or high_water_mark < take_profit
+        ):
+            return None
+        return round(high_water_mark - trailing_take_profit_distance, 8)
+
+    @staticmethod
     def _downside_close_reason(
         current_price: float,
         stop_loss: float | None,
@@ -106,6 +121,15 @@ class TradeManager:
             return "STOP_LOSS"
         if trailing_stop_price is not None and current_price <= trailing_stop_price:
             return "TRAILING_STOP"
+        return None
+
+    @staticmethod
+    def _trailing_take_profit_close_reason(
+        current_price: float,
+        trailing_take_profit_price: float | None,
+    ) -> str | None:
+        if trailing_take_profit_price is not None and current_price <= trailing_take_profit_price:
+            return "TRAILING_TAKE_PROFIT"
         return None
 
     def get_trade(self, trade_id: int) -> dict[str, Any] | None:
@@ -161,15 +185,17 @@ class TradeManager:
         allocated_capital: float,
     ) -> None:
         order = order_payload["order"]
+        trailing_take_profit_distance = self._as_float(signal.get("trailing_take_profit_distance"))
         trailing_stop_distance = self._as_float(signal.get("trailing_stop_distance"))
         with db_cursor(self.config.db_trades) as cursor:
             cursor.execute(
                 """
                 INSERT INTO trades (
                     symbol, category, direction, status, entry_price, target_entry_price, quantity, allocated_capital,
-                    take_profit, stop_loss, trailing_stop_distance, alpaca_order_id, client_order_id,
+                    take_profit, trailing_take_profit_distance, stop_loss, trailing_stop_distance,
+                    alpaca_order_id, client_order_id,
                     reasoning, confidence, trade_score
-                ) VALUES (?, ?, 'LONG', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, 'LONG', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     symbol,
@@ -179,6 +205,7 @@ class TradeManager:
                     float(order_payload["quantity"]),
                     allocated_capital,
                     float(signal["take_profit"]),
+                    trailing_take_profit_distance,
                     float(signal["stop_loss"]),
                     trailing_stop_distance,
                     str(getattr(order, "id", "")),
@@ -199,6 +226,15 @@ class TradeManager:
                     signal.get("symbol"),
                     field,
                     value,
+                )
+                return False
+        trailing_take_profit_distance = signal.get("trailing_take_profit_distance")
+        if trailing_take_profit_distance is not None:
+            if not isinstance(trailing_take_profit_distance, (int, float)) or float(trailing_take_profit_distance) <= 0:
+                self.logger.warning(
+                    "GPT returned OPEN for %s with invalid trailing_take_profit_distance=%s; skipping trade",
+                    signal.get("symbol"),
+                    trailing_take_profit_distance,
                 )
                 return False
         trailing_stop_distance = signal.get("trailing_stop_distance")
@@ -326,6 +362,11 @@ class TradeManager:
             high_water_mark,
             self._as_float(trade.get("trailing_stop_distance")),
         )
+        trailing_take_profit_price = self._compute_trailing_take_profit_price(
+            high_water_mark,
+            self._as_float(trade.get("take_profit")),
+            self._as_float(trade.get("trailing_take_profit_distance")),
+        )
         pnl = (current_price - entry_price) * filled_quantity
         open_timestamp = self._order_timestamp(order, "filled_at", "updated_at", "submitted_at") or utc_now()
         with db_cursor(self.config.db_trades) as cursor:
@@ -333,7 +374,7 @@ class TradeManager:
                 """
                 UPDATE trades
                 SET status = 'OPEN', open_timestamp = ?, entry_price = ?, quantity = ?, current_price = ?, pnl = ?,
-                    high_water_mark = ?, trailing_stop_price = ?, updated_at = CURRENT_TIMESTAMP
+                    high_water_mark = ?, trailing_take_profit_price = ?, trailing_stop_price = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
                 (
@@ -343,6 +384,7 @@ class TradeManager:
                     current_price,
                     pnl,
                     high_water_mark,
+                    trailing_take_profit_price,
                     trailing_stop_price,
                     trade["id"],
                 ),
@@ -542,6 +584,75 @@ class TradeManager:
         if self.alpaca_client.get_open_position(trade["symbol"]) is None:
             self._close_trade_without_position(trade)
 
+    def refresh_open_trade_protections(self) -> None:
+        open_trades = [
+            trade
+            for trade in self.get_open_or_pending_trades()
+            if trade["status"] == "OPEN" and not trade.get("exit_order_id")
+        ]
+        if not open_trades:
+            self.logger.debug("No open trades found for GPT protection review")
+            return
+
+        for trade in open_trades:
+            try:
+                self._refresh_single_open_trade_protection(trade)
+            except Exception:
+                self.logger.exception("Failed GPT protection review for open trade %s", trade["id"])
+
+    def _refresh_single_open_trade_protection(self, trade: dict[str, Any]) -> None:
+        symbol = str(trade["symbol"])
+        candles = self.data_manager.get_symbol_history(symbol, limit=260)
+        if not candles:
+            self.logger.warning("No market data found for open trade %s (%s); skipping GPT protection review", trade["id"], symbol)
+            return
+
+        review = self.gpt_client.request_open_trade_protection_review(trade, candles)
+        proposed_distance = self._as_float(review.get("trailing_take_profit_distance"))
+        raw_distance = review.get("trailing_take_profit_distance")
+        if raw_distance is not None and proposed_distance is None:
+            self.logger.warning(
+                "GPT returned invalid trailing_take_profit_distance=%s for open trade %s; keeping previous value",
+                raw_distance,
+                trade["id"],
+            )
+            return
+        if proposed_distance is not None and proposed_distance <= 0:
+            self.logger.warning(
+                "GPT returned non-positive trailing_take_profit_distance=%s for open trade %s; keeping previous value",
+                proposed_distance,
+                trade["id"],
+            )
+            return
+
+        current_distance = self._as_float(trade.get("trailing_take_profit_distance"))
+        if current_distance == proposed_distance:
+            return
+
+        current_high_water_mark = self._as_float(trade.get("high_water_mark")) or float(trade["entry_price"])
+        take_profit = self._as_float(trade.get("take_profit"))
+        trailing_take_profit_price = self._compute_trailing_take_profit_price(
+            current_high_water_mark,
+            take_profit,
+            proposed_distance,
+        )
+        with db_cursor(self.config.db_trades) as cursor:
+            cursor.execute(
+                """
+                UPDATE trades
+                SET trailing_take_profit_distance = ?, trailing_take_profit_price = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (proposed_distance, trailing_take_profit_price, trade["id"]),
+            )
+        self.logger.info(
+            "Updated trailing take profit for trade %s (%s) from %s to %s",
+            trade["id"],
+            symbol,
+            current_distance,
+            proposed_distance,
+        )
+
     def sync_open_trade(self, trade: dict[str, Any]) -> None:
         if trade.get("exit_order_id"):
             self._sync_exit_order(trade)
@@ -562,7 +673,13 @@ class TradeManager:
         entry_price = float(trade["entry_price"])
         stop_loss = self._as_float(trade.get("stop_loss"))
         take_profit = self._as_float(trade.get("take_profit"))
+        trailing_take_profit_distance = self._as_float(trade.get("trailing_take_profit_distance"))
         high_water_mark = max(self._as_float(trade.get("high_water_mark")) or entry_price, current_price)
+        trailing_take_profit_price = self._compute_trailing_take_profit_price(
+            high_water_mark,
+            take_profit,
+            trailing_take_profit_distance,
+        )
         trailing_stop_price = self._compute_trailing_stop_price(
             high_water_mark,
             self._as_float(trade.get("trailing_stop_distance")),
@@ -573,17 +690,22 @@ class TradeManager:
             cursor.execute(
                 """
                 UPDATE trades
-                SET quantity = ?, current_price = ?, pnl = ?, high_water_mark = ?, trailing_stop_price = ?,
+                SET quantity = ?, current_price = ?, pnl = ?, high_water_mark = ?, trailing_take_profit_price = ?,
+                    trailing_stop_price = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (quantity, current_price, pnl, high_water_mark, trailing_stop_price, trade["id"]),
+                (quantity, current_price, pnl, high_water_mark, trailing_take_profit_price, trailing_stop_price, trade["id"]),
             )
 
-        if take_profit is not None and current_price >= take_profit:
-            self._request_market_close(trade, "TAKE_PROFIT", current_price)
+        close_reason = self._trailing_take_profit_close_reason(current_price, trailing_take_profit_price)
+        if close_reason:
+            self._request_market_close(trade, close_reason, current_price)
             return
 
+        if take_profit is not None and trailing_take_profit_distance is None and current_price >= take_profit:
+            self._request_market_close(trade, "TAKE_PROFIT", current_price)
+            return
         close_reason = self._downside_close_reason(current_price, stop_loss, trailing_stop_price)
         if close_reason:
             self._request_market_close(trade, close_reason, current_price)
