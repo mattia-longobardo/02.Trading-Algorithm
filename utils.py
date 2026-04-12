@@ -33,6 +33,10 @@ class AppConfig:
     weekly_universe_crypto: int = 5
     risk_tolerance: int = 5
     currency: str = "EUR"
+    crypto_entry_limit_collar_bps: int = 15
+    crypto_entry_max_chase_bps: int = 40
+    crypto_pending_reprice_minutes: int = 2
+    crypto_pending_cancel_minutes: int = 12
     strategy_horizon_days_min: int = 90
     strategy_horizon_days_max: int = 120
     log_profile: str = "PRODUCTION"
@@ -85,6 +89,10 @@ def load_config() -> AppConfig:
         weekly_universe_crypto=int(os.getenv("WEEKLY_UNIVERSE_CRYPTO", "5")),
         risk_tolerance=max(1, min(10, int(os.getenv("RISK_TOLERANCE", "5")))),
         currency=os.getenv("CURRENCY", "EUR").upper(),
+        crypto_entry_limit_collar_bps=max(0, int(os.getenv("CRYPTO_ENTRY_LIMIT_COLLAR_BPS", "15"))),
+        crypto_entry_max_chase_bps=max(0, int(os.getenv("CRYPTO_ENTRY_MAX_CHASE_BPS", "40"))),
+        crypto_pending_reprice_minutes=max(1, int(os.getenv("CRYPTO_PENDING_REPRICE_MINUTES", "2"))),
+        crypto_pending_cancel_minutes=max(1, int(os.getenv("CRYPTO_PENDING_CANCEL_MINUTES", "12"))),
         strategy_horizon_days_min=int(os.getenv("STRATEGY_HORIZON_DAYS_MIN", "90")),
         strategy_horizon_days_max=int(os.getenv("STRATEGY_HORIZON_DAYS_MAX", "120")),
         log_profile=os.getenv("LOG_PROFILE", "PRODUCTION").upper(),
@@ -136,6 +144,8 @@ def parse_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
 
 

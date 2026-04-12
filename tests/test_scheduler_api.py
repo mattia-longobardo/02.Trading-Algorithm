@@ -23,8 +23,8 @@ class BlockingScheduler:
         self.running = False
         self.jobs = []
 
-    def add_job(self, func, trigger, id: str, replace_existing: bool = False) -> None:
-        self.jobs.append((func, trigger, id, replace_existing))
+    def add_job(self, func, trigger, id: str, replace_existing: bool = False, **kwargs) -> None:
+        self.jobs.append((func, trigger, id, replace_existing, kwargs))
 
     def start(self) -> None:
         self.running = True
@@ -177,6 +177,33 @@ class TradingSchedulerManualApiTests(unittest.TestCase):
         self.trade_manager.data_manager.update_symbols.assert_called_once_with({"AAPL": "STOCK"})
         self.trade_manager.refresh_open_trade_protections.assert_called_once()
         self.trade_manager.evaluate_cycle.assert_called_once_with({"STOCK": ["AAPL"], "CRYPTO": []})
+
+    def test_guarded_job_is_deferred_once_when_execution_is_busy(self) -> None:
+        deferred_job = Mock()
+        wrapped = self.scheduler.guarded("monitor_trades", deferred_job)
+
+        self.scheduler._execution_lock.acquire()
+        try:
+            wrapped()
+            wrapped()
+        finally:
+            self.scheduler._execution_lock.release()
+
+        deferred_job.assert_not_called()
+        self.assertEqual(list(self.scheduler._pending_jobs.keys()), ["monitor_trades"])
+
+        self.scheduler._drain_pending_jobs()
+
+        deferred_job.assert_called_once()
+        self.assertEqual(list(self.scheduler._pending_jobs.keys()), [])
+
+    def test_register_jobs_allows_a_second_monitor_trades_instance_for_coalescing(self) -> None:
+        self.scheduler.register_jobs()
+
+        jobs_by_id = {job_id: kwargs for _, _, job_id, _, kwargs in self.scheduler.scheduler.jobs}
+
+        self.assertIn("monitor_trades", jobs_by_id)
+        self.assertEqual(jobs_by_id["monitor_trades"]["max_instances"], 2)
 
 
 class TradingApiServerTests(unittest.TestCase):
