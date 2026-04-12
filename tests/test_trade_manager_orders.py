@@ -3,6 +3,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from enum import Enum
 from types import ModuleType
@@ -52,6 +53,7 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
             data_manager=self.data_manager,
             gpt_client=self.gpt_client,
         )
+        self.alpaca_client.is_insufficient_balance_error.return_value = False
 
     def tearDown(self) -> None:
         try:
@@ -64,6 +66,7 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
         status: str,
         *,
         symbol: str = "AAPL",
+        category: str = "STOCK",
         entry_price: float = 100.0,
         target_entry_price: float | None = None,
         quantity: float = 2.0,
@@ -90,7 +93,7 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
             """,
             (
                 symbol,
-                "STOCK",
+                category,
                 status,
                 entry_price,
                 target_entry_price if target_entry_price is not None else entry_price,
@@ -146,6 +149,55 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
         self.assertEqual(trade["trailing_stop_distance"], 3.0)
         self.assertEqual(trade["exit_order_id"], None)
         self.assertEqual(trade["trade_score"], None)
+
+    def test_maybe_open_trade_stores_submitted_crypto_limit_separately_from_target_entry(self) -> None:
+        self.data_manager.get_symbol_history.return_value = [{"close": 1.78}]
+        self.gpt_client.request_new_signal.return_value = {
+            "action": "OPEN",
+            "symbol": "RENDER/USD",
+            "entry_price": 1.78,
+            "take_profit": 2.1,
+            "stop_loss": 1.62,
+            "confidence": 0.74,
+            "reasoning": "crypto breakout",
+        }
+        self.alpaca_client.get_open_position.return_value = None
+        self.alpaca_client.get_available_cash.return_value = 1000.0
+        self.alpaca_client.place_limit_entry_order.return_value = {
+            "order": type("Order", (), {"id": "entry-order"})(),
+            "client_order_id": "entry-client",
+            "quantity": 560.0,
+            "submitted_entry_price": 1.7831,
+        }
+
+        self.manager.maybe_open_trade("CRYPTO", "RENDER/USD")
+
+        trade = self.manager.get_open_or_pending_trades()[0]
+        self.assertEqual(trade["symbol"], "RENDER/USD")
+        self.assertEqual(trade["category"], "CRYPTO")
+        self.assertEqual(trade["entry_price"], 1.7831)
+        self.assertEqual(trade["target_entry_price"], 1.78)
+
+    def test_maybe_open_trade_skips_crypto_when_live_price_moved_too_far(self) -> None:
+        self.data_manager.get_symbol_history.return_value = [{"close": 1.78}]
+        self.gpt_client.request_new_signal.return_value = {
+            "action": "OPEN",
+            "symbol": "RENDER/USD",
+            "entry_price": 1.78,
+            "take_profit": 2.1,
+            "stop_loss": 1.62,
+            "confidence": 0.74,
+            "reasoning": "crypto breakout",
+        }
+        self.alpaca_client.get_open_position.return_value = None
+        self.alpaca_client.get_available_cash.return_value = 1000.0
+        self.alpaca_client.place_limit_entry_order.side_effect = ValueError(
+            "Live ask 1.79000000 is too far above target 1.78000000 for RENDER/USD"
+        )
+
+        self.manager.maybe_open_trade("CRYPTO", "RENDER/USD")
+
+        self.assertEqual(self.manager.get_open_or_pending_trades(), [])
 
     def test_maybe_open_trade_skips_symbol_with_existing_active_trade(self) -> None:
         self._insert_trade("OPEN")
@@ -325,7 +377,7 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
         self.assertEqual(updated_trade["reasoning"], "Momentum and catalysts have weakened materially.")
 
     def test_sync_pending_trade_promotes_when_position_exists_even_if_order_is_not_filled(self) -> None:
-        trade_id = self._insert_trade("PENDING", symbol="AAVE/USD", entry_price=111.87, quantity=27.560293)
+        trade_id = self._insert_trade("PENDING", symbol="AAVE/USD", category="CRYPTO", entry_price=111.87, quantity=27.560293)
         trade = self.manager.get_trade(trade_id)
         assert trade is not None
 
@@ -350,6 +402,92 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
         self.assertEqual(updated_trade["quantity"], 27.560293)
         self.assertEqual(updated_trade["current_price"], 112.4)
         self.assertIsNotNone(updated_trade["open_timestamp"])
+
+    def test_sync_pending_trade_resubmits_live_crypto_entry_with_new_order(self) -> None:
+        trade_id = self._insert_trade(
+            "PENDING",
+            symbol="RENDER/USD",
+            category="CRYPTO",
+            entry_price=1.78,
+            target_entry_price=1.78,
+            quantity=56179.780898,
+            alpaca_order_id="old-entry-order",
+        )
+        trade = self.manager.get_trade(trade_id)
+        assert trade is not None
+
+        stale_timestamp = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+        self.alpaca_client.get_order.return_value = type(
+            "Order",
+            (),
+            {
+                "status": "new",
+                "submitted_at": stale_timestamp,
+                "updated_at": stale_timestamp,
+                "limit_price": 1.78,
+            },
+        )()
+        self.alpaca_client.get_open_position.return_value = None
+        self.alpaca_client.get_latest_quote.return_value = {"ask_price": 1.7807, "bid_price": 1.7802}
+        self.alpaca_client.place_limit_entry_order.return_value = {
+            "order": type("Order", (), {"id": "new-entry-order"})(),
+            "client_order_id": "entry-client-2",
+            "quantity": 56090.0,
+            "submitted_entry_price": 1.78337,
+        }
+
+        self.manager.sync_pending_trade(trade)
+
+        self.alpaca_client.cancel_order.assert_called_once_with("old-entry-order")
+        self.alpaca_client.place_limit_entry_order.assert_called_once_with(
+            symbol="RENDER/USD",
+            category="CRYPTO",
+            entry_price=1.78,
+            allocated_capital=200.0,
+        )
+        updated_trade = self.manager.get_trade(trade_id)
+        assert updated_trade is not None
+        self.assertEqual(updated_trade["status"], "PENDING")
+        self.assertEqual(updated_trade["alpaca_order_id"], "new-entry-order")
+        self.assertEqual(updated_trade["client_order_id"], "entry-client-2")
+        self.assertEqual(updated_trade["entry_price"], 1.78337)
+        self.assertEqual(updated_trade["target_entry_price"], 1.78)
+
+    def test_sync_pending_trade_cancels_crypto_entry_when_price_moves_away(self) -> None:
+        trade_id = self._insert_trade(
+            "PENDING",
+            symbol="RENDER/USD",
+            category="CRYPTO",
+            entry_price=1.78,
+            target_entry_price=1.78,
+            quantity=56179.780898,
+            alpaca_order_id="old-entry-order",
+        )
+        trade = self.manager.get_trade(trade_id)
+        assert trade is not None
+
+        stale_timestamp = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+        self.alpaca_client.get_order.return_value = type(
+            "Order",
+            (),
+            {
+                "status": "new",
+                "submitted_at": stale_timestamp,
+                "updated_at": stale_timestamp,
+                "limit_price": 1.78,
+            },
+        )()
+        self.alpaca_client.get_open_position.return_value = None
+        self.alpaca_client.get_latest_quote.return_value = {"ask_price": 1.81, "bid_price": 1.8095}
+
+        self.manager.sync_pending_trade(trade)
+
+        self.alpaca_client.cancel_order.assert_called_once_with("old-entry-order")
+        self.alpaca_client.place_limit_entry_order.assert_not_called()
+        updated_trade = self.manager.get_trade(trade_id)
+        assert updated_trade is not None
+        self.assertEqual(updated_trade["status"], "CANCELLED")
+        self.assertEqual(updated_trade["close_reason"], "ENTRY_PRICE_MOVED")
 
     def test_sync_open_trade_requests_market_close_when_take_profit_is_hit(self) -> None:
         trade_id = self._insert_trade("OPEN", take_profit=105.0, stop_loss=95.0, high_water_mark=104.0)

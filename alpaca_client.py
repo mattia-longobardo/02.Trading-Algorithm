@@ -12,7 +12,7 @@ from alpaca.common.exceptions import APIError
 from alpaca.data.historical.crypto import CryptoHistoricalDataClient
 from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.enums import DataFeed
-from alpaca.data.requests import CryptoBarsRequest, CryptoLatestTradeRequest, StockBarsRequest, StockLatestTradeRequest
+from alpaca.data.requests import CryptoBarsRequest, CryptoLatestQuoteRequest, CryptoLatestTradeRequest, StockBarsRequest, StockLatestTradeRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import AssetClass, OrderClass, OrderSide, OrderStatus, OrderType, QueryOrderStatus, TimeInForce
@@ -74,6 +74,22 @@ class AlpacaClient:
     @staticmethod
     def _normalized_symbol_key(symbol: str) -> str:
         return str(symbol).replace("/", "").upper().strip()
+
+    @classmethod
+    def _response_item(cls, response: Any, symbol: str) -> Any:
+        if not isinstance(response, dict):
+            return response
+        candidate_keys = (
+            str(symbol),
+            str(symbol).upper().strip(),
+            cls._normalized_symbol_key(symbol),
+        )
+        for candidate in candidate_keys:
+            if candidate in response:
+                return response[candidate]
+        if len(response) == 1:
+            return next(iter(response.values()))
+        return None
 
     def _position_matches_symbol(self, position: Any, symbol: str) -> bool:
         candidate_keys = {
@@ -141,15 +157,30 @@ class AlpacaClient:
         else:
             request = CryptoLatestTradeRequest(symbol_or_symbols=symbol)
             response = self.crypto_data_client.get_crypto_latest_trade(request)
-
-        if isinstance(response, dict):
-            trade = response.get(symbol) or response.get(str(symbol).upper())
-        else:
-            trade = response
+        trade = self._response_item(response, symbol)
         price = getattr(trade, "price", None)
         if price is None:
             raise ValueError(f"Latest price unavailable for {symbol}")
         return float(price)
+
+    @retry()
+    def get_latest_quote(self, symbol: str, category: str) -> dict[str, float | None]:
+        if category != "CRYPTO":
+            price = self.get_latest_price(symbol, category)
+            return {"bid_price": price, "ask_price": price, "bid_size": None, "ask_size": None}
+
+        self.logger.debug("Fetching latest quote for %s (%s)", symbol, category)
+        request = CryptoLatestQuoteRequest(symbol_or_symbols=symbol)
+        response = self.crypto_data_client.get_crypto_latest_quote(request)
+        quote = self._response_item(response, symbol)
+        if quote is None:
+            raise ValueError(f"Latest quote unavailable for {symbol}")
+        return {
+            "bid_price": float(getattr(quote, "bid_price", 0.0) or 0.0) or None,
+            "ask_price": float(getattr(quote, "ask_price", 0.0) or 0.0) or None,
+            "bid_size": float(getattr(quote, "bid_size", 0.0) or 0.0) or None,
+            "ask_size": float(getattr(quote, "ask_size", 0.0) or 0.0) or None,
+        }
 
     @retry()
     def close_position_market(self, symbol: str) -> Any:
@@ -249,6 +280,75 @@ class AlpacaClient:
             return math.floor(raw_qty * 1000000) / 1000000
         return math.floor(raw_qty * 1000000) / 1000000
 
+    @staticmethod
+    def _round_limit_price(price: float, category: str) -> float:
+        decimals = 8 if category == "CRYPTO" else 4
+        return round(float(price), decimals)
+
+    def _resolve_crypto_reference_price(self, symbol: str, target_entry_price: float) -> tuple[float, dict[str, float | None]]:
+        quote: dict[str, float | None] = {}
+        try:
+            quote = self.get_latest_quote(symbol, "CRYPTO")
+        except Exception as exc:
+            self.logger.warning(
+                "Could not fetch latest crypto quote for %s; falling back to latest trade price: %s",
+                symbol,
+                exc,
+            )
+        ask_price = float(quote.get("ask_price") or 0.0) if quote else 0.0
+        if ask_price > 0:
+            return ask_price, quote
+        return self.get_latest_price(symbol, "CRYPTO"), quote
+
+    def _place_crypto_limit_entry_order(
+        self,
+        symbol: str,
+        target_entry_price: float,
+        allocated_capital: float,
+    ) -> dict[str, Any]:
+        live_reference_price, quote = self._resolve_crypto_reference_price(symbol, target_entry_price)
+        max_acceptable_price = target_entry_price * (1 + (self.config.crypto_entry_max_chase_bps / 10_000.0))
+        if live_reference_price > max_acceptable_price:
+            raise ValueError(
+                f"Live ask {live_reference_price:.8f} is too far above target {target_entry_price:.8f} for {symbol}"
+            )
+
+        marketable_limit_price = max(
+            target_entry_price,
+            live_reference_price * (1 + (self.config.crypto_entry_limit_collar_bps / 10_000.0)),
+        )
+        submitted_entry_price = self._round_limit_price(marketable_limit_price, "CRYPTO")
+        qty = self._calculate_quantity(submitted_entry_price, allocated_capital, "CRYPTO")
+        if qty <= 0:
+            raise ValueError(
+                f"Allocated capital {allocated_capital} is insufficient to buy any quantity of {symbol} at {submitted_entry_price}"
+            )
+        client_order_id = f"entry-{symbol.replace('/', '-')}-{uuid4().hex[:18]}"
+        order = LimitOrderRequest(
+            symbol=symbol,
+            qty=qty,
+            side=OrderSide.BUY,
+            time_in_force=TimeInForce.IOC,
+            limit_price=submitted_entry_price,
+            client_order_id=client_order_id,
+        )
+        self.logger.info(
+            "Submitting marketable crypto IOC entry for %s at limit %s (target %s, live %s)",
+            symbol,
+            submitted_entry_price,
+            target_entry_price,
+            live_reference_price,
+        )
+        submitted = self.trading_client.submit_order(order_data=order)
+        return {
+            "order": submitted,
+            "quantity": qty,
+            "client_order_id": client_order_id,
+            "submitted_entry_price": submitted_entry_price,
+            "target_entry_price": target_entry_price,
+            "live_quote": quote,
+        }
+
     def supports_advanced_orders(self, category: str, quantity: float | None = None) -> bool:
         if category == "CRYPTO":
             return False
@@ -271,6 +371,12 @@ class AlpacaClient:
         entry_price: float,
         allocated_capital: float,
     ) -> dict[str, Any]:
+        if category == "CRYPTO":
+            return self._place_crypto_limit_entry_order(
+                symbol=symbol,
+                target_entry_price=entry_price,
+                allocated_capital=allocated_capital,
+            )
         qty = self._calculate_quantity(entry_price, allocated_capital, category)
         if qty <= 0:
             raise ValueError(f"Allocated capital {allocated_capital} is insufficient to buy any quantity of {symbol} at {entry_price}")
@@ -371,11 +477,20 @@ class AlpacaClient:
         return self.trading_client.replace_order_by_id(order_id, order_data=request)
 
     @retry()
-    def get_bars(self, symbol: str, category: str, start: datetime, end: datetime | None = None) -> list[dict[str, Any]]:
+    def get_multi_bars(
+        self,
+        symbols: list[str],
+        category: str,
+        start: datetime,
+        end: datetime | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
         end = end or utc_now()
+        normalized_symbols = [str(symbol).upper().strip() for symbol in symbols if str(symbol).strip()]
+        if not normalized_symbols:
+            return {}
         if category == "STOCK":
             request = StockBarsRequest(
-                symbol_or_symbols=symbol,
+                symbol_or_symbols=normalized_symbols,
                 timeframe=TimeFrame.Day,
                 start=start,
                 end=end,
@@ -383,18 +498,37 @@ class AlpacaClient:
             )
             bars = self.stock_data_client.get_stock_bars(request)
         else:
-            request = CryptoBarsRequest(symbol_or_symbols=symbol, timeframe=TimeFrame.Day, start=start, end=end)
+            request = CryptoBarsRequest(symbol_or_symbols=normalized_symbols, timeframe=TimeFrame.Day, start=start, end=end)
             bars = self.crypto_data_client.get_crypto_bars(request)
 
         frame = bars.df.reset_index() if hasattr(bars, "df") else []
-        normalized: list[dict[str, Any]] = []
+        normalized_by_symbol: dict[str, list[dict[str, Any]]] = {symbol: [] for symbol in normalized_symbols}
         if len(frame) == 0:
-            return normalized
+            return normalized_by_symbol
+
+        columns = {str(column).lower(): column for column in getattr(frame, "columns", [])}
+        symbol_column = columns.get("symbol")
+        if symbol_column is None:
+            symbol_column = next((column for column in getattr(frame, "columns", []) if "symbol" in str(column).lower()), None)
+        timestamp_column = columns.get("timestamp")
+        if timestamp_column is None:
+            timestamp_column = next((column for column in getattr(frame, "columns", []) if "timestamp" in str(column).lower()), None)
+
+        requested_symbol_lookup = {self._normalized_symbol_key(symbol): symbol for symbol in normalized_symbols}
         for _, row in frame.iterrows():
-            normalized.append(
+            row_symbol = normalized_symbols[0]
+            if symbol_column is not None:
+                raw_symbol = str(row[symbol_column]).upper().strip()
+                row_symbol = requested_symbol_lookup.get(self._normalized_symbol_key(raw_symbol), raw_symbol)
+            timestamp_value = row[timestamp_column] if timestamp_column is not None else row["timestamp"]
+            if hasattr(timestamp_value, "to_pydatetime"):
+                timestamp_value = timestamp_value.to_pydatetime()
+            if isinstance(timestamp_value, datetime):
+                timestamp_value = timestamp_value.astimezone(UTC).isoformat()
+            normalized_by_symbol.setdefault(row_symbol, []).append(
                 {
-                    "symbol": symbol,
-                    "timestamp": row["timestamp"].to_pydatetime().astimezone(UTC).isoformat(),
+                    "symbol": row_symbol,
+                    "timestamp": str(timestamp_value),
                     "open": float(row["open"]),
                     "high": float(row["high"]),
                     "low": float(row["low"]),
@@ -402,8 +536,13 @@ class AlpacaClient:
                     "volume": float(row["volume"]),
                 }
             )
-        self.logger.debug("Downloaded %s bars for %s", len(normalized), symbol)
-        return normalized
+        self.logger.debug("Downloaded %s total bars for %s symbols", sum(len(rows) for rows in normalized_by_symbol.values()), len(normalized_symbols))
+        return normalized_by_symbol
+
+    @retry()
+    def get_bars(self, symbol: str, category: str, start: datetime, end: datetime | None = None) -> list[dict[str, Any]]:
+        normalized_symbol = str(symbol).upper().strip()
+        return self.get_multi_bars([normalized_symbol], category, start, end).get(normalized_symbol, [])
 
     def infer_close_reason(self, order: Any) -> str:
         """Infer the close reason from nested orders when possible."""

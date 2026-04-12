@@ -25,6 +25,7 @@ class TradeManager:
     }
     TERMINAL_EXIT_STATUSES = {"canceled", "cancelled", "expired", "rejected"}
     FILLED_ENTRY_STATUSES = {"filled", "partially_filled"}
+    LIVE_PENDING_ENTRY_STATUSES = {"new", "accepted", "pending_new", "accepted_for_bidding", "held"}
 
     def __init__(
         self,
@@ -64,6 +65,12 @@ class TradeManager:
             if isinstance(value, str):
                 return parse_datetime(value)
         return None
+
+    @staticmethod
+    def _minutes_since(timestamp: datetime | None) -> float | None:
+        if timestamp is None:
+            return None
+        return max((utc_now() - timestamp).total_seconds() / 60.0, 0.0)
 
     def _resolve_current_price(
         self,
@@ -176,6 +183,134 @@ class TradeManager:
         available_slots = max(slots - active, 1)
         return round(cash / available_slots, 2)
 
+    def _cancel_pending_trade_record(
+        self,
+        trade: dict[str, Any],
+        close_reason: str,
+        *,
+        reasoning: str | None = None,
+        close_timestamp: datetime | None = None,
+    ) -> None:
+        with db_cursor(self.config.db_trades) as cursor:
+            cursor.execute(
+                """
+                UPDATE trades
+                SET status = 'CANCELLED', close_reason = ?, close_timestamp = ?, reasoning = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    close_reason,
+                    isoformat_utc(close_timestamp or utc_now()),
+                    reasoning or trade.get("reasoning"),
+                    trade["id"],
+                ),
+            )
+
+    def _update_pending_trade_submission(self, trade: dict[str, Any], order_payload: dict[str, Any]) -> None:
+        order = order_payload["order"]
+        submitted_entry_price = (
+            self._as_float(order_payload.get("submitted_entry_price"))
+            or self._as_float(getattr(order, "limit_price", None))
+            or self._as_float(trade.get("entry_price"))
+            or self._as_float(trade.get("target_entry_price"))
+            or 0.0
+        )
+        quantity = self._as_float(order_payload.get("quantity")) or float(trade["quantity"])
+        with db_cursor(self.config.db_trades) as cursor:
+            cursor.execute(
+                """
+                UPDATE trades
+                SET entry_price = ?, quantity = ?, alpaca_order_id = ?, client_order_id = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    submitted_entry_price,
+                    quantity,
+                    str(getattr(order, "id", "")),
+                    order_payload["client_order_id"],
+                    trade["id"],
+                ),
+            )
+
+    def _max_acceptable_crypto_entry_price(self, target_entry_price: float) -> float:
+        return target_entry_price * (1 + (self.config.crypto_entry_max_chase_bps / 10_000.0))
+
+    def _refresh_live_crypto_pending_trade(self, trade: dict[str, Any], order: Any) -> None:
+        target_entry_price = self._as_float(trade.get("target_entry_price")) or self._as_float(trade.get("entry_price"))
+        if target_entry_price is None or target_entry_price <= 0:
+            return
+
+        trade_age_minutes = self._minutes_since(parse_datetime(trade.get("created_at"))) or 0.0
+        order_age_anchor = self._order_timestamp(order, "updated_at", "submitted_at", "created_at") or parse_datetime(trade.get("created_at"))
+        order_age_minutes = self._minutes_since(order_age_anchor) or 0.0
+
+        try:
+            quote = self.alpaca_client.get_latest_quote(str(trade["symbol"]), str(trade["category"]))
+        except Exception:
+            self.logger.warning("Could not fetch latest quote for pending crypto trade %s", trade["id"], exc_info=True)
+            return
+
+        live_ask = self._as_float(quote.get("ask_price")) or self._as_float(quote.get("bid_price"))
+        if live_ask is None or live_ask <= 0:
+            return
+
+        if live_ask > self._max_acceptable_crypto_entry_price(target_entry_price):
+            order_id = trade.get("alpaca_order_id")
+            if order_id:
+                try:
+                    self.alpaca_client.cancel_order(str(order_id))
+                except Exception as exc:
+                    if "not found" not in str(exc).lower():
+                        raise
+            self._cancel_pending_trade_record(trade, "ENTRY_PRICE_MOVED")
+            self.logger.info(
+                "Cancelled pending crypto trade %s because live ask %s moved above the allowed target drift from %s",
+                trade["id"],
+                live_ask,
+                target_entry_price,
+            )
+            return
+
+        if trade_age_minutes >= self.config.crypto_pending_cancel_minutes:
+            order_id = trade.get("alpaca_order_id")
+            if order_id:
+                try:
+                    self.alpaca_client.cancel_order(str(order_id))
+                except Exception as exc:
+                    if "not found" not in str(exc).lower():
+                        raise
+            self._cancel_pending_trade_record(trade, "CRYPTO_ENTRY_TIMEOUT")
+            self.logger.info("Cancelled pending crypto trade %s after %s minutes without a fill", trade["id"], round(trade_age_minutes, 2))
+            return
+
+        if order_age_minutes < self.config.crypto_pending_reprice_minutes:
+            return
+
+        order_id = trade.get("alpaca_order_id")
+        if order_id:
+            try:
+                self.alpaca_client.cancel_order(str(order_id))
+            except Exception as exc:
+                if "not found" not in str(exc).lower():
+                    raise
+
+        try:
+            replacement_order = self.alpaca_client.place_limit_entry_order(
+                symbol=str(trade["symbol"]),
+                category=str(trade["category"]),
+                entry_price=target_entry_price,
+                allocated_capital=float(trade["allocated_capital"]),
+            )
+        except Exception as exc:
+            if "too far above target" in str(exc).lower():
+                self._cancel_pending_trade_record(trade, "ENTRY_PRICE_MOVED")
+                self.logger.info("Cancelled pending crypto trade %s because the refreshed live price moved away", trade["id"])
+                return
+            raise
+
+        self._update_pending_trade_submission(trade, replacement_order)
+        self.logger.info("Resubmitted pending crypto trade %s with a refreshed marketable IOC limit", trade["id"])
+
     def _save_new_trade(
         self,
         category: str,
@@ -187,6 +322,7 @@ class TradeManager:
         order = order_payload["order"]
         trailing_take_profit_distance = self._as_float(signal.get("trailing_take_profit_distance"))
         trailing_stop_distance = self._as_float(signal.get("trailing_stop_distance"))
+        submitted_entry_price = self._as_float(order_payload.get("submitted_entry_price")) or float(signal["entry_price"])
         with db_cursor(self.config.db_trades) as cursor:
             cursor.execute(
                 """
@@ -200,7 +336,7 @@ class TradeManager:
                 (
                     symbol,
                     category,
-                    float(signal["entry_price"]),
+                    submitted_entry_price,
                     float(signal["entry_price"]),
                     float(order_payload["quantity"]),
                     allocated_capital,
@@ -308,6 +444,9 @@ class TradeManager:
                     "Skipping %s because available capital is insufficient for the proposed entry",
                     symbol,
                 )
+                return False
+            if category == "CRYPTO" and "too far above target" in str(exc).lower():
+                self.logger.info("Skipping %s because the live crypto ask moved too far above the GPT target", symbol)
                 return False
             raise
         self._save_new_trade(category, symbol, signal, order_payload, allocated_capital)
@@ -433,6 +572,10 @@ class TradeManager:
                     (self.TERMINAL_PENDING_STATUSES[status], isoformat_utc(close_timestamp), trade["id"]),
                 )
             self.logger.info("Pending trade %s cancelled with status %s", trade["id"], status)
+            return
+
+        if trade["category"] == "CRYPTO" and status in self.LIVE_PENDING_ENTRY_STATUSES:
+            self._refresh_live_crypto_pending_trade(trade, order)
 
     def review_stale_pending_trades(self, min_age_days: int = 7) -> None:
         stale_trades = self.get_stale_pending_trades(min_age_days=min_age_days)
@@ -475,21 +618,12 @@ class TradeManager:
                 if "not found" not in str(exc).lower():
                     raise
 
-        close_price = self._as_float(trade.get("target_entry_price")) or self._as_float(trade.get("entry_price")) or 0.0
-        with db_cursor(self.config.db_trades) as cursor:
-            cursor.execute(
-                """
-                UPDATE trades
-                SET status = 'CANCELLED', close_reason = ?, close_timestamp = ?, reasoning = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (
-                    "STALE_PENDING_CANCELED",
-                    isoformat_utc(utc_now()),
-                    reasoning or trade.get("reasoning"),
-                    trade["id"],
-                ),
-            )
+        self._cancel_pending_trade_record(
+            trade,
+            "STALE_PENDING_CANCELED",
+            reasoning=reasoning or trade.get("reasoning"),
+            close_timestamp=utc_now(),
+        )
         self.logger.info("Cancelled stale pending trade %s after GPT cancel review", trade["id"])
 
     def _mark_trade_closed(

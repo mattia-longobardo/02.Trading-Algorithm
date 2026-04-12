@@ -85,8 +85,68 @@ BATCH_SIGNALS_SCHEMA = {
     },
 }
 
+UNIVERSE_SYMBOL_DOSSIER_SCHEMA = {
+    "name": "universe_symbol_dossier",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string"},
+            "category": {"type": "string"},
+            "summary": {"type": "string"},
+            "bull_case": {"type": "array", "items": {"type": "string"}},
+            "bear_case": {"type": "array", "items": {"type": "string"}},
+            "recent_catalysts": {"type": "array", "items": {"type": "string"}},
+            "key_risks": {"type": "array", "items": {"type": "string"}},
+            "theme_tags": {"type": "array", "items": {"type": "string"}},
+            "news_sentiment": {
+                "type": "string",
+                "enum": ["positive", "mixed_positive", "neutral", "mixed_negative", "negative"],
+            },
+            "quality_score": {"type": "number"},
+            "liquidity_score": {"type": "number"},
+            "momentum_score": {"type": "number"},
+            "downside_control_score": {"type": "number"},
+            "fit_score": {"type": "number"},
+            "conviction_score": {"type": "number"},
+            "reasoning": {"type": "string"},
+        },
+        "required": [
+            "symbol",
+            "category",
+            "summary",
+            "bull_case",
+            "bear_case",
+            "recent_catalysts",
+            "key_risks",
+            "theme_tags",
+            "news_sentiment",
+            "quality_score",
+            "liquidity_score",
+            "momentum_score",
+            "downside_control_score",
+            "fit_score",
+            "conviction_score",
+            "reasoning",
+        ],
+        "additionalProperties": False,
+    },
+}
+
 UNIVERSE_BATCH_SHORTLIST_SCHEMA = {
     "name": "universe_batch_shortlist",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "symbols": {"type": "array", "items": {"type": "string"}},
+            "reasoning": {"type": "string"},
+        },
+        "required": ["symbols", "reasoning"],
+        "additionalProperties": False,
+    },
+}
+
+UNIVERSE_DOSSIER_FINAL_SCHEMA = {
+    "name": "weekly_universe_from_dossiers",
     "schema": {
         "type": "object",
         "properties": {
@@ -148,15 +208,23 @@ class GPTClient:
         self.client = OpenAI(api_key=config.openai_api_key)
 
     @retry(exceptions=(APIError, APIStatusError, RateLimitError, ValueError))
-    def _request_json(self, instructions: str, payload: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
+    def _request_json(
+        self,
+        instructions: str,
+        payload: dict[str, Any],
+        schema: dict[str, Any],
+        *,
+        use_web_search: bool = True,
+        reasoning_effort: str = "medium",
+    ) -> dict[str, Any]:
         self.logger.debug("Calling OpenAI Responses API for %s", schema["name"])
-        response = self.client.responses.create(
-            model="gpt-5.4",
-            reasoning={"effort": "low"},
-            instructions=instructions,
-            input=to_json(payload),
-            tools=[{"type": "web_search"}],
-            text={
+        tools = [{"type": "web_search"}] if use_web_search else None
+        request_kwargs: dict[str, Any] = {
+            "model": "gpt-5.4",
+            "reasoning": {"effort": reasoning_effort},
+            "instructions": instructions,
+            "input": to_json(payload),
+            "text": {
                 "format": {
                     "type": "json_schema",
                     "name": schema["name"],
@@ -164,6 +232,11 @@ class GPTClient:
                     "strict": True,
                 }
             },
+        }
+        if tools:
+            request_kwargs["tools"] = tools
+        response = self.client.responses.create(
+            **request_kwargs,
         )
         result = json.loads(response.output_text)
         return result
@@ -267,6 +340,49 @@ class GPTClient:
         }
         return self._request_json(instructions, payload, BATCH_SIGNALS_SCHEMA)
 
+    def request_universe_symbol_dossier(
+        self,
+        category: str,
+        candidate: dict[str, Any],
+        peer_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        instructions = (
+            f"Create a compact JSON dossier for one weekly {category} universe candidate. "
+            "Do mandatory web search before deciding. "
+            "Use both the provided local market metrics and current web information. "
+            "This is a medium-long term position-trading strategy, not intraday trading. "
+            f"Favor setups suitable for roughly {self.config.strategy_horizon_days_min}-{self.config.strategy_horizon_days_max} days, and possibly 3-4 months if the thesis remains intact. "
+            f"The user risk tolerance is {self.config.risk_tolerance} on a 1-10 scale, where 10 means maximum risk appetite. "
+            "Score quality, liquidity, momentum, downside control, and fit for this strategy on a 0-100 scale where higher is better. "
+            "Use recent news, catalysts, sentiment, and business or ecosystem quality from web search. "
+            "When the provided market metrics conflict with the web narrative, acknowledge that tension in the reasoning. "
+            "Keep the summary concise and practical. "
+            f"Use {self.config.currency} as the reference currency, and for crypto keep Alpaca pair format like BTC/{self.config.currency}. "
+            "Return only JSON matching the schema."
+        )
+        payload = {
+            "category": category,
+            "candidate": candidate,
+            "peer_context": peer_context,
+            "selection_rules": {
+                "currency": self.config.currency,
+                "risk_tolerance": self.config.risk_tolerance,
+                "strategy_style": "medium_long_term_position_trading",
+                "target_holding_period_days": {
+                    "min": self.config.strategy_horizon_days_min,
+                    "max": self.config.strategy_horizon_days_max,
+                },
+                "score_scale": "0_to_100_higher_is_better",
+            },
+        }
+        return self._request_json(
+            instructions,
+            payload,
+            UNIVERSE_SYMBOL_DOSSIER_SCHEMA,
+            use_web_search=True,
+            reasoning_effort="low",
+        )
+
     def request_universe_batch_shortlist(
         self,
         category: str,
@@ -280,11 +396,13 @@ class GPTClient:
             "Do mandatory web search before choosing. Exclude ETFs and avoid illiquid names. "
             "Avoid warrants, rights, units, preferred shares, shell companies, and other non-common-stock instruments. "
             "Use only the provided Alpaca candidate list for this batch. "
+            "When local market metrics are provided for a candidate, treat them as hard context and use them alongside web search. "
             "This strategy is medium-long term position trading, not daily trading. "
             f"Favor assets suitable for holding roughly {self.config.strategy_horizon_days_min}-{self.config.strategy_horizon_days_max} days, and potentially 3-4 months if the thesis remains intact. "
             f"The user risk tolerance is {self.config.risk_tolerance} on a 1-10 scale, where 10 means maximum risk appetite. "
             "Adjust the shortlist to this preference: low risk should favor larger, more liquid, more resilient names; high risk can include more aggressive growth or narrative-driven assets, but still avoid obvious low-quality instruments. "
             "Base the selection on tradability, liquidity proxies, business relevance, current news flow, and sentiment analysis from web search. "
+            "Prefer stronger average dollar volume, constructive 20d/60d/120d trend, and candidates trading relatively close to their medium-term highs unless current news strongly contradicts the setup. "
             f"Prioritize {category} symbols with strong potential over the next months, driven by fundamental or technical catalysts, while keeping the selection coherent with the user risk tolerance. "
             "For stocks, prefer companies with solid earnings, revenue growth, sector leadership, and catalysts that can play out over multiple weeks or months. "
             "For crypto, prefer established assets with solid market capitalization, active ecosystem participation, and durable narratives rather than short-lived hype. "
@@ -331,9 +449,11 @@ class GPTClient:
             f"Select exactly {required_count} {category} symbols for the weekly trading universe from the provided shortlist. "
             "Do mandatory web search before choosing. "
             "Use only the shortlisted candidates provided in this final consolidation step. "
+            "When local market metrics are provided for a candidate, treat them as hard context and use them alongside web search. "
             "This strategy is medium-long term position trading, not daily trading. "
             f"The user risk tolerance is {self.config.risk_tolerance} on a 1-10 scale, where 10 means maximum risk appetite. "
             "Choose the strongest multi-month opportunities while balancing upside, liquidity, quality, and downside control according to that risk preference. "
+            "Prefer candidates with stronger average dollar volume, constructive 20d/60d/120d trend, and better resilience relative to recent highs unless current news materially weakens the thesis. "
             f"Use {self.config.currency} as the reference currency. "
             f"For crypto, return only Alpaca pair symbols quoted in {self.config.currency}. "
             "Return only JSON matching the schema."
@@ -353,6 +473,48 @@ class GPTClient:
             },
         }
         return self._request_json(instructions, payload, UNIVERSE_FINAL_SCHEMA)
+
+    def request_universe_final_selection_from_dossiers(
+        self,
+        category: str,
+        dossiers: list[dict[str, Any]],
+        required_count: int,
+        current_universe: list[str] | None = None,
+    ) -> dict[str, Any]:
+        instructions = (
+            f"Select exactly {required_count} {category} symbols for the weekly trading universe from the provided candidate dossiers. "
+            "Use only the dossier information provided in this final consolidation step. "
+            "Do not invent candidates outside the dossier list. "
+            "Optimize for overall portfolio quality, liquidity, conviction, and medium-term opportunity. "
+            f"The user risk tolerance is {self.config.risk_tolerance} on a 1-10 scale, where 10 means maximum risk appetite. "
+            "Prefer some diversification across themes or narratives when multiple candidates are similarly strong, rather than concentrating too heavily in near-duplicates. "
+            "It is acceptable to keep some continuity with the current universe when dossier quality is still competitive, but do not keep a weaker name purely for continuity. "
+            f"Use {self.config.currency} as the reference currency, and for crypto return only Alpaca pair symbols quoted in {self.config.currency}. "
+            "Return only JSON matching the schema."
+        )
+        payload = {
+            "category": category,
+            "candidate_dossiers": dossiers,
+            "selection_rules": {
+                "required_count": required_count,
+                "currency": self.config.currency,
+                "risk_tolerance": self.config.risk_tolerance,
+                "strategy_style": "medium_long_term_position_trading",
+                "target_holding_period_days": {
+                    "min": self.config.strategy_horizon_days_min,
+                    "max": self.config.strategy_horizon_days_max,
+                },
+                "prefer_diversification": True,
+                "current_universe": current_universe or [],
+            },
+        }
+        return self._request_json(
+            instructions,
+            payload,
+            UNIVERSE_DOSSIER_FINAL_SCHEMA,
+            use_web_search=False,
+            reasoning_effort="low",
+        )
 
     def request_pending_trade_review(
         self,

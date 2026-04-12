@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import logging
+import threading
+from collections import OrderedDict
 from collections.abc import Callable
+from contextlib import contextmanager
 from typing import Any
 
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -37,7 +40,10 @@ class TradingScheduler:
         self.universe_manager = universe_manager
         self.report_generator = report_generator
         self.scheduler = BlockingScheduler(timezone="UTC")
-        self.lock = FileLock(config.lock_file, timeout=1)
+        self._execution_lock = threading.Lock()
+        self._pending_jobs: OrderedDict[str, Callable[[], None]] = OrderedDict()
+        self._pending_jobs_lock = threading.Lock()
+        self._pending_jobs_drain_lock = threading.Lock()
 
     @staticmethod
     def _universe_is_empty(universe: dict[str, list[str]]) -> bool:
@@ -66,31 +72,111 @@ class TradingScheduler:
             self.job_download_market_data()
             self.trade_manager.sync_alpaca_state()
 
-    def guarded(self, job_name: str, func: Callable[[], None]) -> Callable[[], None]:
-        def wrapped() -> None:
+    @contextmanager
+    def _process_lock(self, timeout: float) -> Any:
+        with FileLock(self.config.lock_file, timeout=timeout):
+            yield
+
+    def _should_log_monitor_job(self, job_name: str) -> bool:
+        return self.config.debug_logging or job_name != "monitor_trades"
+
+    def _defer_job(self, job_name: str, func: Callable[[], None], *, log_if_new: bool) -> None:
+        with self._pending_jobs_lock:
+            already_pending = job_name in self._pending_jobs
+            if not already_pending:
+                self._pending_jobs[job_name] = func
+
+        if already_pending or not log_if_new:
+            return
+
+        if self._should_log_monitor_job(job_name):
+            self.logger.info("Deferred job %s because another execution is still running", job_name)
+
+    def _pop_pending_job(self) -> tuple[str, Callable[[], None]] | None:
+        with self._pending_jobs_lock:
+            if not self._pending_jobs:
+                return None
+            return self._pending_jobs.popitem(last=False)
+
+    def _run_scheduled_job(
+        self,
+        job_name: str,
+        func: Callable[[], None],
+        *,
+        deferred: bool = False,
+        drain_after: bool = True,
+    ) -> bool:
+        acquired_execution_lock = self._execution_lock.acquire(blocking=False)
+        if not acquired_execution_lock:
+            self._defer_job(job_name, func, log_if_new=not deferred)
+            return False
+
+        try:
             try:
-                with self.lock:
-                    if self.config.debug_logging or job_name != "monitor_trades":
-                        self.logger.info("Starting job: %s", job_name)
+                with self._process_lock(timeout=0):
+                    start_message = "Starting deferred job: %s" if deferred else "Starting job: %s"
+                    complete_message = "Completed deferred job: %s" if deferred else "Completed job: %s"
+                    if self._should_log_monitor_job(job_name):
+                        self.logger.info(start_message, job_name)
                     func()
-                    if self.config.debug_logging or job_name != "monitor_trades":
-                        self.logger.info("Completed job: %s", job_name)
+                    if self._should_log_monitor_job(job_name):
+                        self.logger.info(complete_message, job_name)
+                    return True
             except Timeout:
-                self.logger.warning("Skipped job %s because another execution is still running", job_name)
+                self._defer_job(job_name, func, log_if_new=not deferred)
+                return False
             except Exception:
                 self.logger.exception("Job %s failed", job_name)
+                return True
+        finally:
+            self._execution_lock.release()
+            if drain_after:
+                self._drain_pending_jobs()
+
+    def _drain_pending_jobs(self) -> None:
+        if not self._pending_jobs_drain_lock.acquire(blocking=False):
+            return
+
+        try:
+            while True:
+                pending_job = self._pop_pending_job()
+                if pending_job is None:
+                    return
+
+                job_name, func = pending_job
+                executed = self._run_scheduled_job(
+                    job_name,
+                    func,
+                    deferred=True,
+                    drain_after=False,
+                )
+                if not executed:
+                    return
+        finally:
+            self._pending_jobs_drain_lock.release()
+
+    def guarded(self, job_name: str, func: Callable[[], None]) -> Callable[[], None]:
+        def wrapped() -> None:
+            self._run_scheduled_job(job_name, func)
 
         return wrapped
 
     def run_with_lock(self, job_name: str, func: Callable[[], Any]) -> Any:
+        acquired_execution_lock = self._execution_lock.acquire(timeout=1)
+        if not acquired_execution_lock:
+            raise JobExecutionLockedError(f"Job {job_name} is already running")
+
         try:
-            with self.lock:
+            with self._process_lock(timeout=1):
                 self.logger.info("Starting manual job: %s", job_name)
                 result = func()
                 self.logger.info("Completed manual job: %s", job_name)
                 return result
         except Timeout as exc:
             raise JobExecutionLockedError(f"Job {job_name} is already running") from exc
+        finally:
+            self._execution_lock.release()
+            self._drain_pending_jobs()
 
     def job_download_market_data(self) -> None:
         universe = self.universe_manager.get_current_universe()
@@ -159,6 +245,7 @@ class TradingScheduler:
             self.guarded("monitor_trades", self.job_monitor_trades),
             CronTrigger(minute="*"),
             id="monitor_trades",
+            max_instances=2,
             replace_existing=True,
         )
         self.scheduler.add_job(
