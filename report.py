@@ -1,9 +1,10 @@
-"""Weekly report generation."""
+"""Report generation — weekly, quarterly, bi-annual and annual."""
 
 from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -33,11 +34,78 @@ class ReportGenerator:
         json_path = report_dir / f"weekly_report_{stamp}.json"
         pdf_path = report_dir / f"weekly_report_{stamp}.pdf"
         json_path.write_text(json.dumps(report, indent=2, ensure_ascii=True, default=str), encoding="utf-8")
-        self._render_pdf_report(report, pdf_path)
+        self._render_pdf_report(report, pdf_path, title="Weekly Trading Report")
         self.logger.info("Generated weekly report at %s and %s", json_path, pdf_path)
         return report
 
-    def _render_pdf_report(self, report: dict[str, Any], destination: Path) -> None:
+    def generate_quarterly_report(self) -> dict:
+        """Generate a report for the calendar quarter that just ended."""
+        now = utc_now()
+        # Snap back to the start of the current quarter, which is the end of the previous one.
+        current_quarter_start_month = ((now.month - 1) // 3) * 3 + 1
+        period_end = datetime(now.year, current_quarter_start_month, 1, tzinfo=UTC)
+        # The previous quarter started 3 months before period_end.
+        if current_quarter_start_month == 1:
+            period_start = datetime(now.year - 1, 10, 1, tzinfo=UTC)
+        else:
+            period_start = datetime(now.year, current_quarter_start_month - 3, 1, tzinfo=UTC)
+        quarter_num = (period_start.month - 1) // 3 + 1
+        label = f"Q{quarter_num} {period_start.year}"
+        return self._generate_period_report("quarterly", label, period_start, period_end)
+
+    def generate_biannual_report(self) -> dict:
+        """Generate a report for the half-year that just ended."""
+        now = utc_now()
+        # Snap to the start of the current half, which is the end of the previous half.
+        if now.month >= 7:
+            # We are in H2 — the last completed half is H1 (Jan–Jun) of this year.
+            period_start = datetime(now.year, 1, 1, tzinfo=UTC)
+            period_end = datetime(now.year, 7, 1, tzinfo=UTC)
+            label = f"H1 {now.year}"
+        else:
+            # We are in H1 — the last completed half is H2 (Jul–Dec) of the previous year.
+            period_start = datetime(now.year - 1, 7, 1, tzinfo=UTC)
+            period_end = datetime(now.year, 1, 1, tzinfo=UTC)
+            label = f"H2 {now.year - 1}"
+        return self._generate_period_report("biannual", label, period_start, period_end)
+
+    def generate_annual_report(self) -> dict:
+        """Generate a report for the calendar year that just ended."""
+        now = utc_now()
+        year = now.year - 1
+        period_start = datetime(year, 1, 1, tzinfo=UTC)
+        period_end = datetime(now.year, 1, 1, tzinfo=UTC)
+        label = f"Annual {year}"
+        return self._generate_period_report("annual", label, period_start, period_end)
+
+    def _generate_period_report(
+        self,
+        report_type: str,
+        label: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> dict:
+        report = self.trade_manager.period_summary(period_start, period_end)
+        report["label"] = label
+        report_dir = Path(self.config.report_dir)
+        report_dir.mkdir(parents=True, exist_ok=True)
+        stamp = utc_now().strftime("%Y%m%d_%H%M%S")
+        slug = label.lower().replace(" ", "_")
+        json_path = report_dir / f"{report_type}_report_{slug}_{stamp}.json"
+        pdf_path = report_dir / f"{report_type}_report_{slug}_{stamp}.pdf"
+        json_path.write_text(json.dumps(report, indent=2, ensure_ascii=True, default=str), encoding="utf-8")
+        self._render_pdf_report(report, pdf_path, title=f"{label} Trading Report", is_period=True)
+        self.logger.info("Generated %s report (%s) at %s and %s", report_type, label, json_path, pdf_path)
+        return report
+
+    def _render_pdf_report(
+        self,
+        report: dict[str, Any],
+        destination: Path,
+        *,
+        title: str = "Trading Report",
+        is_period: bool = False,
+    ) -> None:
         styles = getSampleStyleSheet()
         title_style = ParagraphStyle(
             "ReportTitle",
@@ -121,25 +189,28 @@ class ReportGenerator:
             rightMargin=16 * mm,
             topMargin=16 * mm,
             bottomMargin=16 * mm,
-            title="Weekly Trading Report",
+            title=title,
             author="Trading Algorithm",
         )
 
         story: list[Any] = []
         generated_at = utc_now().isoformat()
-        story.append(Paragraph("Weekly Trading Report", title_style))
+        story.append(Paragraph(title, title_style))
         story.append(Paragraph(f"Generated at {generated_at}", subtitle_style))
-        story.append(self._build_summary_table(report, metric_label_style, metric_value_style, metric_sub_style))
+        story.append(self._build_summary_table(report, metric_label_style, metric_value_style, metric_sub_style, is_period=is_period))
         story.append(Spacer(1, 8))
         story.append(Paragraph("Performance Overview", section_style))
-        story.append(Paragraph(self._build_overview_text(report), body_style))
+        story.append(Paragraph(self._build_overview_text(report, is_period=is_period), body_style))
         story.append(Spacer(1, 6))
         story.append(Paragraph("PnL by Category", section_style))
         story.append(self._build_category_table(report, table_cell_style, table_cell_right_style))
         story.append(Paragraph("Most Traded Symbols", section_style))
         story.append(self._build_symbols_table(report, table_cell_style, table_cell_right_style))
         story.append(Paragraph("Trade Snapshot", section_style))
-        story.append(self._build_trades_table(report, table_cell_style, table_cell_right_style))
+        story.append(self._build_trades_table(report, table_cell_style, table_cell_right_style, is_period=is_period))
+        if is_period and report.get("carry_over_trades"):
+            story.append(Paragraph("Carry-Over (Open into Next Period)", section_style))
+            story.append(self._build_carry_over_table(report, table_cell_style, table_cell_right_style))
 
         document.build(story, onFirstPage=self._draw_page_chrome, onLaterPages=self._draw_page_chrome)
 
@@ -149,9 +220,21 @@ class ReportGenerator:
         label_style: ParagraphStyle,
         value_style: ParagraphStyle,
         sub_style: ParagraphStyle,
+        *,
+        is_period: bool = False,
     ) -> Table:
         best_trade = report.get("best_trade") or {}
         worst_trade = report.get("worst_trade") or {}
+        if is_period:
+            carry_over_count = len(report.get("carry_over_trades", []))
+            closed_count = len(report.get("closed_trades", []))
+            active_subtitle = f"Closed {closed_count} | Carry-over {carry_over_count}"
+            active_label = "Carry-Over"
+            active_value = str(carry_over_count)
+        else:
+            active_label = "Open + Pending"
+            active_value = str(len(report.get("open_trades", [])) + len(report.get("pending_trades", [])))
+            active_subtitle = f"Closed {len(report.get('closed_trades', []))}"
         metrics = [
             (
                 "Total PnL",
@@ -159,9 +242,9 @@ class ReportGenerator:
                 f"Win rate {self._format_percent(report.get('win_rate'))}",
             ),
             (
-                "Open + Pending",
-                str(len(report.get("open_trades", [])) + len(report.get("pending_trades", []))),
-                f"Closed {len(report.get('closed_trades', []))} | Cancelled {len(report.get('cancelled_trades', []))}",
+                active_label,
+                active_value,
+                active_subtitle,
             ),
             (
                 "Best Trade",
@@ -233,6 +316,8 @@ class ReportGenerator:
         report: dict[str, Any],
         cell_style: ParagraphStyle,
         right_style: ParagraphStyle,
+        *,
+        is_period: bool = False,
     ) -> Table:
         rows = [
             [
@@ -242,12 +327,14 @@ class ReportGenerator:
                 Paragraph("PnL", right_style),
             ]
         ]
-        trades = [
-            *(report.get("open_trades", []) or []),
-            *(report.get("pending_trades", []) or []),
-            *(report.get("cancelled_trades", []) or [])[:8],
-            *(report.get("closed_trades", []) or [])[:12],
-        ]
+        if is_period:
+            trades = (report.get("closed_trades", []) or [])[:20]
+        else:
+            trades = [
+                *(report.get("open_trades", []) or []),
+                *(report.get("pending_trades", []) or []),
+                *(report.get("closed_trades", []) or [])[:12],
+            ]
         if trades:
             for trade in trades:
                 rows.append(
@@ -261,13 +348,39 @@ class ReportGenerator:
         else:
             rows.append(
                 [
-                    Paragraph("No trades available", cell_style),
+                    Paragraph("No closed trades in this period", cell_style),
                     Paragraph("-", cell_style),
                     Paragraph("-", cell_style),
                     Paragraph("-", right_style),
                 ]
             )
         return self._styled_table(rows, [45 * mm, 30 * mm, 30 * mm, 30 * mm], repeat_rows=1)
+
+    def _build_carry_over_table(
+        self,
+        report: dict[str, Any],
+        cell_style: ParagraphStyle,
+        right_style: ParagraphStyle,
+    ) -> Table:
+        rows = [
+            [
+                Paragraph("Symbol", cell_style),
+                Paragraph("Category", cell_style),
+                Paragraph("Open Since", cell_style),
+                Paragraph("Unrealised PnL", right_style),
+            ]
+        ]
+        for trade in report.get("carry_over_trades", []) or []:
+            open_ts = trade.get("open_timestamp") or trade.get("created_at") or "N/A"
+            rows.append(
+                [
+                    Paragraph(str(trade.get("symbol", "N/A")), cell_style),
+                    Paragraph(str(trade.get("category", "N/A")), cell_style),
+                    Paragraph(str(open_ts)[:10], cell_style),
+                    Paragraph(self._format_number(trade.get("pnl")), right_style),
+                ]
+            )
+        return self._styled_table(rows, [45 * mm, 30 * mm, 35 * mm, 30 * mm], repeat_rows=1)
 
     def _styled_table(self, rows: list[list[Paragraph]], col_widths: list[float], repeat_rows: int = 1) -> Table:
         table = Table(rows, colWidths=col_widths, hAlign="LEFT", repeatRows=repeat_rows)
@@ -289,15 +402,26 @@ class ReportGenerator:
         )
         return table
 
-    def _build_overview_text(self, report: dict[str, Any]) -> str:
+    def _build_overview_text(self, report: dict[str, Any], *, is_period: bool = False) -> str:
         best = report.get("best_trade") or {}
         worst = report.get("worst_trade") or {}
+        if is_period:
+            period_start = (report.get("period_start") or "")[:10]
+            period_end = (report.get("period_end") or "")[:10]
+            carry_count = len(report.get("carry_over_trades", []))
+            closed_count = len(report.get("closed_trades", []))
+            return (
+                f"This report covers the period from {period_start} to {period_end}. "
+                f"{closed_count} trades were closed during this period. "
+                f"{carry_count} trades were not closed and carry over as open into the next period. "
+                f"Best trade: {best.get('symbol', 'N/A')} with {self._format_number(best.get('pnl'))}. "
+                f"Worst trade: {worst.get('symbol', 'N/A')} with {self._format_number(worst.get('pnl'))}."
+            )
         return (
-            f"This report summarizes the last seven days of trading activity. "
+            f"This report summarizes cumulative trading activity up to this week. "
             f"There are {len(report.get('open_trades', []))} open trades, "
             f"{len(report.get('pending_trades', []))} pending trades and "
-            f"{len(report.get('closed_trades', []))} closed trades plus "
-            f"{len(report.get('cancelled_trades', []))} cancelled trades in scope. "
+            f"{len(report.get('closed_trades', []))} closed trades in scope. "
             f"Best trade: {best.get('symbol', 'N/A')} with {self._format_number(best.get('pnl'))}. "
             f"Worst trade: {worst.get('symbol', 'N/A')} with {self._format_number(worst.get('pnl'))}."
         )

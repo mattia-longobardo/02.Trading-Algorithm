@@ -8,7 +8,7 @@ from typing import Any
 
 from openai import APIError, APIStatusError, OpenAI, RateLimitError
 
-from utils import AppConfig, retry, to_json, trim_ohlcv_payload
+from utils import AppConfig, retry, to_toon, trim_ohlcv_payload
 
 NEW_SIGNAL_SCHEMA = {
     "name": "new_trade_signal",
@@ -223,7 +223,7 @@ class GPTClient:
             "model": "gpt-5.4",
             "reasoning": {"effort": reasoning_effort},
             "instructions": instructions,
-            "input": to_json(payload),
+            "input": to_toon(payload),
             "text": {
                 "format": {
                     "type": "json_schema",

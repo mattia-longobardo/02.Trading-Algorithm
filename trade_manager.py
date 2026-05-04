@@ -913,15 +913,10 @@ class TradeManager:
 
     def weekly_summary(self) -> dict[str, Any]:
         rows = fetch_all(self.config.db_trades, "SELECT * FROM trades")
-        cutoff = utc_now() - timedelta(days=7)
-        rows = [
-            row
-            for row in rows
-            if row["status"] in {"PENDING", "OPEN"}
-            or (parse_datetime(row.get("close_timestamp")) and parse_datetime(row.get("close_timestamp")) >= cutoff)
-        ]
+        # Include all OPEN and PENDING trades plus all CLOSED trades (cumulative PnL).
+        # CANCELLED trades are excluded entirely.
+        rows = [row for row in rows if row["status"] in {"OPEN", "PENDING", "CLOSED"}]
         closed = [row for row in rows if row["status"] == "CLOSED"]
-        cancelled = [row for row in rows if row["status"] == "CANCELLED"]
         winners = [row for row in closed if (row.get("pnl") or 0) > 0]
         pnls = [row.get("pnl") or 0 for row in closed]
         best_trade = max(closed, key=lambda row: row.get("pnl") or float("-inf"), default=None)
@@ -934,10 +929,56 @@ class TradeManager:
             "open_trades": [row for row in rows if row["status"] == "OPEN"],
             "pending_trades": [row for row in rows if row["status"] == "PENDING"],
             "closed_trades": closed,
-            "cancelled_trades": cancelled,
             "pnl_total": round(sum(pnls), 2),
             "pnl_by_category": {key: round(value, 2) for key, value in pnl_by_category.items()},
             "win_rate": round(len(winners) / len(closed), 4) if closed else 0.0,
+            "best_trade": best_trade,
+            "worst_trade": worst_trade,
+            "most_traded_symbols": most_traded,
+        }
+
+    def period_summary(self, period_start: datetime, period_end: datetime) -> dict[str, Any]:
+        """Summarise trading activity for a fixed time range.
+
+        Trades closed within [period_start, period_end) contribute to PnL and
+        win-rate metrics.  Every non-cancelled trade that was NOT closed during
+        the period (still OPEN, PENDING, or closed outside the window) is
+        returned as a carry-over with status "OPEN" so it flows into the next
+        reporting period.
+        """
+        rows = fetch_all(self.config.db_trades, "SELECT * FROM trades")
+        rows = [row for row in rows if row["status"] != "CANCELLED"]
+
+        closed_in_period: list[dict[str, Any]] = []
+        carry_over: list[dict[str, Any]] = []
+
+        for row in rows:
+            close_ts = parse_datetime(row.get("close_timestamp"))
+            if row["status"] == "CLOSED" and close_ts is not None and period_start <= close_ts < period_end:
+                closed_in_period.append(row)
+            else:
+                # Not closed within the period — carry over as open.
+                carry = dict(row)
+                carry["status"] = "OPEN"
+                carry_over.append(carry)
+
+        winners = [row for row in closed_in_period if (row.get("pnl") or 0) > 0]
+        pnls = [row.get("pnl") or 0 for row in closed_in_period]
+        best_trade = max(closed_in_period, key=lambda row: row.get("pnl") or float("-inf"), default=None)
+        worst_trade = min(closed_in_period, key=lambda row: row.get("pnl") or float("inf"), default=None)
+        all_in_scope = closed_in_period + carry_over
+        most_traded = Counter(row["symbol"] for row in all_in_scope).most_common(5)
+        pnl_by_category: dict[str, float] = {}
+        for row in closed_in_period:
+            pnl_by_category[row["category"]] = pnl_by_category.get(row["category"], 0.0) + float(row.get("pnl") or 0.0)
+        return {
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+            "closed_trades": closed_in_period,
+            "carry_over_trades": carry_over,
+            "pnl_total": round(sum(pnls), 2),
+            "pnl_by_category": {key: round(value, 2) for key, value in pnl_by_category.items()},
+            "win_rate": round(len(winners) / len(closed_in_period), 4) if closed_in_period else 0.0,
             "best_trade": best_trade,
             "worst_trade": worst_trade,
             "most_traded_symbols": most_traded,
