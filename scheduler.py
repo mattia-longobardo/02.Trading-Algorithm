@@ -208,6 +208,15 @@ class TradingScheduler:
     def job_weekly_report(self) -> None:
         self.report_generator.generate_weekly_report()
 
+    def job_quarterly_report(self) -> None:
+        self.report_generator.generate_quarterly_report()
+
+    def job_biannual_report(self) -> None:
+        self.report_generator.generate_biannual_report()
+
+    def job_annual_report(self) -> None:
+        self.report_generator.generate_annual_report()
+
     def job_review_stale_pending_orders(self) -> None:
         self.trade_manager.review_stale_pending_trades(min_age_days=7)
 
@@ -240,6 +249,55 @@ class TradingScheduler:
     def run_manual_weekly_report(self) -> dict:
         return self.run_with_lock("manual_weekly_report", self.report_generator.generate_weekly_report)
 
+    def run_manual_quarterly_report(self) -> dict:
+        return self.run_with_lock("manual_quarterly_report", self.report_generator.generate_quarterly_report)
+
+    def run_manual_biannual_report(self) -> dict:
+        return self.run_with_lock("manual_biannual_report", self.report_generator.generate_biannual_report)
+
+    def run_manual_annual_report(self) -> dict:
+        return self.run_with_lock("manual_annual_report", self.report_generator.generate_annual_report)
+
+    def reset_locks(self) -> dict[str, Any]:
+        """Force-reset stuck execution locks and the pending jobs queue.
+
+        Replaces the in-process execution lock with a fresh one, removes the
+        on-disk lock file if present, and clears any queued pending jobs.
+        Call this only when the scheduler is demonstrably stuck — a job that is
+        still running legitimately will keep running, but the lock gate will be
+        open again for subsequent jobs.
+        """
+        import os
+
+        cleared_pending: list[str] = []
+        lock_file_removed = False
+
+        # Swap in a fresh threading lock so the gate opens immediately.
+        self._execution_lock = threading.Lock()
+
+        # Clear pending jobs queue.
+        with self._pending_jobs_lock:
+            cleared_pending = list(self._pending_jobs.keys())
+            self._pending_jobs.clear()
+
+        # Remove the on-disk lock file so FileLock can be re-acquired.
+        lock_path = self.config.lock_file
+        try:
+            os.remove(lock_path)
+            lock_file_removed = True
+        except FileNotFoundError:
+            pass
+
+        self.logger.warning(
+            "Scheduler locks reset: lock_file_removed=%s, pending_jobs_cleared=%s",
+            lock_file_removed,
+            cleared_pending,
+        )
+        return {
+            "lock_file_removed": lock_file_removed,
+            "pending_jobs_cleared": cleared_pending,
+        }
+
     def register_jobs(self) -> None:
         self.scheduler.add_job(
             self.guarded("monitor_trades", self.job_monitor_trades),
@@ -248,22 +306,50 @@ class TradingScheduler:
             max_instances=2,
             replace_existing=True,
         )
+        # --- Milan schedule (UTC, based on CET=UTC+1): 30 min before open, midday, 30 min before close ---
+        # Milan opens 09:00 CET → 08:00 UTC, closes 17:30 CET → 16:30 UTC
         self.scheduler.add_job(
-            self.guarded("evaluate_signals_0010", self.job_evaluate_signals),
-            CronTrigger(hour=0, minute=10),
-            id="evaluate_signals_0010",
+            self.guarded("evaluate_signals_milan_preopen", self.job_evaluate_signals),
+            CronTrigger(hour=7, minute=30),
+            id="evaluate_signals_milan_preopen",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self.guarded("evaluate_signals_milan_midday", self.job_evaluate_signals),
+            CronTrigger(hour=12, minute=15),
+            id="evaluate_signals_milan_midday",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self.guarded("evaluate_signals_milan_preclose", self.job_evaluate_signals),
+            CronTrigger(hour=16, minute=0),
+            id="evaluate_signals_milan_preclose",
+            replace_existing=True,
+        )
+        # --- New York schedule (UTC, based on EST=UTC-5): 30 min before open, midday, 30 min before close ---
+        # NYSE/NASDAQ opens 09:30 EST → 14:30 UTC, closes 16:00 EST → 21:00 UTC
+        self.scheduler.add_job(
+            self.guarded("evaluate_signals_ny_preopen", self.job_evaluate_signals),
+            CronTrigger(hour=14, minute=0),
+            id="evaluate_signals_ny_preopen",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self.guarded("evaluate_signals_ny_midday", self.job_evaluate_signals),
+            CronTrigger(hour=17, minute=45),
+            id="evaluate_signals_ny_midday",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self.guarded("evaluate_signals_ny_preclose", self.job_evaluate_signals),
+            CronTrigger(hour=20, minute=30),
+            id="evaluate_signals_ny_preclose",
             replace_existing=True,
         )
         self.scheduler.add_job(
             self.guarded("review_stale_pending_orders_1200", self.job_review_stale_pending_orders),
             CronTrigger(hour=12, minute=0),
             id="review_stale_pending_orders_1200",
-            replace_existing=True,
-        )
-        self.scheduler.add_job(
-            self.guarded("evaluate_signals_1210", self.job_evaluate_signals),
-            CronTrigger(hour=12, minute=10),
-            id="evaluate_signals_1210",
             replace_existing=True,
         )
         self.scheduler.add_job(
@@ -276,6 +362,27 @@ class TradingScheduler:
             self.guarded("weekly_report", self.job_weekly_report),
             CronTrigger(day_of_week="sun", hour=23, minute=0),
             id="weekly_report",
+            replace_existing=True,
+        )
+        # Quarterly report: fires on the 1st of Jan/Apr/Jul/Oct at 00:00 UTC.
+        self.scheduler.add_job(
+            self.guarded("quarterly_report", self.job_quarterly_report),
+            CronTrigger(month="1,4,7,10", day=1, hour=0, minute=0),
+            id="quarterly_report",
+            replace_existing=True,
+        )
+        # Bi-annual report: fires on the 1st of Jan/Jul at 00:30 UTC.
+        self.scheduler.add_job(
+            self.guarded("biannual_report", self.job_biannual_report),
+            CronTrigger(month="1,7", day=1, hour=0, minute=30),
+            id="biannual_report",
+            replace_existing=True,
+        )
+        # Annual report: fires on January 1st at 01:00 UTC.
+        self.scheduler.add_job(
+            self.guarded("annual_report", self.job_annual_report),
+            CronTrigger(month=1, day=1, hour=1, minute=0),
+            id="annual_report",
             replace_existing=True,
         )
 

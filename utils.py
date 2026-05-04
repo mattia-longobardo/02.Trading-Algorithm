@@ -218,6 +218,13 @@ def to_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=True, indent=2, sort_keys=True)
 
 
+def to_toon(data: Any) -> str:
+    """Serialize data in TOON format for reduced token usage."""
+
+    from toon_format import encode  # type: ignore[import]
+    return encode(data)
+
+
 def read_universe_file() -> dict[str, list[str]]:
     """Load the saved universe from disk."""
 

@@ -45,8 +45,12 @@ Il path `GET /` mostra una vera pagina HTML minimale che visualizza le ultime `1
 ## API manuali
 
 - `GET /api/universe/generate`: rigenera l'universo e aggiorna lo storico dei simboli monitorati; risponde solo con esito sintetico
-- `GET /api/orders/generate`: fa partire manualmente lo stesso identico processo schedulato ogni giorno alle `00:10 UTC` e `12:10 UTC`; risponde solo con esito sintetico
+- `GET /api/orders/generate`: fa partire manualmente lo stesso identico processo schedulato 6 volte al giorno sui mercati di Milano e New York; risponde solo con esito sintetico
 - `GET /api/report/generate`: genera il report settimanale; risponde solo con esito sintetico
+- `GET /api/report/quarterly`: genera il report del trimestre appena concluso; risponde solo con esito sintetico
+- `GET /api/report/biannual`: genera il report del semestre appena concluso; risponde solo con esito sintetico
+- `GET /api/report/annual`: genera il report dell'anno solare appena concluso; risponde solo con esito sintetico
+- `GET /api/scheduler/reset`: resetta i lock dello scheduler se risulta bloccato; sostituisce il lock in-process con uno nuovo, rimuove il lock file su disco e svuota la coda dei job pendenti
 - `GET /api/logs`: restituisce il tail del file di log in JSON; di default usa `10000` righe e supporta `?lines=...`
 - `GET /api/logs/stream`: stream SSE con le nuove righe del log in tempo reale
 
@@ -54,11 +58,16 @@ Le API usano lo stesso lock dello scheduler, quindi se un job e` gia` in esecuzi
 
 ## Job schedulati
 
-- Ogni minuto: sync stato ordini/posizioni Alpaca, refresh dei pending crypto ancora `new` e gestione script-managed di TP, SL e TSL
+- Ogni minuto: sync stato ordini/posizioni Alpaca, refresh dei pending crypto ancora `new` e gestione script-managed di TP, TTP, SL e TSL
 - Ogni giorno `12:00 UTC`: revisione GPT dei trade `PENDING` piu` vecchi di 7 giorni; se il setup non vale piu` la pena viene annullato e chiuso
-- Ogni giorno `00:10 UTC` e `12:10 UTC`: analisi batch dell'universo corrente + apertura eventuali nuovi ordini ordinati per `trade_score`
+- 6 volte al giorno (3 per Milano, 3 per New York): analisi batch dell'universo corrente + apertura eventuali nuovi ordini ordinati per `trade_score`
+  - **Milano** (orari CET=UTC+1): `07:30 UTC` (30 min prima apertura 08:00 UTC), `12:15 UTC` (meta` giornata), `16:00 UTC` (30 min prima chiusura 16:30 UTC)
+  - **New York** (orari EST=UTC-5): `14:00 UTC` (30 min prima apertura 14:30 UTC), `17:45 UTC` (meta` giornata), `20:30 UTC` (30 min prima chiusura 21:00 UTC)
 - Ogni domenica `22:00 UTC`: refresh settimanale dell'universo stock/crypto
-- Ogni domenica `23:00 UTC`: report performance
+- Ogni domenica `23:00 UTC`: report settimanale (PnL cumulativo di tutti i trade)
+- Ogni `1° gen/apr/lug/ott 00:00 UTC`: report trimestrale del quarter appena concluso
+- Ogni `1° gen/lug 00:30 UTC`: report semestrale del semestre appena concluso
+- Ogni `1° gen 01:00 UTC`: report annuale dell'anno solare appena concluso
 
 ## Note operative
 

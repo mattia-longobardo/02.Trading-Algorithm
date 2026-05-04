@@ -223,6 +223,10 @@ class TradingApiRequestHandler(BaseHTTPRequestHandler):
             "/api/universe/generate": ("universe", self.server.scheduler.run_manual_refresh_universe),
             "/api/orders/generate": ("new_orders", self.server.scheduler.run_manual_generate_new_orders),
             "/api/report/generate": ("report", self.server.scheduler.run_manual_weekly_report),
+            "/api/report/quarterly": ("quarterly_report", self.server.scheduler.run_manual_quarterly_report),
+            "/api/report/biannual": ("biannual_report", self.server.scheduler.run_manual_biannual_report),
+            "/api/report/annual": ("annual_report", self.server.scheduler.run_manual_annual_report),
+            "/api/scheduler/reset": ("scheduler_reset", self.server.scheduler.reset_locks),
         }
 
         route = routes.get(path)
