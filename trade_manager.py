@@ -98,15 +98,21 @@ class TradeManager:
     @staticmethod
     def _compute_trailing_take_profit_price(
         high_water_mark: float,
-        take_profit: float | None,
+        entry_price: float | None,
         trailing_take_profit_distance: float | None,
+        trailing_take_profit_activation_pct: float | None,
     ) -> float | None:
         if (
-            take_profit is None
+            entry_price is None
+            or entry_price <= 0
             or trailing_take_profit_distance is None
             or trailing_take_profit_distance <= 0
-            or high_water_mark < take_profit
+            or trailing_take_profit_activation_pct is None
+            or trailing_take_profit_activation_pct <= 0
         ):
+            return None
+        activation_threshold = entry_price * (1 + trailing_take_profit_activation_pct / 100.0)
+        if high_water_mark < activation_threshold:
             return None
         return round(high_water_mark - trailing_take_profit_distance, 8)
 
@@ -321,6 +327,7 @@ class TradeManager:
     ) -> None:
         order = order_payload["order"]
         trailing_take_profit_distance = self._as_float(signal.get("trailing_take_profit_distance"))
+        trailing_take_profit_activation_pct = self._as_float(signal.get("trailing_take_profit_activation_pct"))
         trailing_stop_distance = self._as_float(signal.get("trailing_stop_distance"))
         submitted_entry_price = self._as_float(order_payload.get("submitted_entry_price")) or float(signal["entry_price"])
         with db_cursor(self.config.db_trades) as cursor:
@@ -328,10 +335,11 @@ class TradeManager:
                 """
                 INSERT INTO trades (
                     symbol, category, direction, status, entry_price, target_entry_price, quantity, allocated_capital,
-                    take_profit, trailing_take_profit_distance, stop_loss, trailing_stop_distance,
+                    take_profit, trailing_take_profit_distance, trailing_take_profit_activation_pct,
+                    stop_loss, trailing_stop_distance,
                     alpaca_order_id, client_order_id,
                     reasoning, confidence, trade_score
-                ) VALUES (?, ?, 'LONG', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, 'LONG', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     symbol,
@@ -342,6 +350,7 @@ class TradeManager:
                     allocated_capital,
                     float(signal["take_profit"]),
                     trailing_take_profit_distance,
+                    trailing_take_profit_activation_pct,
                     float(signal["stop_loss"]),
                     trailing_stop_distance,
                     str(getattr(order, "id", "")),
@@ -373,6 +382,23 @@ class TradeManager:
                     trailing_take_profit_distance,
                 )
                 return False
+        trailing_take_profit_activation_pct = signal.get("trailing_take_profit_activation_pct")
+        if trailing_take_profit_activation_pct is not None:
+            if not isinstance(trailing_take_profit_activation_pct, (int, float)) or float(trailing_take_profit_activation_pct) <= 0:
+                self.logger.warning(
+                    "GPT returned OPEN for %s with invalid trailing_take_profit_activation_pct=%s; skipping trade",
+                    signal.get("symbol"),
+                    trailing_take_profit_activation_pct,
+                )
+                return False
+        if (trailing_take_profit_distance is None) != (trailing_take_profit_activation_pct is None):
+            self.logger.warning(
+                "GPT returned OPEN for %s with mismatched trailing fields (distance=%s, activation_pct=%s); skipping trade",
+                signal.get("symbol"),
+                trailing_take_profit_distance,
+                trailing_take_profit_activation_pct,
+            )
+            return False
         trailing_stop_distance = signal.get("trailing_stop_distance")
         if trailing_stop_distance is None:
             return True
@@ -503,8 +529,9 @@ class TradeManager:
         )
         trailing_take_profit_price = self._compute_trailing_take_profit_price(
             high_water_mark,
-            self._as_float(trade.get("take_profit")),
+            entry_price,
             self._as_float(trade.get("trailing_take_profit_distance")),
+            self._as_float(trade.get("trailing_take_profit_activation_pct")),
         )
         pnl = (current_price - entry_price) * filled_quantity
         open_timestamp = self._order_timestamp(order, "filled_at", "updated_at", "submitted_at") or utc_now()
@@ -759,32 +786,62 @@ class TradeManager:
             )
             return
 
-        current_distance = self._as_float(trade.get("trailing_take_profit_distance"))
-        if current_distance == proposed_distance:
+        proposed_activation_pct = self._as_float(review.get("trailing_take_profit_activation_pct"))
+        raw_activation_pct = review.get("trailing_take_profit_activation_pct")
+        if raw_activation_pct is not None and proposed_activation_pct is None:
+            self.logger.warning(
+                "GPT returned invalid trailing_take_profit_activation_pct=%s for open trade %s; keeping previous value",
+                raw_activation_pct,
+                trade["id"],
+            )
+            return
+        if proposed_activation_pct is not None and proposed_activation_pct <= 0:
+            self.logger.warning(
+                "GPT returned non-positive trailing_take_profit_activation_pct=%s for open trade %s; keeping previous value",
+                proposed_activation_pct,
+                trade["id"],
+            )
+            return
+        if (proposed_distance is None) != (proposed_activation_pct is None):
+            self.logger.warning(
+                "GPT returned mismatched trailing fields (distance=%s, activation_pct=%s) for open trade %s; keeping previous values",
+                proposed_distance,
+                proposed_activation_pct,
+                trade["id"],
+            )
             return
 
-        current_high_water_mark = self._as_float(trade.get("high_water_mark")) or float(trade["entry_price"])
-        take_profit = self._as_float(trade.get("take_profit"))
+        current_distance = self._as_float(trade.get("trailing_take_profit_distance"))
+        current_activation_pct = self._as_float(trade.get("trailing_take_profit_activation_pct"))
+        if current_distance == proposed_distance and current_activation_pct == proposed_activation_pct:
+            return
+
+        entry_price = float(trade["entry_price"])
+        current_high_water_mark = self._as_float(trade.get("high_water_mark")) or entry_price
         trailing_take_profit_price = self._compute_trailing_take_profit_price(
             current_high_water_mark,
-            take_profit,
+            entry_price,
             proposed_distance,
+            proposed_activation_pct,
         )
         with db_cursor(self.config.db_trades) as cursor:
             cursor.execute(
                 """
                 UPDATE trades
-                SET trailing_take_profit_distance = ?, trailing_take_profit_price = ?, updated_at = CURRENT_TIMESTAMP
+                SET trailing_take_profit_distance = ?, trailing_take_profit_activation_pct = ?,
+                    trailing_take_profit_price = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (proposed_distance, trailing_take_profit_price, trade["id"]),
+                (proposed_distance, proposed_activation_pct, trailing_take_profit_price, trade["id"]),
             )
         self.logger.info(
-            "Updated trailing take profit for trade %s (%s) from %s to %s",
+            "Updated trailing take profit for trade %s (%s): distance %s -> %s, activation_pct %s -> %s",
             trade["id"],
             symbol,
             current_distance,
             proposed_distance,
+            current_activation_pct,
+            proposed_activation_pct,
         )
 
     def sync_open_trade(self, trade: dict[str, Any]) -> None:
@@ -808,11 +865,13 @@ class TradeManager:
         stop_loss = self._as_float(trade.get("stop_loss"))
         take_profit = self._as_float(trade.get("take_profit"))
         trailing_take_profit_distance = self._as_float(trade.get("trailing_take_profit_distance"))
+        trailing_take_profit_activation_pct = self._as_float(trade.get("trailing_take_profit_activation_pct"))
         high_water_mark = max(self._as_float(trade.get("high_water_mark")) or entry_price, current_price)
         trailing_take_profit_price = self._compute_trailing_take_profit_price(
             high_water_mark,
-            take_profit,
+            entry_price,
             trailing_take_profit_distance,
+            trailing_take_profit_activation_pct,
         )
         trailing_stop_price = self._compute_trailing_stop_price(
             high_water_mark,
@@ -837,7 +896,7 @@ class TradeManager:
             self._request_market_close(trade, close_reason, current_price)
             return
 
-        if take_profit is not None and trailing_take_profit_distance is None and current_price >= take_profit:
+        if take_profit is not None and trailing_take_profit_price is None and current_price >= take_profit:
             self._request_market_close(trade, "TAKE_PROFIT", current_price)
             return
         close_reason = self._downside_close_reason(current_price, stop_loss, trailing_stop_price)
