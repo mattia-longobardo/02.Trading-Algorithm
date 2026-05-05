@@ -72,6 +72,7 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
         quantity: float = 2.0,
         take_profit: float = 120.0,
         trailing_take_profit_distance: float | None = None,
+        trailing_take_profit_activation_pct: float | None = None,
         stop_loss: float = 95.0,
         trailing_stop_distance: float | None = 3.0,
         high_water_mark: float | None = None,
@@ -86,10 +87,11 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
             """
             INSERT INTO trades (
                 symbol, category, direction, status, entry_price, target_entry_price, quantity, allocated_capital,
-                take_profit, trailing_take_profit_distance, stop_loss, trailing_stop_distance,
+                take_profit, trailing_take_profit_distance, trailing_take_profit_activation_pct,
+                stop_loss, trailing_stop_distance,
                 high_water_mark, trailing_take_profit_price, trailing_stop_price,
                 alpaca_order_id, client_order_id, exit_order_id, pending_close_reason, reasoning
-            ) VALUES (?, ?, 'LONG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, 'LONG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 symbol,
@@ -101,6 +103,7 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
                 200.0,
                 take_profit,
                 trailing_take_profit_distance,
+                trailing_take_profit_activation_pct,
                 stop_loss,
                 trailing_stop_distance,
                 high_water_mark,
@@ -126,6 +129,7 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
             "entry_price": 100.0,
             "take_profit": 120.0,
             "trailing_take_profit_distance": 6.0,
+            "trailing_take_profit_activation_pct": 5.0,
             "stop_loss": 95.0,
             "trailing_stop_distance": 3.0,
             "confidence": 0.8,
@@ -146,6 +150,7 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
         self.assertEqual(trade["status"], "PENDING")
         self.assertEqual(trade["target_entry_price"], 100.0)
         self.assertEqual(trade["trailing_take_profit_distance"], 6.0)
+        self.assertEqual(trade["trailing_take_profit_activation_pct"], 5.0)
         self.assertEqual(trade["trailing_stop_distance"], 3.0)
         self.assertEqual(trade["exit_order_id"], None)
         self.assertEqual(trade["trade_score"], None)
@@ -215,6 +220,7 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
             "entry_price": 100.0,
             "take_profit": 120.0,
             "trailing_take_profit_distance": 6.0,
+            "trailing_take_profit_activation_pct": 5.0,
             "stop_loss": 95.0,
             "trailing_stop_distance": 3.0,
             "confidence": 0.8,
@@ -520,11 +526,13 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
         self.assertEqual(updated_trade["close_reason"], "TAKE_PROFIT")
         self.assertEqual(updated_trade["close_price"], 106.2)
 
-    def test_sync_open_trade_arms_trailing_take_profit_after_take_profit_is_reached(self) -> None:
+    def test_sync_open_trade_arms_trailing_take_profit_after_activation_threshold(self) -> None:
         trade_id = self._insert_trade(
             "OPEN",
-            take_profit=105.0,
+            entry_price=100.0,
+            take_profit=120.0,
             trailing_take_profit_distance=2.0,
+            trailing_take_profit_activation_pct=5.0,
             stop_loss=95.0,
             high_water_mark=104.0,
         )
@@ -547,11 +555,42 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
         self.assertEqual(updated_trade["high_water_mark"], 106.0)
         self.assertEqual(updated_trade["trailing_take_profit_price"], 104.0)
 
+    def test_sync_open_trade_does_not_arm_trailing_take_profit_below_activation_threshold(self) -> None:
+        trade_id = self._insert_trade(
+            "OPEN",
+            entry_price=100.0,
+            take_profit=120.0,
+            trailing_take_profit_distance=2.0,
+            trailing_take_profit_activation_pct=5.0,
+            stop_loss=95.0,
+            high_water_mark=103.0,
+        )
+        trade = self.manager.get_trade(trade_id)
+        assert trade is not None
+
+        self.alpaca_client.get_open_position.return_value = type(
+            "Position",
+            (),
+            {"qty": "2", "current_price": "104.0"},
+        )()
+        self.alpaca_client.get_latest_price.return_value = 104.0
+
+        self.manager.sync_open_trade(trade)
+
+        self.alpaca_client.close_position_market.assert_not_called()
+        updated_trade = self.manager.get_trade(trade_id)
+        assert updated_trade is not None
+        self.assertEqual(updated_trade["status"], "OPEN")
+        self.assertEqual(updated_trade["high_water_mark"], 104.0)
+        self.assertIsNone(updated_trade["trailing_take_profit_price"])
+
     def test_sync_open_trade_closes_when_trailing_take_profit_is_hit_after_activation(self) -> None:
         trade_id = self._insert_trade(
             "OPEN",
-            take_profit=105.0,
+            entry_price=100.0,
+            take_profit=120.0,
             trailing_take_profit_distance=2.0,
+            trailing_take_profit_activation_pct=5.0,
             stop_loss=95.0,
             high_water_mark=108.0,
             trailing_take_profit_price=106.0,
@@ -620,11 +659,13 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
         self.assertEqual(updated_trade["close_reason"], "TRAILING_STOP")
         self.assertEqual(updated_trade["close_price"], 105.5)
 
-    def test_refresh_single_open_trade_protection_updates_trailing_take_profit_distance(self) -> None:
+    def test_refresh_single_open_trade_protection_updates_trailing_take_profit_fields(self) -> None:
         trade_id = self._insert_trade(
             "OPEN",
-            take_profit=105.0,
+            entry_price=100.0,
+            take_profit=120.0,
             trailing_take_profit_distance=2.0,
+            trailing_take_profit_activation_pct=5.0,
             high_water_mark=108.0,
             trailing_take_profit_price=106.0,
         )
@@ -634,7 +675,8 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
         self.data_manager.get_symbol_history.return_value = [{"close": 104.0}, {"close": 108.0}]
         self.gpt_client.request_open_trade_protection_review.return_value = {
             "trailing_take_profit_distance": 3.5,
-            "reasoning": "Trend remains healthy, give it a bit more room.",
+            "trailing_take_profit_activation_pct": 3.0,
+            "reasoning": "Profit cushion is solid, lower activation and tighten the trail.",
         }
 
         self.manager._refresh_single_open_trade_protection(trade)
@@ -642,7 +684,63 @@ class TradeManagerScriptManagedTests(unittest.TestCase):
         updated_trade = self.manager.get_trade(trade_id)
         assert updated_trade is not None
         self.assertEqual(updated_trade["trailing_take_profit_distance"], 3.5)
+        self.assertEqual(updated_trade["trailing_take_profit_activation_pct"], 3.0)
         self.assertEqual(updated_trade["trailing_take_profit_price"], 104.5)
+
+    def test_refresh_single_open_trade_protection_disables_trailing_when_both_fields_null(self) -> None:
+        trade_id = self._insert_trade(
+            "OPEN",
+            entry_price=100.0,
+            take_profit=120.0,
+            trailing_take_profit_distance=2.0,
+            trailing_take_profit_activation_pct=5.0,
+            high_water_mark=108.0,
+            trailing_take_profit_price=106.0,
+        )
+        trade = self.manager.get_trade(trade_id)
+        assert trade is not None
+
+        self.data_manager.get_symbol_history.return_value = [{"close": 104.0}, {"close": 108.0}]
+        self.gpt_client.request_open_trade_protection_review.return_value = {
+            "trailing_take_profit_distance": None,
+            "trailing_take_profit_activation_pct": None,
+            "reasoning": "Disable trailing for now.",
+        }
+
+        self.manager._refresh_single_open_trade_protection(trade)
+
+        updated_trade = self.manager.get_trade(trade_id)
+        assert updated_trade is not None
+        self.assertIsNone(updated_trade["trailing_take_profit_distance"])
+        self.assertIsNone(updated_trade["trailing_take_profit_activation_pct"])
+        self.assertIsNone(updated_trade["trailing_take_profit_price"])
+
+    def test_refresh_single_open_trade_protection_keeps_previous_when_fields_mismatched(self) -> None:
+        trade_id = self._insert_trade(
+            "OPEN",
+            entry_price=100.0,
+            take_profit=120.0,
+            trailing_take_profit_distance=2.0,
+            trailing_take_profit_activation_pct=5.0,
+            high_water_mark=108.0,
+            trailing_take_profit_price=106.0,
+        )
+        trade = self.manager.get_trade(trade_id)
+        assert trade is not None
+
+        self.data_manager.get_symbol_history.return_value = [{"close": 104.0}, {"close": 108.0}]
+        self.gpt_client.request_open_trade_protection_review.return_value = {
+            "trailing_take_profit_distance": 3.0,
+            "trailing_take_profit_activation_pct": None,
+            "reasoning": "Mismatched response should be rejected.",
+        }
+
+        self.manager._refresh_single_open_trade_protection(trade)
+
+        updated_trade = self.manager.get_trade(trade_id)
+        assert updated_trade is not None
+        self.assertEqual(updated_trade["trailing_take_profit_distance"], 2.0)
+        self.assertEqual(updated_trade["trailing_take_profit_activation_pct"], 5.0)
 
 
 if __name__ == "__main__":

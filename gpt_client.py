@@ -20,6 +20,7 @@ NEW_SIGNAL_SCHEMA = {
             "entry_price": {"type": ["number", "null"]},
             "take_profit": {"type": ["number", "null"]},
             "trailing_take_profit_distance": {"type": ["number", "null"]},
+            "trailing_take_profit_activation_pct": {"type": ["number", "null"]},
             "stop_loss": {"type": ["number", "null"]},
             "trailing_stop_distance": {"type": ["number", "null"]},
             "trade_score": {"type": ["number", "null"]},
@@ -32,6 +33,7 @@ NEW_SIGNAL_SCHEMA = {
             "entry_price",
             "take_profit",
             "trailing_take_profit_distance",
+            "trailing_take_profit_activation_pct",
             "stop_loss",
             "trailing_stop_distance",
             "trade_score",
@@ -57,6 +59,7 @@ BATCH_SIGNALS_SCHEMA = {
                         "entry_price": {"type": ["number", "null"]},
                         "take_profit": {"type": ["number", "null"]},
                         "trailing_take_profit_distance": {"type": ["number", "null"]},
+                        "trailing_take_profit_activation_pct": {"type": ["number", "null"]},
                         "stop_loss": {"type": ["number", "null"]},
                         "trailing_stop_distance": {"type": ["number", "null"]},
                         "trade_score": {"type": ["number", "null"]},
@@ -69,6 +72,7 @@ BATCH_SIGNALS_SCHEMA = {
                         "entry_price",
                         "take_profit",
                         "trailing_take_profit_distance",
+                        "trailing_take_profit_activation_pct",
                         "stop_loss",
                         "trailing_stop_distance",
                         "trade_score",
@@ -191,9 +195,14 @@ OPEN_PROTECTION_REVIEW_SCHEMA = {
         "type": "object",
         "properties": {
             "trailing_take_profit_distance": {"type": ["number", "null"]},
+            "trailing_take_profit_activation_pct": {"type": ["number", "null"]},
             "reasoning": {"type": "string"},
         },
-        "required": ["trailing_take_profit_distance", "reasoning"],
+        "required": [
+            "trailing_take_profit_distance",
+            "trailing_take_profit_activation_pct",
+            "reasoning",
+        ],
         "additionalProperties": False,
     },
 }
@@ -207,6 +216,13 @@ class GPTClient:
         self.logger = logger.getChild("gpt")
         self.client = OpenAI(api_key=config.openai_api_key)
 
+    def _resolve_model(self, tier: str) -> str:
+        if tier == "light":
+            return self.config.openai_model_light
+        if tier == "mid":
+            return self.config.openai_model_mid
+        return self.config.openai_model_heavy
+
     @retry(exceptions=(APIError, APIStatusError, RateLimitError, ValueError))
     def _request_json(
         self,
@@ -215,13 +231,15 @@ class GPTClient:
         schema: dict[str, Any],
         *,
         use_web_search: bool = True,
-        reasoning_effort: str = "medium",
+        reasoning_effort: str | None = None,
+        model_tier: str = "heavy",
     ) -> dict[str, Any]:
         self.logger.debug("Calling OpenAI Responses API for %s", schema["name"])
         tools = [{"type": "web_search"}] if use_web_search else None
+        effort = reasoning_effort or self.config.openai_reasoning_effort
         request_kwargs: dict[str, Any] = {
-            "model": "gpt-5.4",
-            "reasoning": {"effort": reasoning_effort},
+            "model": self._resolve_model(model_tier),
+            "reasoning": {"effort": effort},
             "instructions": instructions,
             "input": to_toon(payload),
             "text": {
@@ -287,12 +305,13 @@ class GPTClient:
             "Return only JSON matching the schema. If risk/reward is unattractive, choose SKIP. "
             "If you choose OPEN, entry_price, take_profit, and stop_loss must be non-null positive numbers. "
             "trailing_take_profit_distance may be null when no trailing take profit is desired, otherwise it must be a positive number. "
+            "trailing_take_profit_activation_pct must be set together with trailing_take_profit_distance: it is the percentage gain above entry_price required to arm the trailing take profit (e.g. 5 means trailing arms once the price has risen 5% above entry). Both fields must be either both null (no trailing take profit) or both positive numbers. "
             "trailing_stop_distance may be null when no trailing stop is desired, otherwise it must be a positive number. "
             "trade_score must be a 0-100 score balancing expected profitability against risk after considering the user risk tolerance. "
             "Base the decision primarily on medium-term trend structure, macro or fundamental catalysts, business or ecosystem strength, and multi-week or multi-month risk/reward. "
             "The script manages take-profit, trailing-take-profit, stop-loss, and trailing-stop logic internally after entry; "
             "Alpaca is used only to place the entry order and to close the position at market when a rule triggers. "
-            "A trailing take profit, when provided, activates only after price has reached the take_profit level, then trails the high-water mark by the specified distance."
+            "When the trailing take profit is provided, it arms once price reaches entry_price * (1 + trailing_take_profit_activation_pct / 100) and then trails the high-water mark by the specified distance, locking in profit even if the hard take_profit level is never reached."
         )
         payload = self.build_symbol_payload(symbol, category, candles, existing_trades)
         return self._request_json(instructions, payload, NEW_SIGNAL_SCHEMA)
@@ -317,6 +336,7 @@ class GPTClient:
             "For every symbol return OPEN or SKIP. OPEN means the setup is attractive today. "
             "When OPEN is chosen, entry_price, take_profit, and stop_loss must be positive numbers. "
             "trailing_take_profit_distance may be null or a positive number. "
+            "trailing_take_profit_activation_pct must follow trailing_take_profit_distance: both null when no trailing take profit is desired, otherwise both positive numbers. The activation percentage is the gain above entry_price (e.g. 5 means +5%) at which the trailing take profit arms; once armed, it trails the high-water mark by the specified distance, regardless of whether the hard take_profit is reached. "
             "trailing_stop_distance may be null or a positive number. "
             "trade_score must be a 0-100 score balancing profitability and risk for this user; the highest scores should represent the best risk-adjusted opportunities to open first. "
             "Return only JSON matching the schema."
@@ -381,6 +401,7 @@ class GPTClient:
             UNIVERSE_SYMBOL_DOSSIER_SCHEMA,
             use_web_search=True,
             reasoning_effort="low",
+            model_tier="light",
         )
 
     def request_universe_batch_shortlist(
@@ -437,7 +458,12 @@ class GPTClient:
             },
         }
 
-        return self._request_json(instructions, payload, UNIVERSE_BATCH_SHORTLIST_SCHEMA)
+        return self._request_json(
+            instructions,
+            payload,
+            UNIVERSE_BATCH_SHORTLIST_SCHEMA,
+            model_tier="mid",
+        )
 
     def request_universe_final_selection(
         self,
@@ -514,6 +540,7 @@ class GPTClient:
             UNIVERSE_DOSSIER_FINAL_SCHEMA,
             use_web_search=False,
             reasoning_effort="low",
+            model_tier="light",
         )
 
     def request_pending_trade_review(
@@ -557,9 +584,11 @@ class GPTClient:
         instructions = (
             "You are reviewing an already OPEN LONG swing-position trade. "
             "You must perform web search before deciding. "
-            "Your only task is to reassess the trailing take profit distance for this open trade. "
-            "Return the full desired trailing_take_profit_distance for the trade right now: keep the current value if no change is needed, "
-            "return a different positive number to tighten or loosen it, or return null to disable the trailing take profit. "
+            "Your only task is to reassess the trailing take profit configuration for this open trade. "
+            "Return the full desired trailing_take_profit_distance and trailing_take_profit_activation_pct that should apply right now: keep current values if no change is needed, "
+            "return different positive numbers to tighten or loosen the trailing or to shift the activation threshold, or return both fields as null to disable the trailing take profit. "
+            "trailing_take_profit_activation_pct is the percentage gain above entry_price at which trailing arms (e.g. 5 means +5%); once armed, the bot trails the high-water mark by trailing_take_profit_distance. The two fields must be either both null or both positive numbers. "
+            "As time passes and unrealized profit grows, you should generally lower the activation threshold and/or tighten the distance so that gains get captured before they can mean-revert. "
             "Do not propose entry, stop loss, or hard take profit changes here. "
             f"Use {self.config.currency} as the reference currency and keep the user's risk tolerance of {self.config.risk_tolerance} in mind. "
             "Base the review on current news, catalyst evolution, medium-term trend structure, current profit cushion, and whether upside should be given more room or protected more tightly. "
@@ -581,4 +610,9 @@ class GPTClient:
                 },
             },
         }
-        return self._request_json(instructions, payload, OPEN_PROTECTION_REVIEW_SCHEMA)
+        return self._request_json(
+            instructions,
+            payload,
+            OPEN_PROTECTION_REVIEW_SCHEMA,
+            model_tier="mid",
+        )

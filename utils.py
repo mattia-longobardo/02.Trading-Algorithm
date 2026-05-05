@@ -27,6 +27,10 @@ class AppConfig:
     alpaca_api_key: str
     alpaca_secret_key: str
     alpaca_base_url: str
+    openai_model_heavy: str = "gpt-5.4"
+    openai_model_mid: str = "gpt-5.4-mini"
+    openai_model_light: str = "gpt-5.4-nano"
+    openai_reasoning_effort: str = "medium"
     max_open_trades_stock: int = 3
     max_open_trades_crypto: int = 3
     weekly_universe_stocks: int = 5
@@ -83,6 +87,10 @@ def load_config() -> AppConfig:
         alpaca_api_key=os.getenv("ALPACA_API_KEY", ""),
         alpaca_secret_key=os.getenv("ALPACA_SECRET_KEY", ""),
         alpaca_base_url=os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets"),
+        openai_model_heavy=os.getenv("OPENAI_MODEL_HEAVY", "gpt-5.4"),
+        openai_model_mid=os.getenv("OPENAI_MODEL_MID", "gpt-5.4-mini"),
+        openai_model_light=os.getenv("OPENAI_MODEL_LIGHT", "gpt-5.4-nano"),
+        openai_reasoning_effort=os.getenv("OPENAI_REASONING_EFFORT", "medium").lower(),
         max_open_trades_stock=int(os.getenv("MAX_OPEN_TRADES_STOCK", "3")),
         max_open_trades_crypto=int(os.getenv("MAX_OPEN_TRADES_CRYPTO", "3")),
         weekly_universe_stocks=int(os.getenv("WEEKLY_UNIVERSE_STOCKS", "5")),
