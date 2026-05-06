@@ -228,14 +228,13 @@ class TradingApiServerTests(unittest.TestCase):
         self.thread.join(timeout=2)
         self.temp_dir.cleanup()
 
-    def test_root_serves_live_log_dashboard(self) -> None:
+    def test_root_returns_health_check_json(self) -> None:
         with urlopen(f"{self.base_url}/") as response:
             self.assertEqual(response.status, 200)
-            body = response.read().decode("utf-8")
+            self.assertEqual(response.headers.get_content_type(), "application/json")
+            payload = json.loads(response.read().decode("utf-8"))
 
-        self.assertIn("Trading Bot Logs", body)
-        self.assertIn('new EventSource("/api/logs/stream")', body)
-        self.assertIn("/api/logs?lines=10000", body)
+        self.assertEqual(payload, {"status": "ok", "service": "trading-backend"})
 
     def test_logs_endpoint_returns_log_tail(self) -> None:
         with urlopen(f"{self.base_url}/api/logs?lines=2") as response:

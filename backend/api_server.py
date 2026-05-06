@@ -1,4 +1,4 @@
-"""HTTP API and live log dashboard for manual trading workflows."""
+"""HTTP API for manual trading workflows and log streaming."""
 
 from __future__ import annotations
 
@@ -13,174 +13,6 @@ from urllib.parse import parse_qs, urlparse
 
 from scheduler import JobExecutionLockedError, TradingScheduler
 
-LOG_DASHBOARD_HTML = """<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Trading Bot Logs</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      --bg: #0f172a;
-      --panel: #111827;
-      --line: #1f2937;
-      --text: #e5e7eb;
-      --muted: #94a3b8;
-      --accent: #22c55e;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      background: radial-gradient(circle at top, #1e293b 0%, var(--bg) 45%);
-      color: var(--text);
-    }
-    main {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 24px;
-    }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      align-items: center;
-      margin-bottom: 16px;
-      flex-wrap: wrap;
-    }
-    .title {
-      margin: 0;
-      font-size: 28px;
-    }
-    .subtitle {
-      margin: 6px 0 0;
-      color: var(--muted);
-      font-size: 14px;
-    }
-    .status {
-      color: var(--muted);
-      font-size: 13px;
-    }
-    .log-panel {
-      border: 1px solid var(--line);
-      background: rgba(17, 24, 39, 0.92);
-      border-radius: 14px;
-      overflow: hidden;
-      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.25);
-    }
-    .toolbar {
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      justify-content: space-between;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--line);
-      background: rgba(15, 23, 42, 0.95);
-      flex-wrap: wrap;
-    }
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      color: var(--muted);
-      font-size: 13px;
-    }
-    .dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 999px;
-      background: var(--accent);
-      box-shadow: 0 0 12px rgba(34, 197, 94, 0.8);
-    }
-    pre {
-      margin: 0;
-      padding: 16px;
-      min-height: 70vh;
-      max-height: 70vh;
-      overflow: auto;
-      white-space: pre-wrap;
-      word-break: break-word;
-      line-height: 1.45;
-      font-size: 13px;
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <div class="header">
-      <div>
-        <h1 class="title">Trading Bot Logs</h1>
-        <p class="subtitle">Live tail del file di log del bot</p>
-      </div>
-      <div class="status" id="status">Connecting...</div>
-    </div>
-    <section class="log-panel">
-      <div class="toolbar">
-        <div class="pill"><span class="dot"></span> Streaming live delle nuove righe</div>
-        <div class="pill" id="meta">Loading...</div>
-      </div>
-      <pre id="logs">Loading logs...</pre>
-    </section>
-  </main>
-  <script>
-    const logsEl = document.getElementById("logs");
-    const statusEl = document.getElementById("status");
-    const metaEl = document.getElementById("meta");
-
-    function appendChunk(chunk) {
-      if (!chunk) {
-        return;
-      }
-      const stickToBottom = logsEl.scrollTop + logsEl.clientHeight >= logsEl.scrollHeight - 20;
-      if (logsEl.textContent === "Loading logs...") {
-        logsEl.textContent = chunk;
-      } else {
-        logsEl.textContent += chunk;
-      }
-      if (stickToBottom) {
-        logsEl.scrollTop = logsEl.scrollHeight;
-      }
-    }
-
-    async function loadInitialLogs() {
-      try {
-        const response = await fetch("/api/logs?lines=10000", { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-        const payload = await response.json();
-        logsEl.textContent = payload.logs || "No logs available.";
-        metaEl.textContent = `${payload.line_count} lines from ${payload.log_file}`;
-        statusEl.textContent = `Connected: ${payload.updated_at}`;
-        logsEl.scrollTop = logsEl.scrollHeight;
-      } catch (error) {
-        statusEl.textContent = `Initial load failed: ${error.message}`;
-      }
-    }
-
-    function connectStream() {
-      const events = new EventSource("/api/logs/stream");
-      events.onopen = () => {
-        statusEl.textContent = "Streaming connected";
-      };
-      events.addEventListener("append", (event) => {
-        appendChunk(event.data);
-      });
-      events.addEventListener("heartbeat", (event) => {
-        statusEl.textContent = `Streaming live: ${event.data}`;
-      });
-      events.onerror = () => {
-        statusEl.textContent = "Streaming reconnecting...";
-      };
-    }
-
-    loadInitialLogs().then(connectStream);
-  </script>
-</body>
-</html>
-"""
-
 
 class TradingApiServer(ThreadingHTTPServer):
     """HTTP server carrying shared scheduler and logger dependencies."""
@@ -194,6 +26,10 @@ class TradingApiServer(ThreadingHTTPServer):
         super().__init__(server_address, TradingApiRequestHandler)
         self.scheduler = scheduler
         self.logger = logger.getChild("api")
+        allowed = getattr(scheduler.config, "cors_allowed_origins", None)
+        self.cors_allowed_origins: tuple[str, ...] = (
+            tuple(allowed) if isinstance(allowed, (list, tuple)) else ()
+        )
 
 
 class TradingApiRequestHandler(BaseHTTPRequestHandler):
@@ -206,7 +42,10 @@ class TradingApiRequestHandler(BaseHTTPRequestHandler):
         path = parsed_url.path.rstrip("/") or "/"
 
         if path == "/":
-            self._send_html(HTTPStatus.OK, LOG_DASHBOARD_HTML)
+            self._send_json(
+                HTTPStatus.OK,
+                {"status": "ok", "service": "trading-backend"},
+            )
             return
 
         if path == "/api/logs":
@@ -264,24 +103,51 @@ class TradingApiRequestHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self._write_cors_headers()
+        requested_headers = self.headers.get("Access-Control-Request-Headers", "")
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            requested_headers or "Content-Type, Accept",
+        )
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def log_message(self, format: str, *args: object) -> None:
         self.server.logger.info("%s - %s", self.address_string(), format % args)
+
+    def _resolve_allowed_origin(self) -> str | None:
+        origin = self.headers.get("Origin")
+        if not origin:
+            return None
+        allowed = self.server.cors_allowed_origins
+        if not allowed:
+            return None
+        if "*" in allowed:
+            return "*"
+        if origin in allowed:
+            return origin
+        return None
+
+    def _write_cors_headers(self) -> None:
+        allowed_origin = self._resolve_allowed_origin()
+        if allowed_origin is None:
+            return
+        self.send_header("Access-Control-Allow-Origin", allowed_origin)
+        if allowed_origin != "*":
+            self.send_header("Vary", "Origin")
 
     def _send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=True, default=str).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self._write_cors_headers()
         self.end_headers()
         self.wfile.write(body)
-
-    def _send_html(self, status: HTTPStatus, body: str) -> None:
-        encoded = body.encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(encoded)))
-        self.end_headers()
-        self.wfile.write(encoded)
 
     def _handle_logs_endpoint(self, requested_lines: str) -> None:
         try:
@@ -304,6 +170,7 @@ class TradingApiRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "keep-alive")
+        self._write_cors_headers()
         self.end_headers()
 
         self._write_sse_event("heartbeat", self.date_time_string())

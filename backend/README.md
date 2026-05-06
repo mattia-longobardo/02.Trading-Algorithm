@@ -40,7 +40,9 @@ python main.py
 
 Oltre allo scheduler, l'app espone una piccola API HTTP configurabile con `API_HOST` e `API_PORT` (default `0.0.0.0:8000`).
 
-Il path `GET /` mostra una vera pagina HTML minimale che visualizza le ultime `10000` righe del bot e riceve in streaming le nuove righe quando vengono aggiunte al file `LOG_FILE`, con aggiornamento live ogni secondo.
+Il path `GET /` risponde con un JSON di health check (`{"status":"ok","service":"trading-backend"}`). La dashboard interattiva e il tail live dei log sono ora forniti dal frontend Next.js nella cartella `../frontend`, che consuma le API HTTP qui esposte.
+
+Le origini consentite dal browser per le chiamate cross-origin sono configurabili con `CORS_ALLOWED_ORIGINS` (lista separata da virgole, `*` per disabilitare la lista bianca).
 
 ## API manuali
 
