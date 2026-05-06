@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0f172a;
+  --color-panel: #111827;
+  --color-line: #1f2937;
+  --color-text: #e5e7eb;
+  --color-muted: #94a3b8;
+  --color-accent: #22c55e;
+}
+
+html,
+body {
+  background: radial-gradient(circle at top, #1e293b 0%, var(--color-bg) 45%);
+  color: var(--color-text);
+  min-height: 100vh;
+}

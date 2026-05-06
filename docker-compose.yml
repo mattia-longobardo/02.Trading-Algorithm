@@ -1,7 +1,7 @@
 services:
-  trading:
-    build: .
-    container_name: trading
+  backend:
+    build: ./backend
+    container_name: trading-backend
     user: 1000:1000
     init: true
     restart: always
@@ -10,20 +10,45 @@ services:
     stop_signal: SIGTERM
     stop_grace_period: 20s
     volumes:
-      - ./logs:/app/logs
-      - ./data:/app/data
-      - ./run:/app/run
-      - ./.env:/app/.env
+      - ./backend/logs:/app/logs
+      - ./backend/data:/app/data
+      - ./backend/run:/app/run
+      - ./backend/.env:/app/.env
     environment:
       - TZ=Europe/Rome
+      - CORS_ALLOWED_ORIGINS=http://trading.local
     networks:
       - proxy_public
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy_public"
-      - "traefik.http.routers.log-trading-router.rule=Host(`trading.local`)"
-      - "traefik.http.routers.log-trading-router.entrypoints=web"
-      - "traefik.http.services.log-trading-service.loadbalancer.server.port=8000"
+      - "traefik.http.routers.trading-backend-router.rule=Host(`api.trading.local`)"
+      - "traefik.http.routers.trading-backend-router.entrypoints=web"
+      - "traefik.http.services.trading-backend-service.loadbalancer.server.port=8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://api.trading.local
+    container_name: trading-frontend
+    init: true
+    restart: always
+    mem_limit: 512m
+    cpus: "0.5"
+    depends_on:
+      - backend
+    environment:
+      - TZ=Europe/Rome
+      - NODE_ENV=production
+    networks:
+      - proxy_public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy_public"
+      - "traefik.http.routers.trading-frontend-router.rule=Host(`trading.local`)"
+      - "traefik.http.routers.trading-frontend-router.entrypoints=web"
+      - "traefik.http.services.trading-frontend-service.loadbalancer.server.port=3000"
 
 networks:
   proxy_public:

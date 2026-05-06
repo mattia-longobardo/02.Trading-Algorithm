@@ -53,6 +53,7 @@ class AppConfig:
     lock_file: str = "run/trading_scheduler.lock"
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    cors_allowed_origins: tuple[str, ...] = ()
 
     @property
     def paper(self) -> bool:
@@ -113,6 +114,11 @@ def load_config() -> AppConfig:
         lock_file=os.getenv("LOCK_FILE", "run/trading_scheduler.lock"),
         api_host=os.getenv("API_HOST", "0.0.0.0"),
         api_port=int(os.getenv("API_PORT", "8000")),
+        cors_allowed_origins=tuple(
+            origin.strip()
+            for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
+            if origin.strip()
+        ),
     )
     config.log_file = resolve_runtime_path(config.log_file)
     config.universe_log_file = resolve_runtime_path(config.universe_log_file)
