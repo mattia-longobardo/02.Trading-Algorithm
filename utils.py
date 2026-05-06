@@ -212,12 +212,62 @@ def retry(
     return decorator
 
 
-def trim_ohlcv_payload(rows: list[dict[str, Any]], max_rows: int = 600) -> list[dict[str, Any]]:
-    """Reduce token usage while still giving the model long context."""
+def build_mixed_timeframe_ohlcv(
+    rows: list[dict[str, Any]],
+    recent_daily: int = 60,
+    weekly_count: int = 30,
+) -> dict[str, list[dict[str, Any]]]:
+    """Return last N daily bars plus older period aggregated to weekly bars."""
 
-    if len(rows) <= max_rows:
-        return rows
-    return rows[:120] + rows[-480:]
+    if not rows:
+        return {"daily": [], "weekly": []}
+
+    sorted_rows = sorted(rows, key=lambda r: r.get("timestamp") or "")
+    if len(sorted_rows) <= recent_daily:
+        return {"daily": sorted_rows, "weekly": []}
+    daily_part = sorted_rows[-recent_daily:]
+    older_part = sorted_rows[:-recent_daily]
+    weekly_part = _aggregate_daily_to_weekly(older_part)[-weekly_count:]
+    return {"daily": daily_part, "weekly": weekly_part}
+
+
+def _aggregate_daily_to_weekly(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not rows:
+        return []
+    bars: list[dict[str, Any]] = []
+    bucket: list[dict[str, Any]] = []
+    current_key: tuple[int, int] | None = None
+    for row in rows:
+        ts_value = row.get("timestamp")
+        dt = parse_datetime(ts_value) if isinstance(ts_value, str) else ts_value
+        if dt is None:
+            continue
+        iso = dt.isocalendar()
+        key = (iso[0], iso[1])
+        if current_key is None:
+            current_key = key
+        if key != current_key:
+            bars.append(_build_weekly_bar(bucket))
+            bucket = []
+            current_key = key
+        bucket.append(row)
+    if bucket:
+        bars.append(_build_weekly_bar(bucket))
+    return bars
+
+
+def _build_weekly_bar(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    highs = [float(r["high"]) for r in rows if r.get("high") is not None]
+    lows = [float(r["low"]) for r in rows if r.get("low") is not None]
+    volumes = [float(r["volume"]) for r in rows if r.get("volume") is not None]
+    return {
+        "timestamp": rows[0].get("timestamp"),
+        "open": rows[0].get("open"),
+        "high": max(highs) if highs else None,
+        "low": min(lows) if lows else None,
+        "close": rows[-1].get("close"),
+        "volume": sum(volumes) if volumes else 0.0,
+    }
 
 
 def to_json(data: Any) -> str:

@@ -432,7 +432,7 @@ class TradeManager:
             if not candles:
                 self.logger.warning("No market data found for %s, skipping batch analysis", symbol)
                 continue
-            payloads.append(self.gpt_client.build_symbol_payload(symbol, category, candles, []))
+            payloads.append(self.gpt_client.build_batch_symbol_entry(symbol, candles))
         return payloads
 
     def _rank_signals(self, signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -763,7 +763,7 @@ class TradeManager:
 
     def _refresh_single_open_trade_protection(self, trade: dict[str, Any]) -> None:
         symbol = str(trade["symbol"])
-        candles = self.data_manager.get_symbol_history(symbol, limit=260)
+        candles = self.data_manager.get_symbol_history(symbol, limit=40)
         if not candles:
             self.logger.warning("No market data found for open trade %s (%s); skipping GPT protection review", trade["id"], symbol)
             return
