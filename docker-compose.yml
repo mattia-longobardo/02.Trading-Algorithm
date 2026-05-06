@@ -1,0 +1,30 @@
+services:
+  trading:
+    build: .
+    container_name: trading
+    user: 1000:1000
+    init: true
+    restart: always
+    mem_limit: 1g
+    cpus: "1.0"
+    stop_signal: SIGTERM
+    stop_grace_period: 20s
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./run:/app/run
+      - ./.env:/app/.env
+    environment:
+      - TZ=Europe/Rome
+    networks:
+      - proxy_public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy_public"
+      - "traefik.http.routers.log-trading-router.rule=Host(`trading.local`)"
+      - "traefik.http.routers.log-trading-router.entrypoints=web"
+      - "traefik.http.services.log-trading-service.loadbalancer.server.port=8000"
+
+networks:
+  proxy_public:
+    external: true

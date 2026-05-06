@@ -1,0 +1,14 @@
+# Ignore Python virtual environment and compiled files
+.env
+.venv
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore data and logs directories
+data/*
+logs/*
+
+# Others
+.vscode
