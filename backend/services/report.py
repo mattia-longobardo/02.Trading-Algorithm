@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,8 +13,9 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-from trade_manager import TradeManager
-from utils import AppConfig, utc_now
+
+from core.utils import AppConfig, utc_now
+from services.trade_manager import TradeManager
 
 
 class ReportGenerator:
@@ -31,11 +31,9 @@ class ReportGenerator:
         report_dir = Path(self.config.report_dir)
         report_dir.mkdir(parents=True, exist_ok=True)
         stamp = utc_now().strftime("%Y%m%d_%H%M%S")
-        json_path = report_dir / f"weekly_report_{stamp}.json"
         pdf_path = report_dir / f"weekly_report_{stamp}.pdf"
-        json_path.write_text(json.dumps(report, indent=2, ensure_ascii=True, default=str), encoding="utf-8")
         self._render_pdf_report(report, pdf_path, title="Weekly Trading Report")
-        self.logger.info("Generated weekly report at %s and %s", json_path, pdf_path)
+        self.logger.info("Generated weekly report at %s", pdf_path)
         return report
 
     def generate_quarterly_report(self) -> dict:
@@ -91,11 +89,9 @@ class ReportGenerator:
         report_dir.mkdir(parents=True, exist_ok=True)
         stamp = utc_now().strftime("%Y%m%d_%H%M%S")
         slug = label.lower().replace(" ", "_")
-        json_path = report_dir / f"{report_type}_report_{slug}_{stamp}.json"
         pdf_path = report_dir / f"{report_type}_report_{slug}_{stamp}.pdf"
-        json_path.write_text(json.dumps(report, indent=2, ensure_ascii=True, default=str), encoding="utf-8")
         self._render_pdf_report(report, pdf_path, title=f"{label} Trading Report", is_period=True)
-        self.logger.info("Generated %s report (%s) at %s and %s", report_type, label, json_path, pdf_path)
+        self.logger.info("Generated %s report (%s) at %s", report_type, label, pdf_path)
         return report
 
     def _render_pdf_report(

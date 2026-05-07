@@ -18,7 +18,7 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import AssetClass, OrderClass, OrderSide, OrderStatus, OrderType, QueryOrderStatus, TimeInForce
 from alpaca.trading.requests import GetAssetsRequest, GetOrderByIdRequest, GetOrdersRequest, LimitOrderRequest, MarketOrderRequest, ReplaceOrderRequest, StopLossRequest, TakeProfitRequest, TrailingStopOrderRequest
 
-from utils import AppConfig, retry, utc_now
+from core.utils import AppConfig, retry, utc_now
 
 
 class AlpacaClient:

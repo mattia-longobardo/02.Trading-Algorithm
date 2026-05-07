@@ -7,6 +7,9 @@
   --color-text: #e5e7eb;
   --color-muted: #94a3b8;
   --color-accent: #22c55e;
+  --color-danger: #f43f5e;
+  --color-warning: #f59e0b;
+  --color-info: #38bdf8;
 }
 
 html,
@@ -14,4 +17,19 @@ body {
   background: radial-gradient(circle at top, #1e293b 0%, var(--color-bg) 45%);
   color: var(--color-text);
   min-height: 100vh;
+}
+
+* {
+  border-color: var(--color-line);
+}
+
+/* Hide arrows on number inputs in WebKit / Firefox so the trade editor
+   stays clean — operators paste / type values, no need for spinners. */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
 }

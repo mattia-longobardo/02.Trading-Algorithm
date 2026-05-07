@@ -7,17 +7,17 @@ from pathlib import Path
 from types import ModuleType
 from unittest.mock import Mock
 
-alpaca_client_stub = ModuleType("alpaca_client")
+alpaca_client_stub = ModuleType("clients.alpaca_client")
 alpaca_client_stub.AlpacaClient = object
-sys.modules.setdefault("alpaca_client", alpaca_client_stub)
+sys.modules.setdefault("clients.alpaca_client", alpaca_client_stub)
 
 dotenv_stub = ModuleType("dotenv")
 dotenv_stub.load_dotenv = lambda: None
 sys.modules.setdefault("dotenv", dotenv_stub)
 
-from data_manager import DataManager
-from db import get_market_symbol_table, initialize_databases
-from utils import AppConfig
+from core.db import get_market_symbol_table, initialize_databases
+from core.utils import AppConfig
+from services.data_manager import DataManager
 
 
 def make_config(market_db_path: str, trades_db_path: str) -> AppConfig:

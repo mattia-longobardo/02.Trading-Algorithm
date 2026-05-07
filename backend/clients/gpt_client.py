@@ -8,7 +8,43 @@ from typing import Any
 
 from openai import APIError, APIStatusError, OpenAI, RateLimitError
 
-from utils import AppConfig, build_mixed_timeframe_ohlcv, retry, to_toon
+from core.prompt_store import get_prompt
+from core.utils import AppConfig, build_mixed_timeframe_ohlcv, retry, to_toon
+
+
+# Mapping between prompt keys exposed to the admin UI and the hard-coded
+# constants below. The constants are still the source of truth for the
+# initial DB seed and for the runtime fallback if the DB ever becomes
+# unreachable, but the active text actually used by the trading bot is
+# resolved via :func:`core.prompt_store.get_prompt` on every call so that
+# admin edits take effect on the next scheduled job without a redeploy.
+PROMPT_KEY_NEW_SIGNAL = "new_signal"
+PROMPT_KEY_BATCH_SIGNALS = "batch_signals"
+PROMPT_KEY_PENDING_REVIEW = "pending_review"
+PROMPT_KEY_PROTECTION_REVIEW = "protection_review"
+PROMPT_KEY_UNIVERSE_DOSSIER = "universe_dossier"
+PROMPT_KEY_UNIVERSE_SHORTLIST = "universe_shortlist"
+PROMPT_KEY_UNIVERSE_FINAL = "universe_final"
+PROMPT_KEY_UNIVERSE_FINAL_FROM_DOSSIERS = "universe_final_from_dossiers"
+
+
+def get_default_prompts() -> dict[str, str]:
+    """Return the hard-coded default prompt content keyed by prompt key.
+
+    Used to seed the application database on first start and as the
+    fallback if the resolver cannot read the active version at call time.
+    """
+
+    return {
+        PROMPT_KEY_NEW_SIGNAL: INSTRUCTIONS_NEW_SIGNAL,
+        PROMPT_KEY_BATCH_SIGNALS: INSTRUCTIONS_BATCH_SIGNALS,
+        PROMPT_KEY_PENDING_REVIEW: INSTRUCTIONS_PENDING_REVIEW,
+        PROMPT_KEY_PROTECTION_REVIEW: INSTRUCTIONS_PROTECTION_REVIEW,
+        PROMPT_KEY_UNIVERSE_DOSSIER: INSTRUCTIONS_UNIVERSE_DOSSIER,
+        PROMPT_KEY_UNIVERSE_SHORTLIST: INSTRUCTIONS_UNIVERSE_SHORTLIST,
+        PROMPT_KEY_UNIVERSE_FINAL: INSTRUCTIONS_UNIVERSE_FINAL,
+        PROMPT_KEY_UNIVERSE_FINAL_FROM_DOSSIERS: INSTRUCTIONS_UNIVERSE_FINAL_FROM_DOSSIERS,
+    }
 
 NEW_SIGNAL_SCHEMA = {
     "name": "new_trade_signal",
@@ -358,6 +394,22 @@ class GPTClient:
         self.logger = logger.getChild("gpt")
         self.client = OpenAI(api_key=config.openai_api_key)
 
+    def _resolve_prompt(self, key: str, default: str) -> str:
+        """Return the active prompt content for ``key`` from the app DB.
+
+        Falls back to the supplied default constant on any error or if the
+        DB has not yet been seeded for this key.
+        """
+
+        db_path = getattr(self.config, "db_app", "")
+        if not db_path:
+            return default
+        try:
+            return get_prompt(db_path, key, default)
+        except Exception:
+            self.logger.exception("Prompt lookup for %s failed; using fallback constant", key)
+            return default
+
     def _resolve_model(self, tier: str) -> str:
         if tier == "light":
             return self.config.openai_model_light
@@ -445,7 +497,11 @@ class GPTClient:
         existing_trades: list[dict[str, Any]],
     ) -> dict[str, Any]:
         payload = self.build_symbol_payload(symbol, category, candles, existing_trades)
-        return self._request_json(INSTRUCTIONS_NEW_SIGNAL, payload, NEW_SIGNAL_SCHEMA)
+        return self._request_json(
+            self._resolve_prompt(PROMPT_KEY_NEW_SIGNAL, INSTRUCTIONS_NEW_SIGNAL),
+            payload,
+            NEW_SIGNAL_SCHEMA,
+        )
 
     def request_batch_trade_signals(
         self,
@@ -471,7 +527,11 @@ class GPTClient:
             "symbols": symbol_payloads,
             "existing_trades": existing_trades,
         }
-        return self._request_json(INSTRUCTIONS_BATCH_SIGNALS, payload, BATCH_SIGNALS_SCHEMA)
+        return self._request_json(
+            self._resolve_prompt(PROMPT_KEY_BATCH_SIGNALS, INSTRUCTIONS_BATCH_SIGNALS),
+            payload,
+            BATCH_SIGNALS_SCHEMA,
+        )
 
     def request_universe_symbol_dossier(
         self,
@@ -495,7 +555,7 @@ class GPTClient:
             "peer_context": peer_context,
         }
         return self._request_json(
-            INSTRUCTIONS_UNIVERSE_DOSSIER,
+            self._resolve_prompt(PROMPT_KEY_UNIVERSE_DOSSIER, INSTRUCTIONS_UNIVERSE_DOSSIER),
             payload,
             UNIVERSE_SYMBOL_DOSSIER_SCHEMA,
             use_web_search=True,
@@ -536,7 +596,7 @@ class GPTClient:
         }
 
         return self._request_json(
-            INSTRUCTIONS_UNIVERSE_SHORTLIST,
+            self._resolve_prompt(PROMPT_KEY_UNIVERSE_SHORTLIST, INSTRUCTIONS_UNIVERSE_SHORTLIST),
             payload,
             UNIVERSE_BATCH_SHORTLIST_SCHEMA,
             model_tier="mid",
@@ -562,7 +622,11 @@ class GPTClient:
             },
             "shortlisted_candidates": shortlisted_candidates,
         }
-        return self._request_json(INSTRUCTIONS_UNIVERSE_FINAL, payload, UNIVERSE_FINAL_SCHEMA)
+        return self._request_json(
+            self._resolve_prompt(PROMPT_KEY_UNIVERSE_FINAL, INSTRUCTIONS_UNIVERSE_FINAL),
+            payload,
+            UNIVERSE_FINAL_SCHEMA,
+        )
 
     def request_universe_final_selection_from_dossiers(
         self,
@@ -588,7 +652,10 @@ class GPTClient:
             "candidate_dossiers": dossiers,
         }
         return self._request_json(
-            INSTRUCTIONS_UNIVERSE_FINAL_FROM_DOSSIERS,
+            self._resolve_prompt(
+                PROMPT_KEY_UNIVERSE_FINAL_FROM_DOSSIERS,
+                INSTRUCTIONS_UNIVERSE_FINAL_FROM_DOSSIERS,
+            ),
             payload,
             UNIVERSE_DOSSIER_FINAL_SCHEMA,
             use_web_search=False,
@@ -617,7 +684,11 @@ class GPTClient:
             "trade": trade,
             "ohlcv": build_mixed_timeframe_ohlcv(candles),
         }
-        return self._request_json(INSTRUCTIONS_PENDING_REVIEW, payload, PENDING_REVIEW_SCHEMA)
+        return self._request_json(
+            self._resolve_prompt(PROMPT_KEY_PENDING_REVIEW, INSTRUCTIONS_PENDING_REVIEW),
+            payload,
+            PENDING_REVIEW_SCHEMA,
+        )
 
     def request_open_trade_protection_review(
         self,
@@ -641,7 +712,7 @@ class GPTClient:
             "ohlcv": {"daily": candles, "weekly": []},
         }
         return self._request_json(
-            INSTRUCTIONS_PROTECTION_REVIEW,
+            self._resolve_prompt(PROMPT_KEY_PROTECTION_REVIEW, INSTRUCTIONS_PROTECTION_REVIEW),
             payload,
             OPEN_PROTECTION_REVIEW_SCHEMA,
             model_tier="mid",

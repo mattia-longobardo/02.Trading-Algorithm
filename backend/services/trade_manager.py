@@ -7,11 +7,11 @@ from collections import Counter
 from datetime import datetime, timedelta
 from typing import Any
 
-from alpaca_client import AlpacaClient
-from data_manager import DataManager
-from db import db_cursor, fetch_all, fetch_one
-from gpt_client import GPTClient
-from utils import AppConfig, isoformat_utc, parse_datetime, utc_now
+from clients.alpaca_client import AlpacaClient
+from clients.gpt_client import GPTClient
+from core.db import db_cursor, fetch_all, fetch_one
+from core.utils import AppConfig, isoformat_utc, parse_datetime, utc_now
+from services.data_manager import DataManager
 
 
 class TradeManager:

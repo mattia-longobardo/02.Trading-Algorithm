@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from logging.handlers import RotatingFileHandler
 
-from utils import AppConfig
+from core.utils import AppConfig
 
 LOG_FORMAT = "[%(asctime)s] [%(levelname)s] [%(name)s] - %(message)s"
 
