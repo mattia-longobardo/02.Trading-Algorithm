@@ -15,8 +15,40 @@ from typing import Any, Callable, TypeVar
 from dotenv import load_dotenv
 
 F = TypeVar("F", bound=Callable[..., Any])
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parents[1]
 UNIVERSE_FILE = BASE_DIR / "data/universe.json"
+
+
+# Subset of AppConfig fields that operators can override at runtime through
+# the Settings UI. Anything not listed here stays bound to .env / build env.
+SETTINGS_OVERRIDABLE_KEYS: frozenset[str] = frozenset(
+    {
+        "max_open_trades_stock",
+        "max_open_trades_crypto",
+        "weekly_universe_stocks",
+        "weekly_universe_crypto",
+        "currency",
+        "risk_tolerance",
+        "strategy_horizon_days_min",
+        "strategy_horizon_days_max",
+        "crypto_entry_limit_collar_bps",
+        "crypto_entry_max_chase_bps",
+        "crypto_pending_reprice_minutes",
+        "crypto_pending_cancel_minutes",
+        "log_level",
+        "log_profile",
+    }
+)
+
+# Settings whose change requires a restart (or, for future iterations, a hot
+# reload that the runtime does not yet implement). The UI surfaces this so the
+# operator knows whether they need to restart the container.
+SETTINGS_RESTART_REQUIRED_KEYS: frozenset[str] = frozenset(
+    {
+        "log_level",
+        "log_profile",
+    }
+)
 
 
 @dataclass(slots=True)
@@ -50,10 +82,17 @@ class AppConfig:
     report_dir: str = "data/reports"
     db_market_data: str = "data/market_data.sqlite"
     db_trades: str = "data/trades.sqlite"
+    db_app: str = "data/app.sqlite"
     lock_file: str = "run/trading_scheduler.lock"
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     cors_allowed_origins: tuple[str, ...] = ()
+    admin_username: str = ""
+    admin_password: str = ""
+    admin_display_name: str = ""
+    session_cookie_secure: bool = False
+    session_cookie_samesite: str = "lax"
+    account_currency: str = "USD"
 
     @property
     def paper(self) -> bool:
@@ -119,20 +158,75 @@ def load_config() -> AppConfig:
             for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
             if origin.strip()
         ),
+        db_app=os.getenv("DB_APP", "data/app.sqlite"),
+        admin_username=os.getenv("ADMIN_USERNAME", "").strip(),
+        admin_password=os.getenv("ADMIN_PASSWORD", ""),
+        admin_display_name=os.getenv("ADMIN_DISPLAY_NAME", "").strip(),
+        session_cookie_secure=os.getenv("SESSION_COOKIE_SECURE", "false").strip().lower()
+        in {"1", "true", "yes", "on"},
+        session_cookie_samesite=os.getenv("SESSION_COOKIE_SAMESITE", "lax").strip().lower() or "lax",
+        account_currency=(os.getenv("ACCOUNT_CURRENCY", "USD") or "USD").strip().upper(),
     )
     config.log_file = resolve_runtime_path(config.log_file)
     config.universe_log_file = resolve_runtime_path(config.universe_log_file)
     config.report_dir = resolve_runtime_path(config.report_dir)
     config.db_market_data = resolve_runtime_path(config.db_market_data)
     config.db_trades = resolve_runtime_path(config.db_trades)
+    config.db_app = resolve_runtime_path(config.db_app)
     config.lock_file = resolve_runtime_path(config.lock_file)
     ensure_parent_dir(config.log_file)
     ensure_parent_dir(config.universe_log_file)
     Path(config.report_dir).mkdir(parents=True, exist_ok=True)
     ensure_parent_dir(config.db_market_data)
     ensure_parent_dir(config.db_trades)
+    ensure_parent_dir(config.db_app)
     ensure_parent_dir(config.lock_file)
     ensure_parent_dir(UNIVERSE_FILE)
+    return config
+
+
+def apply_settings_overlay(config: AppConfig, overlay: dict[str, Any]) -> AppConfig:
+    """Mutate ``config`` in place with operator-supplied overrides.
+
+    Only keys in :data:`SETTINGS_OVERRIDABLE_KEYS` are honored. Values are
+    coerced to the field type, so the same JSON blob can survive round-trips
+    through SQLite. Returns the same config object for convenience.
+    """
+
+    def _coerce(name: str, raw: Any, current: Any) -> Any:
+        if raw is None:
+            return current
+        if isinstance(current, bool):
+            if isinstance(raw, bool):
+                return raw
+            return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+        if isinstance(current, int) and not isinstance(current, bool):
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return current
+        if isinstance(current, float):
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                return current
+        if isinstance(current, str):
+            return str(raw)
+        return raw
+
+    for key, value in overlay.items():
+        if key not in SETTINGS_OVERRIDABLE_KEYS:
+            continue
+        if not hasattr(config, key):
+            continue
+        current = getattr(config, key)
+        try:
+            setattr(config, key, _coerce(key, value, current))
+        except (TypeError, ValueError):
+            continue
+
+    # Sanity: never let risk_tolerance leave [1, 10].
+    config.risk_tolerance = max(1, min(10, int(config.risk_tolerance)))
     return config
 
 

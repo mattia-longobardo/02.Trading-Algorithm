@@ -13,10 +13,10 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from filelock import FileLock, Timeout
 
-from report import ReportGenerator
-from trade_manager import TradeManager
-from universe_manager import UniverseManager
-from utils import AppConfig
+from core.utils import AppConfig
+from services.report import ReportGenerator
+from services.trade_manager import TradeManager
+from services.universe_manager import UniverseManager
 
 
 class JobExecutionLockedError(RuntimeError):
@@ -220,6 +220,13 @@ class TradingScheduler:
     def job_review_stale_pending_orders(self) -> None:
         self.trade_manager.review_stale_pending_trades(min_age_days=7)
 
+    def job_record_equity_snapshot(self) -> None:
+        # Local import to avoid pulling app_db at scheduler import time
+        # (keeps the test stubs that mock out scheduler imports working).
+        from services.equity_snapshots import record_snapshot
+
+        record_snapshot(self.config, self.trade_manager.alpaca_client, self.logger)
+
     def run_manual_refresh_universe(self) -> dict[str, list[str]]:
         def execute() -> dict[str, list[str]]:
             universe = self.universe_manager.select_trading_universe()
@@ -383,6 +390,16 @@ class TradingScheduler:
             self.guarded("annual_report", self.job_annual_report),
             CronTrigger(month=1, day=1, hour=1, minute=0),
             id="annual_report",
+            replace_existing=True,
+        )
+        # Account-equity snapshot every 15 minutes — feeds the dashboard's
+        # "andamento del saldo totale" chart. Purely additive, never
+        # interferes with trading lifecycle. Skipped silently if the
+        # broker call fails (next tick will retry).
+        self.scheduler.add_job(
+            self.guarded("equity_snapshot", self.job_record_equity_snapshot),
+            CronTrigger(minute="*/15"),
+            id="equity_snapshot",
             replace_existing=True,
         )
 

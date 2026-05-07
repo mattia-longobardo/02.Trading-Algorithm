@@ -1,53 +1,67 @@
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "http://localhost:8000";
+/**
+ * Browser-side API client. Every call goes through the Next.js Route Handler
+ * proxy at `/api/proxy/*`, which forwards to the backend over the internal
+ * Docker network. The browser never talks to the backend directly.
+ */
 
-export type JobAction =
-  | "universe"
-  | "new_orders"
-  | "report"
-  | "quarterly_report"
-  | "biannual_report"
-  | "annual_report"
-  | "scheduler_reset";
+const API_PREFIX = "/api/proxy";
 
-export interface JobResponse {
-  status: "ok" | "error";
-  action?: JobAction;
-  message: string;
-}
+export class ApiError extends Error {
+  status: number;
+  code: string | null;
+  payload: unknown;
 
-export interface LogsResponse {
-  log_file: string;
-  line_count: number;
-  logs: string;
-  updated_at: string;
-}
-
-export async function triggerJob(path: string): Promise<JobResponse> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: "GET",
-    cache: "no-store",
-  });
-  const payload = (await response.json()) as JobResponse;
-  if (!response.ok) {
-    throw Object.assign(new Error(payload.message ?? `HTTP ${response.status}`), {
-      payload,
-      status: response.status,
-    });
+  constructor(message: string, status: number, code: string | null, payload: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    this.payload = payload;
   }
-  return payload;
 }
 
-export async function fetchLogs(lines: number = 10000): Promise<LogsResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/logs?lines=${lines}`, {
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_PREFIX}${path}`, {
     cache: "no-store",
+    credentials: "same-origin",
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
   });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch logs: HTTP ${response.status}`);
+
+  const text = await response.text();
+  let payload: unknown = null;
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = text;
+    }
   }
-  return (await response.json()) as LogsResponse;
+
+  if (!response.ok) {
+    const errorBlock = (payload as { error?: { message?: string; code?: string } } | null)?.error;
+    const detail = (payload as { detail?: { error?: { message?: string; code?: string } } } | null)?.detail
+      ?.error;
+    const error = errorBlock ?? detail ?? null;
+    const message = error?.message ?? `HTTP ${response.status}`;
+    throw new ApiError(message, response.status, error?.code ?? null, payload);
+  }
+
+  return payload as T;
 }
 
-export function logsStreamUrl(): string {
-  return `${API_BASE_URL}/api/logs/stream`;
+export const api = {
+  get: <T>(path: string) => request<T>(path, { method: "GET" }),
+  post: <T>(path: string, body?: unknown) =>
+    request<T>(path, { method: "POST", body: body !== undefined ? JSON.stringify(body) : undefined }),
+  patch: <T>(path: string, body?: unknown) =>
+    request<T>(path, { method: "PATCH", body: body !== undefined ? JSON.stringify(body) : undefined }),
+  delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+};
+
+export function streamUrl(path: string): string {
+  return `${API_PREFIX}${path}`;
 }

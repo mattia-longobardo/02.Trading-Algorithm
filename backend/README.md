@@ -5,16 +5,17 @@ Sistema di trading algoritmico in Python per paper trading su Alpaca, con analis
 ## Componenti
 
 - `main.py`: entry point che inizializza DB, client e scheduler
-- `scheduler.py`: job APScheduler con lock file per evitare esecuzioni parallele
-- `gpt_client.py`: integrazione OpenAI Responses API con web search obbligatoria
-- `alpaca_client.py`: wrapper Alpaca per account, ordini, posizioni e market data
-- `data_manager.py`: download incrementale daily OHLCV su SQLite
-- `trade_manager.py`: sincronizzazione Alpaca, decisioni GPT in entrata e lifecycle script-managed dei trade
-- `universe_manager.py`: selezione dell'universo attivo stock/crypto
-- `report.py`: report JSON e PDF settimanale
-- `db.py`: schema e helper SQLite
-- `logger.py`: log console + file con rotazione
-- `utils.py`: config, retry, serializzazione e utility condivise
+- `api/api_server.py`: API HTTP manuali e streaming dei log
+- `clients/alpaca_client.py`: wrapper Alpaca per account, ordini, posizioni e market data
+- `clients/gpt_client.py`: integrazione OpenAI Responses API con web search obbligatoria
+- `core/utils.py`: config, retry, serializzazione e utility condivise
+- `core/logger.py`: log console + file con rotazione
+- `core/db.py`: schema e helper SQLite
+- `services/scheduler.py`: job APScheduler con lock file per evitare esecuzioni parallele
+- `services/trade_manager.py`: sincronizzazione Alpaca, decisioni GPT in entrata e lifecycle script-managed dei trade
+- `services/universe_manager.py`: selezione dell'universo attivo stock/crypto
+- `services/data_manager.py`: download incrementale daily OHLCV su SQLite
+- `services/report.py`: report JSON e PDF settimanale
 
 ## Setup
 
@@ -44,19 +45,135 @@ Il path `GET /` risponde con un JSON di health check (`{"status":"ok","service":
 
 Le origini consentite dal browser per le chiamate cross-origin sono configurabili con `CORS_ALLOWED_ORIGINS` (lista separata da virgole, `*` per disabilitare la lista bianca).
 
-## API manuali
+## API HTTP
 
-- `GET /api/universe/generate`: rigenera l'universo e aggiorna lo storico dei simboli monitorati; risponde solo con esito sintetico
-- `GET /api/orders/generate`: fa partire manualmente lo stesso identico processo schedulato 6 volte al giorno sui mercati di Milano e New York; risponde solo con esito sintetico
-- `GET /api/report/generate`: genera il report settimanale; risponde solo con esito sintetico
-- `GET /api/report/quarterly`: genera il report del trimestre appena concluso; risponde solo con esito sintetico
-- `GET /api/report/biannual`: genera il report del semestre appena concluso; risponde solo con esito sintetico
-- `GET /api/report/annual`: genera il report dell'anno solare appena concluso; risponde solo con esito sintetico
-- `GET /api/scheduler/reset`: resetta i lock dello scheduler se risulta bloccato; sostituisce il lock in-process con uno nuovo, rimuove il lock file su disco e svuota la coda dei job pendenti
-- `GET /api/logs`: restituisce il tail del file di log in JSON; di default usa `10000` righe e supporta `?lines=...`
-- `GET /api/logs/stream`: stream SSE con le nuove righe del log in tempo reale
+Il server è ora basato su **FastAPI** (uvicorn). Tutti gli endpoint
+richiedono autenticazione (cookie di sessione `trading_session`), con la
+sola eccezione di `/` (health) e `POST /api/auth/login`. Gli endpoint
+admin-only sono indicati di seguito.
 
-Le API usano lo stesso lock dello scheduler, quindi se un job e` gia` in esecuzione rispondono con `409 Conflict`.
+### Auth
+
+- `POST /api/auth/login` — body `{ username, password }`, imposta il cookie
+- `POST /api/auth/logout`
+- `GET /api/auth/me`
+- `POST /api/auth/change-password` — body `{ current_password, new_password }`
+
+### Utenti (admin)
+
+- `GET /api/users`
+- `POST /api/users` — `{ username, password, display_name, role }`
+- `PATCH /api/users/{id}` — `{ display_name?, role?, disabled? }`
+- `POST /api/users/{id}/reset-password`
+- `DELETE /api/users/{id}`
+
+### Trade
+
+- `GET /api/trades?status=&category=&symbol=&from=&to=&page=&page_size=&sort=`
+- `GET /api/trades/{id}`
+- `PATCH /api/trades/{id}` — modifica solo i campi editabili
+  (`target_entry_price`, `quantity`, `take_profit`,
+  `trailing_take_profit_distance`, `trailing_take_profit_activation_pct`,
+  `stop_loss`, `trailing_stop_distance`). La regola coppia per il
+  trailing TP è validata server-side; ogni modifica viene scritta
+  nell'audit log.
+
+### Metriche e grafici
+
+- `GET /api/metrics?window=...` (1D / 1W / 1M / 3M / 6M / YTD / 1Y / All
+  o `from`/`to` ISO)
+- `GET /api/equity-curve?window=...&granularity=daily|hourly`
+- `GET /api/pnl-by-symbol?window=...`
+- `GET /api/allocation`
+- `GET /api/returns-distribution?window=...&bins=12`
+
+### Report
+
+- `GET /api/reports?folder_id=&type=&q=&from=&to=&full_text=`
+- `GET /api/reports/{id}`
+- `GET /api/reports/{id}/file` — binario PDF/JSON
+- `GET /api/reports/{id}/json`
+- `PATCH /api/reports/{id}` — `{ folder_id?, tags?, clear_folder? }`
+- `GET /api/report-folders`
+- `POST /api/report-folders` — `{ name, parent_id? }`
+- `PATCH /api/report-folders/{id}` — `{ name?, parent_id? }`
+- `DELETE /api/report-folders/{id}`
+
+### Prompt (admin)
+
+- `GET /api/prompts`
+- `GET /api/prompts/{key}`
+- `GET /api/prompts/{key}/versions`
+- `POST /api/prompts/{key}` — `{ content, comment }` salva nuova versione e la attiva
+- `POST /api/prompts/{key}/rollback` — `{ version_id }`
+
+Chiavi valide: `new_signal`, `batch_signals`, `pending_review`,
+`protection_review`, `universe_dossier`, `universe_shortlist`,
+`universe_final`, `universe_final_from_dossiers`.
+
+### Settings
+
+- `GET /api/settings` — restituisce overlay attuale + flag `restart_required`
+- `PATCH /api/settings` (admin) — body `{ key: value, ... }`
+
+I segreti (`OPENAI_API_KEY`, `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`) non
+sono mai esposti via API: si modificano solo via `.env`.
+
+### Audit log (admin)
+
+- `GET /api/audit?actor=&entity=&from=&to=&page=&page_size=`
+
+### Job manuali (admin)
+
+- `GET /api/universe/generate`
+- `GET /api/orders/generate`
+- `GET /api/report/generate` (settimanale)
+- `GET /api/report/quarterly`
+- `GET /api/report/biannual`
+- `GET /api/report/annual`
+- `GET /api/scheduler/reset`
+
+Tutti condividono lo stesso lock dello scheduler: rispondono con `409
+Conflict` se un altro job è in esecuzione.
+
+### Log
+
+- `GET /api/logs?lines=...`
+- `GET /api/logs/stream` (SSE)
+
+## Application database (`data/app.sqlite`)
+
+Distinto da `trades.sqlite` e `market_data.sqlite`. Tabelle:
+
+| Tabella | Scopo |
+|---|---|
+| `users` | utenti con `password_hash` bcrypt e `role` admin/user |
+| `sessions` | token cookie opachi con `expires_at` e `revoked_at` |
+| `app_settings` | overlay JSON sui parametri di `AppConfig` |
+| `prompts` + `prompt_versions` | storico versioni dei prompt GPT |
+| `report_folders` | cartelle virtuali per i file in `REPORT_DIR` |
+| `reports` | indice (filename, type, format, size, generated_at) |
+| `audit_log` | log di tutte le mutazioni (login, edit trade, ...) |
+
+Migrazioni automatiche all'avvio: `core.app_db.initialize_app_database`
+crea le tabelle mancanti, `seed_admin_user_if_missing` crea l'admin
+iniziale da `ADMIN_USERNAME`/`ADMIN_PASSWORD`,
+`seed_initial_prompt_versions` semina la prima versione dei prompt
+dalle costanti `INSTRUCTIONS_*` di `clients/gpt_client.py`.
+
+## Variabili d'ambiente nuove
+
+Oltre alle storiche (chiavi OpenAI/Alpaca, parametri trading), `.env`
+ora supporta:
+
+- `DB_APP` — path al DB applicativo (default `data/app.sqlite`)
+- `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_DISPLAY_NAME` — usati solo
+  alla **prima** inizializzazione del DB
+- `SESSION_COOKIE_SECURE` — `true` quando il sito è servito su HTTPS
+- `SESSION_COOKIE_SAMESITE` — default `lax`
+- `CORS_ALLOWED_ORIGINS` — lasciare vuoto col proxy via Next.js Route
+  Handler (raccomandato); valorizzare solo se si vuole esporre
+  `api.trading.local` direttamente al browser
 
 ## Job schedulati
 

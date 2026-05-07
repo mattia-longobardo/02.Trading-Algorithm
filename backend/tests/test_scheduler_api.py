@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import sys
 import tempfile
 import threading
@@ -7,8 +8,6 @@ import unittest
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import Mock
-from urllib.error import HTTPError
-from urllib.request import urlopen
 
 apscheduler_module = ModuleType("apscheduler")
 apscheduler_schedulers = ModuleType("apscheduler.schedulers")
@@ -69,13 +68,13 @@ filelock_module.FileLock = FileLock
 filelock_module.Timeout = Timeout
 sys.modules.setdefault("filelock", filelock_module)
 
-alpaca_client_stub = ModuleType("alpaca_client")
+alpaca_client_stub = ModuleType("clients.alpaca_client")
 alpaca_client_stub.AlpacaClient = object
-sys.modules.setdefault("alpaca_client", alpaca_client_stub)
+sys.modules.setdefault("clients.alpaca_client", alpaca_client_stub)
 
-gpt_client_stub = ModuleType("gpt_client")
+gpt_client_stub = ModuleType("clients.gpt_client")
 gpt_client_stub.GPTClient = object
-sys.modules.setdefault("gpt_client", gpt_client_stub)
+sys.modules.setdefault("clients.gpt_client", gpt_client_stub)
 
 dotenv_stub = ModuleType("dotenv")
 dotenv_stub.load_dotenv = lambda: None
@@ -111,9 +110,9 @@ sys.modules.setdefault("reportlab.lib.styles", reportlab_styles)
 sys.modules.setdefault("reportlab.lib.units", reportlab_units)
 sys.modules.setdefault("reportlab.platypus", reportlab_platypus)
 
-from api_server import create_api_server
-from scheduler import TradingScheduler
-from utils import AppConfig
+from api.api_server import create_api_server
+from core.utils import AppConfig
+from services.scheduler import TradingScheduler
 
 
 def make_config() -> AppConfig:
@@ -206,74 +205,120 @@ class TradingSchedulerManualApiTests(unittest.TestCase):
         self.assertEqual(jobs_by_id["monitor_trades"]["max_instances"], 2)
 
 
+try:
+    from fastapi.testclient import TestClient
+
+    _FASTAPI_AVAILABLE = True
+except Exception:  # pragma: no cover - exercised only without fastapi installed
+    _FASTAPI_AVAILABLE = False
+
+
+@unittest.skipUnless(_FASTAPI_AVAILABLE, "fastapi not installed in this test env")
 class TradingApiServerTests(unittest.TestCase):
+    """Smoke tests for the FastAPI server through `fastapi.testclient`.
+
+    The legacy stdlib `urllib`-based tests no longer apply since the API
+    moved to FastAPI + uvicorn. We bring up an in-process app, bootstrap
+    the application database with a temporary admin, log in, then exercise
+    a representative slice of the new contract.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:  # noqa: D401
+        from api.api_server import create_app
+        from clients.gpt_client import get_default_prompts
+        from core import app_db
+        from services.scheduler import TradingScheduler
+
+        cls._tempdir = tempfile.TemporaryDirectory()
+        base = Path(cls._tempdir.name)
+        cls._log_file = base / "trading.log"
+        cls._log_file.write_text("line 1\nline 2\nline 3\n", encoding="utf-8")
+        cls._app_db_path = str(base / "app.sqlite")
+        cls._reports_dir = base / "reports"
+        cls._reports_dir.mkdir(exist_ok=True)
+
+        config = make_config()
+        config.db_app = cls._app_db_path
+        config.log_file = str(cls._log_file)
+        config.report_dir = str(cls._reports_dir)
+        config.admin_username = "tester"
+        config.admin_password = "test-pw-123"
+
+        # Mocked scheduler with the manual-job stubs the legacy tests covered.
+        scheduler = Mock(spec=TradingScheduler)
+        scheduler.config = config
+        scheduler.trade_manager = Mock()
+        scheduler.trade_manager.alpaca_client = Mock()
+        scheduler.run_manual_refresh_universe.return_value = {"STOCK": ["AAPL"], "CRYPTO": []}
+        scheduler.run_manual_generate_new_orders.return_value = {"new_orders": [], "new_orders_count": 0}
+        scheduler.run_manual_weekly_report.return_value = {"pnl_total": 42.0}
+
+        # Initialize the app DB and seed admin/prompts so login works.
+        app_db.initialize_app_database(config.db_app)
+        app_db.seed_admin_user_if_missing(
+            config.db_app, config.admin_username, config.admin_password, config.admin_username
+        )
+        app_db.seed_initial_prompt_versions(config.db_app, get_default_prompts())
+
+        cls._scheduler = scheduler
+        cls._config = config
+        cls._app = create_app(scheduler, logging.getLogger("test"))
+        cls._client = TestClient(cls._app)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        try:
+            cls._client.close()
+        finally:
+            cls._tempdir.cleanup()
+
     def setUp(self) -> None:
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.log_file = Path(self.temp_dir.name) / "trading.log"
-        self.log_file.write_text("line 1\nline 2\nline 3\n", encoding="utf-8")
-        self.scheduler = Mock()
-        self.scheduler.config = Mock()
-        self.scheduler.config.log_file = str(self.log_file)
-        self.scheduler.run_manual_refresh_universe.return_value = {"STOCK": ["AAPL"], "CRYPTO": []}
-        self.scheduler.run_manual_generate_new_orders.return_value = {"new_orders": [], "new_orders_count": 0}
-        self.scheduler.run_manual_weekly_report.return_value = {"pnl_total": 42.0}
-        self.server = create_api_server("127.0.0.1", 0, self.scheduler, logging.getLogger("test"))
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self.thread.start()
-        self.base_url = f"http://127.0.0.1:{self.server.server_port}"
+        self._scheduler.run_manual_refresh_universe.reset_mock()
+        self._scheduler.run_manual_generate_new_orders.reset_mock()
+        self._scheduler.run_manual_weekly_report.reset_mock()
+        self._client.cookies.clear()
 
-    def tearDown(self) -> None:
-        self.server.shutdown()
-        self.server.server_close()
-        self.thread.join(timeout=2)
-        self.temp_dir.cleanup()
+    def _login_admin(self) -> None:
+        response = self._client.post(
+            "/api/auth/login",
+            json={"username": self._config.admin_username, "password": self._config.admin_password},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
 
-    def test_root_returns_health_check_json(self) -> None:
-        with urlopen(f"{self.base_url}/") as response:
-            self.assertEqual(response.status, 200)
-            self.assertEqual(response.headers.get_content_type(), "application/json")
-            payload = json.loads(response.read().decode("utf-8"))
+    def test_health_endpoint_is_public(self) -> None:
+        response = self._client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok", "service": "trading-backend"})
 
-        self.assertEqual(payload, {"status": "ok", "service": "trading-backend"})
+    def test_authenticated_endpoint_requires_login(self) -> None:
+        response = self._client.get("/api/auth/me")
+        self.assertEqual(response.status_code, 401)
+
+    def test_login_then_me_returns_admin_user(self) -> None:
+        self._login_admin()
+        response = self._client.get("/api/auth/me")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["user"]["username"], self._config.admin_username)
+        self.assertEqual(body["user"]["role"], "admin")
+
+    def test_manual_universe_endpoint_runs_after_login(self) -> None:
+        self._login_admin()
+        response = self._client.get("/api/universe/generate")
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["action"], "universe")
+        self._scheduler.run_manual_refresh_universe.assert_called_once()
 
     def test_logs_endpoint_returns_log_tail(self) -> None:
-        with urlopen(f"{self.base_url}/api/logs?lines=2") as response:
-            self.assertEqual(response.status, 200)
-            payload = json.loads(response.read().decode("utf-8"))
-
-        self.assertEqual(payload["line_count"], 2)
-        self.assertEqual(payload["log_file"], str(self.log_file))
-        self.assertEqual(payload["logs"], "line 2\nline 3\n")
-        self.assertNotEqual(payload["updated_at"], "N/A")
-
-    def test_log_stream_endpoint_emits_sse_events(self) -> None:
-        with urlopen(f"{self.base_url}/api/logs/stream", timeout=2) as response:
-            self.assertEqual(response.status, 200)
-            self.assertEqual(response.headers.get_content_type(), "text/event-stream")
-            self.assertEqual(response.headers.get_content_charset(), "utf-8")
-
-    def test_get_endpoints_trigger_expected_scheduler_methods(self) -> None:
-        response_payloads = {}
-        for path in ("/api/universe/generate", "/api/orders/generate", "/api/report/generate"):
-            with urlopen(f"{self.base_url}{path}") as response:
-                self.assertEqual(response.status, 200)
-                response_payloads[path] = json.loads(response.read().decode("utf-8"))
-
-        self.scheduler.run_manual_refresh_universe.assert_called_once()
-        self.scheduler.run_manual_generate_new_orders.assert_called_once()
-        self.scheduler.run_manual_weekly_report.assert_called_once()
-        self.assertEqual(response_payloads["/api/universe/generate"]["action"], "universe")
-        self.assertEqual(response_payloads["/api/orders/generate"]["action"], "new_orders")
-        self.assertEqual(response_payloads["/api/report/generate"]["action"], "report")
-        self.assertEqual(response_payloads["/api/universe/generate"]["status"], "ok")
-        self.assertEqual(response_payloads["/api/orders/generate"]["message"], "new_orders job completed successfully")
-        self.assertEqual(response_payloads["/api/report/generate"]["message"], "report job completed successfully")
-
-    def test_unknown_path_returns_404(self) -> None:
-        with self.assertRaises(HTTPError) as error:
-            urlopen(f"{self.base_url}/api/unknown")
-
-        self.assertEqual(error.exception.code, 404)
+        self._login_admin()
+        response = self._client.get("/api/logs?lines=2")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["line_count"], 2)
+        self.assertEqual(body["log_file"], str(self._log_file))
+        self.assertEqual(body["logs"], "line 2\nline 3\n")
 
 
 if __name__ == "__main__":

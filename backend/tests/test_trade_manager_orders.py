@@ -9,21 +9,21 @@ from enum import Enum
 from types import ModuleType
 from unittest.mock import Mock
 
-alpaca_client_stub = ModuleType("alpaca_client")
+alpaca_client_stub = ModuleType("clients.alpaca_client")
 alpaca_client_stub.AlpacaClient = object
-sys.modules.setdefault("alpaca_client", alpaca_client_stub)
+sys.modules.setdefault("clients.alpaca_client", alpaca_client_stub)
 
-gpt_client_stub = ModuleType("gpt_client")
+gpt_client_stub = ModuleType("clients.gpt_client")
 gpt_client_stub.GPTClient = object
-sys.modules.setdefault("gpt_client", gpt_client_stub)
+sys.modules.setdefault("clients.gpt_client", gpt_client_stub)
 
 dotenv_stub = ModuleType("dotenv")
 dotenv_stub.load_dotenv = lambda: None
 sys.modules.setdefault("dotenv", dotenv_stub)
 
-from db import initialize_databases
-from trade_manager import TradeManager
-from utils import AppConfig
+from core.db import initialize_databases
+from core.utils import AppConfig
+from services.trade_manager import TradeManager
 
 
 def make_config(db_path: str) -> AppConfig:

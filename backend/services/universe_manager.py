@@ -9,9 +9,9 @@ from datetime import timedelta
 from statistics import fmean, pstdev
 from typing import Any
 
-from alpaca_client import AlpacaClient
-from gpt_client import GPTClient
-from utils import AppConfig, read_universe_file, utc_now, write_json_file, write_universe_file
+from clients.alpaca_client import AlpacaClient
+from clients.gpt_client import GPTClient
+from core.utils import AppConfig, read_universe_file, utc_now, write_json_file, write_universe_file
 
 
 class UniverseManager:
