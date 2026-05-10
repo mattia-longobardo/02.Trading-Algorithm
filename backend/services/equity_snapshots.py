@@ -33,7 +33,7 @@ def record_snapshot(
     """
 
     try:
-        equity = float(alpaca_client.get_available_cash())
+        equity = float(alpaca_client.get_account_equity())
     except Exception:
         logger.exception("equity snapshot: failed to read account balance")
         return None
@@ -78,15 +78,37 @@ def list_snapshots(
     if not rows:
         return []
 
-    bucket_fmt = "%Y-%m-%dT%H:00:00+00:00" if granularity == "hourly" else "%Y-%m-%d"
-    # Take the last value within each bucket — best snapshot of where the
-    # balance sat at the end of the period.
+    # Each granularity floors the timestamp to the start of its bucket so
+    # the last snapshot inside the bucket "wins" — a stable end-of-period
+    # value the chart can plot without averaging across noise.
+    norm = (granularity or "").strip().lower()
+    if norm in ("daily", "1d"):
+        floor_minutes = 24 * 60
+    elif norm == "4h":
+        floor_minutes = 4 * 60
+    elif norm in ("hourly", "1h"):
+        floor_minutes = 60
+    elif norm == "30m":
+        floor_minutes = 30
+    elif norm == "15m":
+        floor_minutes = 15
+    else:
+        floor_minutes = 60
+
     buckets: dict[str, dict[str, Any]] = {}
     for row in rows:
         recorded = parse_datetime(row["recorded_at"])
         if recorded is None:
             continue
-        key = recorded.strftime(bucket_fmt)
+        if floor_minutes >= 24 * 60:
+            bucket_dt = recorded.replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            total_min = recorded.hour * 60 + recorded.minute
+            floored = (total_min // floor_minutes) * floor_minutes
+            bucket_dt = recorded.replace(
+                hour=floored // 60, minute=floored % 60, second=0, microsecond=0
+            )
+        key = bucket_dt.strftime("%Y-%m-%dT%H:%M:00+00:00")
         buckets[key] = {
             "t": key,
             "equity": float(row["equity"]),

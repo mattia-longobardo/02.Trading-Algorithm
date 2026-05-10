@@ -128,7 +128,7 @@ class UniverseManager:
 
     def _get_crypto_candidates(self) -> list[str]:
         assets = self.alpaca_client.list_assets("CRYPTO")
-        quote_suffix = f"/{self.config.currency}"
+        quote_suffix = f"/{self.config.account_currency}"
         candidates = [
             asset.symbol
             for asset in assets
@@ -165,7 +165,7 @@ class UniverseManager:
 
     def _get_crypto_candidate_payload(self) -> list[dict[str, Any]]:
         assets = self.alpaca_client.list_assets("CRYPTO")
-        quote_suffix = f"/{self.config.currency}"
+        quote_suffix = f"/{self.config.account_currency}"
         payload = [
             self._asset_snapshot(asset)
             for asset in assets
@@ -215,7 +215,7 @@ class UniverseManager:
             normalized = self._normalize_symbol(symbol)
             candidates_to_try = [normalized]
             if "/" not in normalized:
-                candidates_to_try.insert(0, f"{normalized}/{self.config.currency}")
+                candidates_to_try.insert(0, f"{normalized}/{self.config.account_currency}")
             for candidate in candidates_to_try:
                 if candidate in valid_candidates and candidate not in selected:
                     selected.append(candidate)
