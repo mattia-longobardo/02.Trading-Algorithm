@@ -465,7 +465,7 @@ class GPTClient:
                 "direction": "LONG",
                 "web_search_required": True,
                 "no_etf": True,
-                "currency": self.config.currency,
+                "currency": self.config.account_currency,
                 "risk_tolerance": self.config.risk_tolerance,
                 "strategy_style": "medium_long_term_position_trading",
                 "target_holding_period_days": {
@@ -514,7 +514,7 @@ class GPTClient:
             "constraints": {
                 "direction": "LONG",
                 "web_search_required": True,
-                "currency": self.config.currency,
+                "currency": self.config.account_currency,
                 "risk_tolerance": self.config.risk_tolerance,
                 "category": category,
                 "max_new_trades_this_cycle": max_new_trades,
@@ -542,7 +542,7 @@ class GPTClient:
         payload = {
             "selection_rules": {
                 "category": category,
-                "currency": self.config.currency,
+                "currency": self.config.account_currency,
                 "risk_tolerance": self.config.risk_tolerance,
                 "strategy_style": "medium_long_term_position_trading",
                 "target_holding_period_days": {
@@ -577,7 +577,7 @@ class GPTClient:
                 "shortlist_size": shortlist_size,
                 "batch_number": batch_number,
                 "batch_count": batch_count,
-                "currency": self.config.currency,
+                "currency": self.config.account_currency,
                 "risk_tolerance": self.config.risk_tolerance,
                 "strategy_style": "medium_long_term_position_trading",
                 "target_holding_period_days": {
@@ -612,7 +612,7 @@ class GPTClient:
             "selection_rules": {
                 "category": category,
                 "required_count": required_count,
-                "currency": self.config.currency,
+                "currency": self.config.account_currency,
                 "risk_tolerance": self.config.risk_tolerance,
                 "strategy_style": "medium_long_term_position_trading",
                 "target_holding_period_days": {
@@ -639,7 +639,7 @@ class GPTClient:
             "selection_rules": {
                 "category": category,
                 "required_count": required_count,
-                "currency": self.config.currency,
+                "currency": self.config.account_currency,
                 "risk_tolerance": self.config.risk_tolerance,
                 "strategy_style": "medium_long_term_position_trading",
                 "target_holding_period_days": {
@@ -672,7 +672,7 @@ class GPTClient:
             "constraints": {
                 "direction": "LONG",
                 "web_search_required": True,
-                "currency": self.config.currency,
+                "currency": self.config.account_currency,
                 "risk_tolerance": self.config.risk_tolerance,
                 "strategy_style": "medium_long_term_position_trading",
                 "pending_days_threshold": 7,
@@ -699,7 +699,7 @@ class GPTClient:
             "constraints": {
                 "direction": "LONG",
                 "web_search_required": True,
-                "currency": self.config.currency,
+                "currency": self.config.account_currency,
                 "risk_tolerance": self.config.risk_tolerance,
                 "strategy_style": "medium_long_term_position_trading",
                 "review_frequency": "six_times_per_day",

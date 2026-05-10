@@ -19,6 +19,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TimeframeSelector, type Timeframe } from "@/components/timeframe-selector";
+import { EquityBalanceChart } from "@/components/equity-balance-chart";
 import { api } from "@/lib/api";
 import { formatCurrency, formatDateTime, formatNumber, formatPercent } from "@/lib/format";
 import type {
@@ -43,13 +44,6 @@ export default function DashboardPage() {
   const equity = useQuery({
     queryKey: ["equity", timeframe],
     queryFn: () => api.get<{ points: EquityPoint[] }>(`/api/equity-curve?window=${timeframe}`),
-  });
-  const accountBalance = useQuery({
-    queryKey: ["account-balance", timeframe],
-    queryFn: () =>
-      api.get<{ points: EquityPoint[]; currency: string }>(
-        `/api/account-equity-curve?window=${timeframe}&granularity=hourly`
-      ),
   });
   const fxRate = useQuery({
     queryKey: ["fx-rate"],
@@ -159,51 +153,7 @@ export default function DashboardPage() {
         <Kpi title="# Pending" value={m ? formatNumber(m.n_pending, { maximumFractionDigits: 0 }) : "—"} />
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Andamento del saldo totale</CardTitle>
-          <span className="text-xs text-(--color-muted)">
-            Snapshot ogni 15&nbsp;min · valuta {accountBalance.data?.currency ?? m?.currency ?? "—"}
-          </span>
-        </CardHeader>
-        <CardContent className="h-72">
-          {(accountBalance.data?.points.length ?? 0) === 0 ? (
-            <p className="text-sm text-(--color-muted)">
-              Nessuno snapshot ancora registrato. Il primo arriverà entro 15 minuti
-              dall&apos;avvio del bot.
-            </p>
-          ) : (
-            <ResponsiveContainer>
-              <LineChart data={accountBalance.data?.points ?? []}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-                <XAxis dataKey="t" stroke="#94a3b8" fontSize={12} tickMargin={8} />
-                <YAxis
-                  stroke="#94a3b8"
-                  fontSize={12}
-                  tickFormatter={(v) =>
-                    formatCurrency(v, accountBalance.data?.currency ?? m?.currency ?? "EUR")
-                  }
-                  width={90}
-                  domain={["auto", "auto"]}
-                />
-                <Tooltip
-                  contentStyle={{ background: "#0f172a", border: "1px solid #1f2937" }}
-                  formatter={(v: number) =>
-                    formatCurrency(v, accountBalance.data?.currency ?? m?.currency ?? "EUR")
-                  }
-                />
-                <Line
-                  type="monotone"
-                  dataKey="equity"
-                  stroke="#38bdf8"
-                  strokeWidth={2}
-                  dot={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
-        </CardContent>
-      </Card>
+      <EquityBalanceChart fallbackCurrency={m?.currency ?? "EUR"} />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
@@ -246,15 +196,34 @@ export default function DashboardPage() {
                   innerRadius={50}
                   outerRadius={90}
                   paddingAngle={2}
-                  label={(entry: AllocationCategory) => entry.category}
+                  label={(entry: { category: string; percent?: number }) =>
+                    `${entry.category} ${((entry.percent ?? 0) * 100).toFixed(1)}%`
+                  }
                 >
                   {(allocation.data?.by_category ?? []).map((_, idx) => (
                     <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
                   ))}
                 </Pie>
                 <Tooltip
-                  contentStyle={{ background: "#0f172a", border: "1px solid #1f2937" }}
-                  formatter={(v: number) => formatCurrency(v)}
+                  contentStyle={{
+                    background: "#0f172a",
+                    border: "1px solid #1f2937",
+                    borderRadius: 8,
+                    color: "#e2e8f0",
+                  }}
+                  labelStyle={{ color: "#94a3b8" }}
+                  itemStyle={{ color: "#e2e8f0" }}
+                  formatter={(v: number, _name, item) => {
+                    const total = (allocation.data?.by_category ?? []).reduce(
+                      (sum, c) => sum + c.value,
+                      0
+                    );
+                    const pct = total > 0 ? (v / total) * 100 : 0;
+                    return [
+                      `${formatCurrency(v, m?.currency ?? "EUR")} (${pct.toFixed(1)}%)`,
+                      (item as { name?: string })?.name ?? "",
+                    ];
+                  }}
                 />
               </PieChart>
             </ResponsiveContainer>

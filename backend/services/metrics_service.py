@@ -203,7 +203,7 @@ class MetricsService:
         if self.alpaca_client is None:
             return 0.0
         try:
-            return float(self.alpaca_client.get_available_cash())
+            return float(self.alpaca_client.get_account_equity())
         except Exception:
             self.logger.exception("Failed to fetch account equity")
             return 0.0

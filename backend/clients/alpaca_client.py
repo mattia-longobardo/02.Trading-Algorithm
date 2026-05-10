@@ -55,6 +55,25 @@ class AlpacaClient:
             return min(non_marginable_buying_power, cash) if cash > 0 else non_marginable_buying_power
         return cash
 
+    def get_account_equity(self) -> float:
+        """Total account equity: cash plus marked-to-market open positions."""
+
+        account = self.get_account()
+        for attr in ("equity", "portfolio_value"):
+            raw = getattr(account, attr, None)
+            if raw is None:
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+        cash = float(getattr(account, "cash", 0.0) or 0.0)
+        long_mv = float(getattr(account, "long_market_value", 0.0) or 0.0)
+        short_mv = float(getattr(account, "short_market_value", 0.0) or 0.0)
+        return cash + long_mv + short_mv
+
     @retry()
     def list_assets(self, asset_class: str) -> list[Any]:
         request = GetAssetsRequest(asset_class=AssetClass[asset_class])
