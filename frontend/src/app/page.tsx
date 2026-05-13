@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -21,21 +21,72 @@ import { Badge } from "@/components/ui/badge";
 import { TimeframeSelector, type Timeframe } from "@/components/timeframe-selector";
 import { EquityBalanceChart } from "@/components/equity-balance-chart";
 import { api } from "@/lib/api";
-import { formatCurrency, formatDateTime, formatNumber, formatPercent } from "@/lib/format";
+import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
+import { useProviders } from "@/lib/use-providers";
 import type {
   AllocationCategory,
+  AllocationProvider,
   AllocationSymbol,
   EquityPoint,
   Metrics,
   PnlBySymbolRow,
+  Provider,
   ReturnsBin,
-  Trade,
 } from "@/lib/types";
+import { PROVIDER_LABELS } from "@/lib/types";
 
 const PIE_COLORS = ["#22c55e", "#38bdf8", "#a78bfa", "#f59e0b", "#f43f5e", "#facc15", "#34d399"];
 
+// Query keys the dashboard reads. We refresh them as a group on a single
+// wall-clock-aligned tick (see ``useDashboardAutoRefresh`` below).
+const DASHBOARD_QUERY_KEYS = [
+  "metrics",
+  "equity",
+  "allocation",
+  "pnl-by-symbol",
+  "returns-distribution",
+  "fx-rate",
+  "account-balance",
+] as const;
+
+// The backend's ``monitor_trades`` cron job fires every minute at ``:XX:00``
+// UTC and refreshes broker prices / PnL in SQLite. We want the dashboard to
+// re-fetch *after* that job completes so the new market data is visible —
+// so we align the client tick to ``:XX:30``: 30 s past the cron mark gives
+// the job enough headroom while keeping the lag small.
+const REFRESH_OFFSET_SECONDS = 30;
+
+function useDashboardAutoRefresh(): Date | null {
+  const qc = useQueryClient();
+  const [lastTick, setLastTick] = useState<Date | null>(null);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    function scheduleNext() {
+      const now = new Date();
+      const next = new Date(now);
+      next.setSeconds(REFRESH_OFFSET_SECONDS, 0);
+      if (next <= now) next.setMinutes(next.getMinutes() + 1);
+      const delayMs = next.getTime() - now.getTime();
+      timer = setTimeout(() => {
+        for (const key of DASHBOARD_QUERY_KEYS) {
+          qc.invalidateQueries({ queryKey: [key] });
+        }
+        setLastTick(new Date());
+        scheduleNext();
+      }, delayMs);
+    }
+    scheduleNext();
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [qc]);
+  return lastTick;
+}
+
 export default function DashboardPage() {
   const [timeframe, setTimeframe] = useState<Timeframe>("3M");
+  const providers = useProviders();
+  const lastAutoRefresh = useDashboardAutoRefresh();
 
   const metrics = useQuery({
     queryKey: ["metrics", timeframe],
@@ -64,33 +115,64 @@ export default function DashboardPage() {
   const allocation = useQuery({
     queryKey: ["allocation"],
     queryFn: () =>
-      api.get<{ by_category: AllocationCategory[]; by_symbol: AllocationSymbol[] }>("/api/allocation"),
+      api.get<{
+        by_category: AllocationCategory[];
+        by_symbol: AllocationSymbol[];
+        by_provider?: AllocationProvider[];
+      }>("/api/allocation"),
   });
   const distribution = useQuery({
     queryKey: ["returns-distribution", timeframe],
     queryFn: () =>
       api.get<{ bins: ReturnsBin[] }>(`/api/returns-distribution?window=${timeframe}&bins=12`),
   });
-  const trades = useQuery({
-    queryKey: ["trades", "dashboard", timeframe],
-    queryFn: () =>
-      api.get<{ items: Trade[]; total: number; page: number; page_size: number }>(
-        `/api/trades?page=1&page_size=25&sort=-created_at`
-      ),
-  });
 
   const m = metrics.data;
 
   const distributionData = useMemo(() => {
     if (!distribution.data) return [];
+    const fmt = (v: number) =>
+      formatNumber(v, { maximumFractionDigits: 1, minimumFractionDigits: 1 });
     return distribution.data.bins.map((b) => ({
-      label: `${formatNumber(b.lo, { maximumFractionDigits: 1 })}…${formatNumber(b.hi, {
-        maximumFractionDigits: 1,
-      })}%`,
+      // Asse X: usiamo solo l'estremo superiore del bin, così le etichette
+      // restano leggibili anche con valori negativi. Il range completo finisce
+      // nella label del tooltip ("rangeLabel").
+      label: `${fmt(b.hi)}%`,
+      rangeLabel: `${fmt(b.lo)}% / ${fmt(b.hi)}%`,
       count: b.count,
       negative: b.hi <= 0,
     }));
   }, [distribution.data]);
+
+  if (!providers.isLoading && providers.active.length === 0) {
+    return (
+      <section className="space-y-6">
+        <header>
+          <h1 className="text-3xl font-semibold">Dashboard</h1>
+          <p className="text-sm text-(--color-muted)">
+            Nessun broker configurato. Aggiungi le credenziali Alpaca e/o Binance nel{" "}
+            <code>.env</code> del backend e riavvia per vedere KPI, equity curve e allocazione.
+          </p>
+        </header>
+        <Card>
+          <CardHeader>
+            <CardTitle>Onboarding</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm text-(--color-muted)">
+            <p>
+              Le pagine Universe, Prompt e Settings ti permettono di configurare i moduli broker
+              non appena le credenziali sono presenti.
+            </p>
+            <p>
+              Una volta avviato almeno un broker, questa dashboard aggregherà i valori (KPI,
+              equity curve, allocazione, P&amp;L) di tutti i provider attivi nella valuta di
+              display configurata.
+            </p>
+          </CardContent>
+        </Card>
+      </section>
+    );
+  }
 
   return (
     <section className="space-y-6">
@@ -99,7 +181,27 @@ export default function DashboardPage() {
           <h1 className="text-3xl font-semibold">Dashboard</h1>
           <p className="text-sm text-(--color-muted)">
             Performance del bot — i KPI ricalcolano sull&apos;intervallo selezionato.
+            I dati si aggiornano una volta al minuto, ~30 s dopo il tick di
+            mercato del backend.
           </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-(--color-muted)">
+            Aggregazione su:
+            {providers.active.map((p) => (
+              <Badge key={p} variant="open">
+                {PROVIDER_LABELS[p]}
+              </Badge>
+            ))}
+            {lastAutoRefresh && (
+              <span className="ml-2">
+                · ultimo aggiornamento{" "}
+                {lastAutoRefresh.toLocaleTimeString(undefined, {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                })}
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {fxRate.data && fxRate.data.from !== fxRate.data.to && (
@@ -186,50 +288,79 @@ export default function DashboardPage() {
           <CardHeader>
             <CardTitle>Allocazione aperta per categoria</CardTitle>
           </CardHeader>
-          <CardContent className="h-72">
-            <ResponsiveContainer>
-              <PieChart>
-                <Pie
-                  data={allocation.data?.by_category ?? []}
-                  dataKey="value"
-                  nameKey="category"
-                  innerRadius={50}
-                  outerRadius={90}
-                  paddingAngle={2}
-                  label={(entry: { category: string; percent?: number }) =>
-                    `${entry.category} ${((entry.percent ?? 0) * 100).toFixed(1)}%`
-                  }
-                >
-                  {(allocation.data?.by_category ?? []).map((_, idx) => (
-                    <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{
-                    background: "#0f172a",
-                    border: "1px solid #1f2937",
-                    borderRadius: 8,
-                    color: "#e2e8f0",
-                  }}
-                  labelStyle={{ color: "#94a3b8" }}
-                  itemStyle={{ color: "#e2e8f0" }}
-                  formatter={(v: number, _name, item) => {
-                    const total = (allocation.data?.by_category ?? []).reduce(
-                      (sum, c) => sum + c.value,
-                      0
-                    );
-                    const pct = total > 0 ? (v / total) * 100 : 0;
-                    return [
-                      `${formatCurrency(v, m?.currency ?? "EUR")} (${pct.toFixed(1)}%)`,
-                      (item as { name?: string })?.name ?? "",
-                    ];
-                  }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+          <CardContent className="flex h-72 flex-col">
+            <div className="flex-1">
+              <ResponsiveContainer>
+                <PieChart>
+                  <Pie
+                    data={allocation.data?.by_category ?? []}
+                    dataKey="value"
+                    nameKey="category"
+                    innerRadius={50}
+                    outerRadius={90}
+                    paddingAngle={2}
+                    label={(entry: { category: string; percent?: number }) =>
+                      `${entry.category} ${((entry.percent ?? 0) * 100).toFixed(1)}%`
+                    }
+                  >
+                    {(allocation.data?.by_category ?? []).map((_, idx) => (
+                      <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{
+                      background: "#0f172a",
+                      border: "1px solid #1f2937",
+                      borderRadius: 8,
+                      color: "#e2e8f0",
+                    }}
+                    labelStyle={{ color: "#94a3b8" }}
+                    itemStyle={{ color: "#e2e8f0" }}
+                    formatter={(v: number, _name, item) => {
+                      const total = (allocation.data?.by_category ?? []).reduce(
+                        (sum, c) => sum + c.value,
+                        0
+                      );
+                      const pct = total > 0 ? (v / total) * 100 : 0;
+                      return [
+                        `${formatCurrency(v, m?.currency ?? "EUR")} (${pct.toFixed(1)}%)`,
+                        (item as { name?: string })?.name ?? "",
+                      ];
+                    }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <AllocationLegend
+              items={allocation.data?.by_category ?? []}
+              currency={m?.currency ?? "EUR"}
+            />
           </CardContent>
         </Card>
       </div>
+
+      {providers.active.length > 1 && (allocation.data?.by_provider?.length ?? 0) > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Allocazione per provider</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+            {(allocation.data?.by_provider ?? []).map((row) => (
+              <div
+                key={row.provider}
+                className="rounded-lg border border-(--color-line) bg-slate-950/40 p-4"
+              >
+                <p className="text-xs uppercase text-(--color-muted)">
+                  {PROVIDER_LABELS[row.provider as Provider] ?? row.provider}
+                </p>
+                <p className="mt-1 text-xl font-semibold">
+                  {formatCurrency(row.value, m?.currency ?? "EUR")}
+                </p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
@@ -244,9 +375,13 @@ export default function DashboardPage() {
                 <YAxis stroke="#94a3b8" fontSize={12} tickFormatter={(v) => formatCurrency(v, m?.currency ?? "EUR")} width={80} />
                 <Tooltip
                   contentStyle={{ background: "#0f172a", border: "1px solid #1f2937" }}
-                  formatter={(v: number) => formatCurrency(v, m?.currency ?? "EUR")}
+                  formatter={(v: number) => [formatCurrency(v, m?.currency ?? "EUR"), "PnL"]}
                 />
-                <Bar dataKey="pnl_abs" fill="#22c55e" />
+                <Bar dataKey="pnl_abs" name="PnL">
+                  {(pnlBySymbol.data?.items ?? []).map((entry, idx) => (
+                    <Cell key={idx} fill={entry.pnl_abs < 0 ? "#f43f5e" : "#22c55e"} />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -258,11 +393,35 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent className="h-72">
             <ResponsiveContainer>
-              <BarChart data={distributionData}>
+              <BarChart data={distributionData} margin={{ top: 10, right: 10, left: 0, bottom: 24 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-                <XAxis dataKey="label" stroke="#94a3b8" fontSize={11} />
+                <XAxis
+                  dataKey="label"
+                  stroke="#94a3b8"
+                  fontSize={11}
+                  interval={0}
+                  angle={-35}
+                  textAnchor="end"
+                  height={48}
+                  tickMargin={8}
+                />
                 <YAxis stroke="#94a3b8" fontSize={12} allowDecimals={false} />
-                <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1f2937" }} />
+                <Tooltip
+                  cursor={{ fill: "rgba(148, 163, 184, 0.08)" }}
+                  contentStyle={{
+                    background: "#0f172a",
+                    border: "1px solid #1f2937",
+                    borderRadius: 8,
+                    color: "#e2e8f0",
+                  }}
+                  labelStyle={{ color: "#94a3b8", marginBottom: 4 }}
+                  itemStyle={{ color: "#e2e8f0" }}
+                  labelFormatter={(_label, payload) => {
+                    const p = payload?.[0]?.payload as { rangeLabel?: string } | undefined;
+                    return p?.rangeLabel ?? "";
+                  }}
+                  formatter={(v: number) => [v, "# Trade"]}
+                />
                 <Bar dataKey="count">
                   {distributionData.map((entry, idx) => (
                     <Cell key={idx} fill={entry.negative ? "#f43f5e" : "#22c55e"} />
@@ -274,20 +433,37 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Ultimi trade</CardTitle>
-          <span className="text-xs text-(--color-muted)">Apri la console per modificare i parametri.</span>
-        </CardHeader>
-        <CardContent>
-          <TradesTable
-            items={trades.data?.items ?? []}
-            loading={trades.isLoading}
-            currency={m?.currency ?? "EUR"}
-          />
-        </CardContent>
-      </Card>
     </section>
+  );
+}
+
+function AllocationLegend({
+  items,
+  currency,
+}: {
+  items: AllocationCategory[];
+  currency: string;
+}) {
+  if (items.length === 0) return null;
+  const total = items.reduce((sum, c) => sum + c.value, 0);
+  return (
+    <ul className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+      {items.map((item, idx) => {
+        const pct = total > 0 ? (item.value / total) * 100 : 0;
+        return (
+          <li key={item.category} className="flex items-center gap-2 truncate">
+            <span
+              className="inline-block size-2.5 shrink-0 rounded-full"
+              style={{ background: PIE_COLORS[idx % PIE_COLORS.length] }}
+            />
+            <span className="truncate text-(--color-text)">{item.category}</span>
+            <span className="ml-auto text-(--color-muted)">
+              {formatCurrency(item.value, currency)} · {pct.toFixed(1)}%
+            </span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -317,87 +493,3 @@ function Kpi({
   );
 }
 
-function TradesTable({
-  items,
-  loading,
-  currency,
-}: {
-  items: Trade[];
-  loading: boolean;
-  currency: string;
-}) {
-  if (loading) {
-    return <p className="text-sm text-(--color-muted)">Caricamento…</p>;
-  }
-  if (items.length === 0) {
-    return <p className="text-sm text-(--color-muted)">Nessun trade nel periodo selezionato.</p>;
-  }
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[860px] border-separate border-spacing-y-1 text-sm">
-        <thead>
-          <tr className="text-left text-xs uppercase text-(--color-muted)">
-            <th className="px-3 py-2">Simbolo</th>
-            <th className="px-3 py-2">Stato</th>
-            <th className="px-3 py-2">Cat.</th>
-            <th className="px-3 py-2 text-right">Entry</th>
-            <th className="px-3 py-2 text-right">Qty</th>
-            <th className="px-3 py-2 text-right">TP</th>
-            <th className="px-3 py-2 text-right">SL</th>
-            <th className="px-3 py-2 text-right">Prezzo</th>
-            <th className="px-3 py-2 text-right">PnL</th>
-            <th className="px-3 py-2">Aperto</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((t) => (
-            <tr
-              key={t.id}
-              className="bg-slate-950/40 [&>td]:border-y [&>td]:border-(--color-line)"
-            >
-              <td className="px-3 py-2 font-medium first:rounded-l-lg">{t.symbol}</td>
-              <td className="px-3 py-2">
-                <Badge variant={statusVariant(t.status)}>{t.status}</Badge>
-              </td>
-              <td className="px-3 py-2 text-(--color-muted)">{t.category}</td>
-              <td className="px-3 py-2 text-right">{formatNumber(t.entry_price)}</td>
-              <td className="px-3 py-2 text-right">{formatNumber(t.quantity)}</td>
-              <td className="px-3 py-2 text-right">{formatNumber(t.take_profit)}</td>
-              <td className="px-3 py-2 text-right">{formatNumber(t.stop_loss)}</td>
-              <td className="px-3 py-2 text-right">{formatNumber(t.current_price)}</td>
-              <td
-                className={`px-3 py-2 text-right ${pnlClass(t.realized_pnl + t.unrealized_pnl)}`}
-              >
-                {formatCurrency(t.realized_pnl + t.unrealized_pnl, currency)}
-              </td>
-              <td className="px-3 py-2 text-(--color-muted) last:rounded-r-lg">
-                {formatDateTime(t.open_timestamp ?? t.created_at)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function statusVariant(status: string): "open" | "pending" | "closed" | "cancelled" | "default" {
-  switch (status) {
-    case "OPEN":
-      return "open";
-    case "PENDING":
-      return "pending";
-    case "CLOSED":
-      return "closed";
-    case "CANCELLED":
-      return "cancelled";
-    default:
-      return "default";
-  }
-}
-
-function pnlClass(value: number): string {
-  if (value > 0) return "text-emerald-400";
-  if (value < 0) return "text-rose-400";
-  return "text-(--color-text)";
-}

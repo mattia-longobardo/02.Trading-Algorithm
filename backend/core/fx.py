@@ -55,8 +55,17 @@ _cache: dict[tuple[str, str], _CachedRate] = {}
 _cache_lock = threading.Lock()
 
 
+_USD_PEGGED_STABLES: frozenset[str] = frozenset({"USDT", "USDC", "BUSD", "DAI", "TUSD", "USD"})
+
+
 def _normalize(currency: str) -> str:
-    return (currency or "").strip().upper() or "USD"
+    raw = (currency or "").strip().upper() or "USD"
+    # Treat the major USD-pegged stablecoins as USD for FX conversion. The
+    # external rate providers don't quote stablecoin pairs and the parity
+    # holds within a few bps in practice — close enough for the dashboard.
+    if raw in _USD_PEGGED_STABLES:
+        return "USD"
+    return raw
 
 
 # -- providers --------------------------------------------------------------

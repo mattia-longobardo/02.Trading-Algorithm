@@ -1,22 +1,48 @@
-"""Market data download, persistence, and cleanup."""
+"""Market data download, persistence, and cleanup.
+
+Multi-provider aware: receives a registry of broker clients keyed by provider
+name (``alpaca``, ``binance``) and dispatches OHLCV fetches to whichever
+broker owns the symbol.
+"""
 
 from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from typing import Any, Mapping
 
-from clients.alpaca_client import AlpacaClient
 from core.db import db_cursor, ensure_market_symbol_table, fetch_all, get_market_symbol_table, list_market_symbols
 from core.utils import AppConfig, market_data_start, parse_datetime, retry, utc_now
 
 
 class DataManager:
-    """Maintain OHLCV history in SQLite."""
+    """Maintain OHLCV history in SQLite, dispatching by trading provider."""
 
-    def __init__(self, config: AppConfig, logger: logging.Logger, alpaca_client: AlpacaClient) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        logger: logging.Logger,
+        broker_clients: Mapping[str, Any] | Any | None = None,
+        *,
+        alpaca_client: Any | None = None,
+    ) -> None:
         self.config = config
         self.logger = logger.getChild("data_manager")
-        self.alpaca_client = alpaca_client
+        if isinstance(broker_clients, Mapping):
+            self._brokers: dict[str, Any] = dict(broker_clients)
+        elif broker_clients is not None:
+            self._brokers = {"alpaca": broker_clients}
+        else:
+            self._brokers = {}
+        if alpaca_client is not None:
+            self._brokers["alpaca"] = alpaca_client
+
+    @property
+    def alpaca_client(self) -> Any | None:
+        return self._brokers.get("alpaca")
+
+    def broker(self, provider: str) -> Any | None:
+        return self._brokers.get(provider)
 
     def get_known_symbols(self) -> list[str]:
         rows = list_market_symbols(self.config.db_market_data)
@@ -53,8 +79,12 @@ class DataManager:
         return row["timestamp"] if row else None
 
     @retry()
-    def update_symbol(self, symbol: str, category: str) -> int:
+    def update_symbol(self, symbol: str, category: str, provider: str = "alpaca") -> int:
         normalized_symbol = str(symbol).upper().strip()
+        broker = self.broker(provider)
+        if broker is None:
+            self.logger.debug("No broker registered for provider %s; skipping %s", provider, symbol)
+            return 0
         last_timestamp = self.get_last_timestamp(normalized_symbol)
         first_download = last_timestamp is None
         start = market_data_start(first_download)
@@ -64,7 +94,7 @@ class DataManager:
             self.cleanup_old_records(normalized_symbol)
             return 0
 
-        rows = self.alpaca_client.get_bars(symbol=normalized_symbol, category=category, start=start)
+        rows = broker.get_bars(symbol=normalized_symbol, category=category, start=start)
         inserted = 0
         if rows:
             with db_cursor(self.config.db_market_data) as cursor:
@@ -86,7 +116,12 @@ class DataManager:
                     )
                     inserted += cursor.rowcount
         self.cleanup_old_records(normalized_symbol)
-        self.logger.debug("Updated %s with %s new bars", normalized_symbol, inserted)
+        self.logger.debug(
+            "Updated %s with %s new bars from %s",
+            normalized_symbol,
+            inserted,
+            provider,
+        )
         return inserted
 
     def cleanup_old_records(self, symbol: str | None = None) -> None:
@@ -99,9 +134,29 @@ class DataManager:
             with db_cursor(self.config.db_market_data) as cursor:
                 cursor.execute(f'DELETE FROM "{row["table_name"]}" WHERE timestamp < ?', (cutoff,))
 
-    def update_symbols(self, symbol_categories: dict[str, str]) -> None:
-        for symbol, category in symbol_categories.items():
+    def update_symbols(self, symbol_categories: dict[str, str | tuple[str, str] | dict[str, str]]) -> None:
+        """Bulk update OHLCV for a set of monitored symbols.
+
+        ``symbol_categories`` may map ``symbol -> category`` (legacy single-broker
+        shape, defaults to Alpaca) or ``symbol -> {category, provider}`` /
+        ``symbol -> (category, provider)`` for the multi-provider case.
+        """
+
+        for symbol, value in symbol_categories.items():
+            category, provider = self._unpack_value(value)
             try:
-                self.update_symbol(symbol, category)
+                self.update_symbol(symbol, category, provider)
             except Exception:
-                self.logger.exception("Market data update failed for %s", symbol)
+                self.logger.exception(
+                    "Market data update failed for %s (%s/%s)", symbol, provider, category
+                )
+
+    @staticmethod
+    def _unpack_value(value: Any) -> tuple[str, str]:
+        if isinstance(value, tuple) and len(value) == 2:
+            return str(value[0]).upper(), str(value[1]).lower()
+        if isinstance(value, dict):
+            category = str(value.get("category") or "CRYPTO").upper()
+            provider = str(value.get("provider") or "alpaca").lower()
+            return category, provider
+        return str(value).upper(), "alpaca"

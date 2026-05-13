@@ -15,6 +15,7 @@ the contract documented in the project spec.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import threading
@@ -37,10 +38,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from clients.alpaca_client import AlpacaClient
 from clients.gpt_client import get_default_prompts
 from core import app_db, auth as auth_lib, fx, prompt_store
 from core.utils import (
+    ALL_PROVIDERS,
+    PROVIDER_ALPACA,
+    PROVIDER_BINANCE,
     SETTINGS_OVERRIDABLE_KEYS,
     SETTINGS_RESTART_REQUIRED_KEYS,
     AppConfig,
@@ -48,7 +51,7 @@ from core.utils import (
     isoformat_utc,
     utc_now,
 )
-from services.equity_snapshots import equity_curve_for_api, record_snapshot
+from services.equity_snapshots import equity_curve_for_api, record_snapshots_all
 from services.metrics_service import MetricsService, parse_named_window, parse_window
 from services.universe_admin import (
     UniverseValidationError,
@@ -72,6 +75,7 @@ from services.scheduler import JobExecutionLockedError, TradingScheduler
 from services.trade_admin import (
     EDITABLE_TRADE_FIELDS,
     TradeValidationError,
+    manual_close_or_cancel,
     update_trade,
 )
 
@@ -134,6 +138,7 @@ class TradePatchPayload(BaseModel):
     trailing_take_profit_activation_pct: float | None = None
     stop_loss: float | None = None
     trailing_stop_distance: float | None = None
+    high_water_mark: float | None = None
 
 
 class PromptSavePayload(BaseModel):
@@ -164,6 +169,7 @@ class ReportPatchPayload(BaseModel):
 class UniverseSymbolPayload(BaseModel):
     category: str
     symbol: str
+    provider: str | None = None
 
 
 # ----- error helper --------------------------------------------------------
@@ -183,11 +189,33 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
     config: AppConfig = scheduler.config
     api_logger = logger.getChild("api")
 
-    metrics = MetricsService(
-        config,
-        api_logger,
-        alpaca_client=getattr(scheduler.trade_manager, "alpaca_client", None),
-    )
+    brokers: dict[str, Any] = dict(getattr(scheduler.trade_manager, "brokers", {}) or {})
+    metrics = MetricsService(config, api_logger, broker_clients=brokers)
+
+    def _resolve_brokers() -> dict[str, Any]:
+        # The scheduler holds the live broker registry; resolve it lazily so
+        # add/remove of providers via settings (future) can be picked up.
+        return dict(getattr(scheduler.trade_manager, "brokers", {}) or {})
+
+    def _active_provider_descriptors() -> list[dict[str, Any]]:
+        live = _resolve_brokers()
+        out: list[dict[str, Any]] = []
+        for provider in ALL_PROVIDERS:
+            broker = live.get(provider)
+            if broker is None:
+                continue
+            account_currency = config.provider_account_currency(provider)
+            descriptor: dict[str, Any] = {
+                "provider": provider,
+                "active": True,
+                "account_currency": account_currency,
+                "display_currency": config.currency,
+                "categories": ["STOCK", "CRYPTO"] if provider == PROVIDER_ALPACA else ["CRYPTO"],
+            }
+            if provider == PROVIDER_BINANCE:
+                descriptor["key_type"] = getattr(broker, "key_type", "unknown")
+            out.append(descriptor)
+        return out
 
     app = FastAPI(title="Trading Backend", version="2.0.0")
 
@@ -266,6 +294,21 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
     @app.get("/")
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "trading-backend"}
+
+    @app.get("/api/providers")
+    def list_providers(
+        _user: auth_lib.AuthenticatedUser = Depends(get_current_user),
+    ) -> dict[str, Any]:
+        """Active broker providers detected at startup.
+
+        Frontend uses this to decide which surfaces (universe tab, prompts
+        tab, settings card) to render. Inactive providers are simply omitted.
+        """
+
+        return {
+            "active": [entry["provider"] for entry in _active_provider_descriptors()],
+            "providers": _active_provider_descriptors(),
+        }
 
     # ----- auth ----------------------------------------------------------
 
@@ -502,6 +545,30 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
         )
         return {"trade": metrics.get_trade(trade_id) or after}
 
+    @app.post("/api/trades/{trade_id}/close")
+    def close_trade(
+        trade_id: int,
+        user: auth_lib.AuthenticatedUser = Depends(get_current_user),
+    ) -> dict[str, Any]:
+        try:
+            before, after = manual_close_or_cancel(scheduler.trade_manager, trade_id)
+        except TradeValidationError as exc:
+            raise _error(HTTPStatus.BAD_REQUEST, "invalid_trade_close", str(exc)) from exc
+        action = "cancel" if str(before.get("status", "")).upper() == "PENDING" else "close"
+        _audit(
+            user,
+            entity="trade",
+            entity_id=trade_id,
+            action=action,
+            before={"status": before.get("status"), "close_reason": before.get("close_reason")},
+            after={
+                "status": after.get("status"),
+                "close_reason": after.get("close_reason"),
+                "pending_close_reason": after.get("pending_close_reason"),
+            },
+        )
+        return {"trade": metrics.get_trade(trade_id) or after}
+
     # ----- metrics & charts ---------------------------------------------
 
     @app.get("/api/metrics")
@@ -561,6 +628,7 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
         from_iso: str | None = Query(default=None, alias="from"),
         to_iso: str | None = Query(default=None, alias="to"),
         granularity: str = Query(default="hourly"),
+        provider: str | None = Query(default=None),
     ) -> dict[str, Any]:
         if window:
             from_dt, to_dt = parse_named_window(window)
@@ -572,21 +640,29 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
             to_dt=to_dt,
             granularity=granularity,
             target_currency=config.currency,
+            provider=provider,
         )
 
     @app.post("/api/account-equity-curve/snapshot")
     def force_equity_snapshot(
         admin: auth_lib.AuthenticatedUser = Depends(require_admin),
     ) -> dict[str, Any]:
-        snapshot = record_snapshot(config, scheduler.trade_manager.alpaca_client, api_logger)
-        if snapshot is None:
+        live_brokers = _resolve_brokers()
+        if not live_brokers:
+            raise _error(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                "no_provider_configured",
+                "No broker is configured; cannot snapshot equity",
+            )
+        snapshots = record_snapshots_all(config, live_brokers, api_logger)
+        if not any(snapshots.values()):
             raise _error(
                 HTTPStatus.SERVICE_UNAVAILABLE,
                 "snapshot_failed",
-                "Could not read account equity from Alpaca",
+                "Could not read account equity from any configured broker",
             )
         _audit(admin, entity="equity_snapshot", entity_id=None, action="manual_snapshot")
-        return snapshot
+        return {"snapshots": snapshots}
 
     @app.get("/api/returns-distribution")
     def get_returns_distribution(
@@ -647,6 +723,7 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
     @app.get("/api/reports/{report_id}/file")
     def get_report_file(
         report_id: int,
+        download: bool = Query(default=False),
         _user: auth_lib.AuthenticatedUser = Depends(get_current_user),
     ) -> FileResponse:
         row = get_report(config.db_app, report_id)
@@ -656,7 +733,16 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
         if path is None:
             raise _error(HTTPStatus.NOT_FOUND, "file_missing", "Report file missing on disk")
         media_type = "application/pdf" if row["format"] == "pdf" else "application/json"
-        return FileResponse(path, media_type=media_type, filename=str(row["filename"]))
+        # Default to ``inline`` so the frontend's <iframe> preview renders the
+        # PDF instead of triggering a download. Pass ``?download=true`` when
+        # the user clicks the explicit download button to force the
+        # ``attachment`` disposition.
+        return FileResponse(
+            path,
+            media_type=media_type,
+            filename=str(row["filename"]),
+            content_disposition_type="attachment" if download else "inline",
+        )
 
     @app.get("/api/reports/{report_id}/json")
     def get_report_json(
@@ -841,10 +927,28 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
         for key in SETTINGS_OVERRIDABLE_KEYS:
             values[key] = getattr(config, key, None)
         # Mask secrets explicitly so the UI never has to know real values.
-        for secret_key in ("openai_api_key", "alpaca_api_key", "alpaca_secret_key"):
+        for secret_key in (
+            "openai_api_key",
+            "alpaca_api_key",
+            "alpaca_secret_key",
+            "binance_api_key",
+            "binance_secret_key",
+        ):
             values[secret_key] = "********" if getattr(config, secret_key, "") else ""
+        # Also expose the per-provider quote/account currency labels read-only
+        # so the Binance settings tab can render them as informational fields.
+        values["binance_quote_currency"] = config.binance_quote_currency
+        values["account_currency"] = config.account_currency
+        # Path to the Binance Ed25519/RSA PEM file (not a secret — just a
+        # filesystem path), so the UI can show operators which file the bot
+        # actually loaded.
+        values["binance_private_key_path"] = config.binance_private_key_path or ""
         restart_required = any(key in SETTINGS_RESTART_REQUIRED_KEYS for key in overlay)
-        return {"values": values, "restart_required": restart_required}
+        return {
+            "values": values,
+            "restart_required": restart_required,
+            "active_providers": [entry["provider"] for entry in _active_provider_descriptors()],
+        }
 
     @app.patch("/api/settings")
     def patch_settings(
@@ -908,9 +1012,34 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
 
     # ----- existing manual generation endpoints (now auth-gated) ---------
 
+    # Manual triggers (universe regen, GPT order generation, weekly/quarterly
+    # PDF reports) can take minutes. Running them inline blocks the HTTP
+    # response for that whole time, which from the operator's point of view
+    # looks frozen. We run them in a small dedicated pool and only wait long
+    # enough on the request thread to surface fast outcomes (lock conflicts,
+    # immediate failures, instant jobs). Anything still running after the
+    # short wait keeps going in the background and the operator can follow
+    # progress in the logs.
+    _manual_jobs_executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=2, thread_name_prefix="manual-job"
+    )
+    _MANUAL_FAST_OUTCOME_SECONDS = 3.0
+
     def _run_manual(action: str, handler: Any) -> dict[str, Any]:
+        future = _manual_jobs_executor.submit(handler)
         try:
-            handler()
+            future.result(timeout=_MANUAL_FAST_OUTCOME_SECONDS)
+        except concurrent.futures.TimeoutError:
+            api_logger.info(
+                "Manual API request for %s started; job continues in background",
+                action,
+            )
+            return {
+                "status": "ok",
+                "action": action,
+                "message": f"{action} job avviato in background",
+                "background": True,
+            }
         except JobExecutionLockedError as exc:
             api_logger.warning("Manual API request for %s skipped: %s", action, exc)
             raise HTTPException(
@@ -937,20 +1066,25 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
     def get_universe(
         _user: auth_lib.AuthenticatedUser = Depends(get_current_user),
     ) -> dict[str, Any]:
-        alpaca = scheduler.trade_manager.alpaca_client
-        return {"universe": get_universe_with_metadata(alpaca, api_logger)}
+        live_brokers = _resolve_brokers()
+        return {
+            "universe": get_universe_with_metadata(live_brokers, api_logger),
+            "active_providers": [entry["provider"] for entry in _active_provider_descriptors()],
+        }
 
     @app.post("/api/universe/symbols")
     def add_universe_symbol(
         payload: UniverseSymbolPayload,
         admin: auth_lib.AuthenticatedUser = Depends(require_admin),
     ) -> dict[str, Any]:
-        alpaca = scheduler.trade_manager.alpaca_client
+        live_brokers = _resolve_brokers()
+        provider = (payload.provider or PROVIDER_ALPACA).lower()
         try:
             result = universe_add_symbol(
                 config,
-                alpaca,
+                live_brokers,
                 api_logger,
+                provider=provider,
                 category=payload.category,
                 symbol=payload.symbol,
             )
@@ -959,28 +1093,60 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
         _audit(
             admin,
             entity="universe",
-            entity_id=f"{result['category']}:{result['symbol']}",
+            entity_id=f"{result['provider']}:{result['category']}:{result['symbol']}",
             action="add",
             after=result,
         )
         return result
 
-    @app.delete("/api/universe/symbols/{category}/{symbol:path}")
+    @app.delete("/api/universe/symbols/{provider}/{category}/{symbol:path}")
     def delete_universe_symbol(
+        provider: str,
         category: str,
         symbol: str,
         admin: auth_lib.AuthenticatedUser = Depends(require_admin),
     ) -> dict[str, Any]:
         try:
             result = universe_remove_symbol(
-                config, api_logger, category=category, symbol=symbol
+                config,
+                api_logger,
+                provider=provider,
+                category=category,
+                symbol=symbol,
             )
         except UniverseValidationError as exc:
             raise _error(HTTPStatus.BAD_REQUEST, "invalid_symbol", str(exc)) from exc
         _audit(
             admin,
             entity="universe",
-            entity_id=f"{result['category']}:{result['symbol']}",
+            entity_id=f"{result['provider']}:{result['category']}:{result['symbol']}",
+            action="remove",
+            after=result,
+        )
+        return result
+
+    # Legacy two-segment route (no explicit provider): kept for backwards
+    # compatibility with older frontends; defaults to Alpaca.
+    @app.delete("/api/universe/symbols/{category}/{symbol:path}")
+    def delete_universe_symbol_legacy(
+        category: str,
+        symbol: str,
+        admin: auth_lib.AuthenticatedUser = Depends(require_admin),
+    ) -> dict[str, Any]:
+        try:
+            result = universe_remove_symbol(
+                config,
+                api_logger,
+                provider=PROVIDER_ALPACA,
+                category=category,
+                symbol=symbol,
+            )
+        except UniverseValidationError as exc:
+            raise _error(HTTPStatus.BAD_REQUEST, "invalid_symbol", str(exc)) from exc
+        _audit(
+            admin,
+            entity="universe",
+            entity_id=f"{result['provider']}:{result['category']}:{result['symbol']}",
             action="remove",
             after=result,
         )

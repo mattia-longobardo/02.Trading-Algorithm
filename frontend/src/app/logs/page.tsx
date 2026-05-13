@@ -37,7 +37,10 @@ export default function LogsPage() {
       try {
         const payload = await api.get<LogsResponse>(`/api/logs?lines=10000`);
         if (cancelled) return;
-        setContent(payload.logs || "Nessun log disponibile.");
+        setContent(
+          payload.logs ||
+            "Nessuna riga di log al momento. Lo scheduler scriverà qui non appena fa partire il primo job."
+        );
         setMeta(`${payload.line_count} righe da ${payload.log_file}`);
         setStatus(`Connesso: ${payload.updated_at}`);
         requestAnimationFrame(() => {

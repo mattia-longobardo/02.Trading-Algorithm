@@ -27,6 +27,51 @@ PROMPT_KEY_UNIVERSE_SHORTLIST = "universe_shortlist"
 PROMPT_KEY_UNIVERSE_FINAL = "universe_final"
 PROMPT_KEY_UNIVERSE_FINAL_FROM_DOSSIERS = "universe_final_from_dossiers"
 
+# Binance-flavoured variants share the same JSON schema and decision logic
+# as the Alpaca prompts but are written for Binance Spot pair semantics
+# (BASE/QUOTE, e.g. BTC/USDT). The ``provider`` argument routed through
+# ``GPTClient`` selects the right key.
+PROMPT_KEY_BINANCE_NEW_SIGNAL = "binance_new_signal"
+PROMPT_KEY_BINANCE_BATCH_SIGNALS = "binance_batch_signals"
+PROMPT_KEY_BINANCE_PENDING_REVIEW = "binance_pending_review"
+PROMPT_KEY_BINANCE_PROTECTION_REVIEW = "binance_protection_review"
+PROMPT_KEY_BINANCE_UNIVERSE_DOSSIER = "binance_universe_dossier"
+PROMPT_KEY_BINANCE_UNIVERSE_SHORTLIST = "binance_universe_shortlist"
+PROMPT_KEY_BINANCE_UNIVERSE_FINAL = "binance_universe_final"
+PROMPT_KEY_BINANCE_UNIVERSE_FINAL_FROM_DOSSIERS = "binance_universe_final_from_dossiers"
+
+
+def _alpaca_prompt_keys() -> tuple[str, ...]:
+    return (
+        PROMPT_KEY_NEW_SIGNAL,
+        PROMPT_KEY_BATCH_SIGNALS,
+        PROMPT_KEY_PENDING_REVIEW,
+        PROMPT_KEY_PROTECTION_REVIEW,
+        PROMPT_KEY_UNIVERSE_DOSSIER,
+        PROMPT_KEY_UNIVERSE_SHORTLIST,
+        PROMPT_KEY_UNIVERSE_FINAL,
+        PROMPT_KEY_UNIVERSE_FINAL_FROM_DOSSIERS,
+    )
+
+
+def _binance_prompt_keys() -> tuple[str, ...]:
+    return (
+        PROMPT_KEY_BINANCE_NEW_SIGNAL,
+        PROMPT_KEY_BINANCE_BATCH_SIGNALS,
+        PROMPT_KEY_BINANCE_PENDING_REVIEW,
+        PROMPT_KEY_BINANCE_PROTECTION_REVIEW,
+        PROMPT_KEY_BINANCE_UNIVERSE_DOSSIER,
+        PROMPT_KEY_BINANCE_UNIVERSE_SHORTLIST,
+        PROMPT_KEY_BINANCE_UNIVERSE_FINAL,
+        PROMPT_KEY_BINANCE_UNIVERSE_FINAL_FROM_DOSSIERS,
+    )
+
+
+def _resolve_provider_prompt_key(base_key: str, provider: str) -> str:
+    if provider == "binance":
+        return f"binance_{base_key}"
+    return base_key
+
 
 def get_default_prompts() -> dict[str, str]:
     """Return the hard-coded default prompt content keyed by prompt key.
@@ -44,6 +89,14 @@ def get_default_prompts() -> dict[str, str]:
         PROMPT_KEY_UNIVERSE_SHORTLIST: INSTRUCTIONS_UNIVERSE_SHORTLIST,
         PROMPT_KEY_UNIVERSE_FINAL: INSTRUCTIONS_UNIVERSE_FINAL,
         PROMPT_KEY_UNIVERSE_FINAL_FROM_DOSSIERS: INSTRUCTIONS_UNIVERSE_FINAL_FROM_DOSSIERS,
+        PROMPT_KEY_BINANCE_NEW_SIGNAL: INSTRUCTIONS_BINANCE_NEW_SIGNAL,
+        PROMPT_KEY_BINANCE_BATCH_SIGNALS: INSTRUCTIONS_BINANCE_BATCH_SIGNALS,
+        PROMPT_KEY_BINANCE_PENDING_REVIEW: INSTRUCTIONS_BINANCE_PENDING_REVIEW,
+        PROMPT_KEY_BINANCE_PROTECTION_REVIEW: INSTRUCTIONS_BINANCE_PROTECTION_REVIEW,
+        PROMPT_KEY_BINANCE_UNIVERSE_DOSSIER: INSTRUCTIONS_BINANCE_UNIVERSE_DOSSIER,
+        PROMPT_KEY_BINANCE_UNIVERSE_SHORTLIST: INSTRUCTIONS_BINANCE_UNIVERSE_SHORTLIST,
+        PROMPT_KEY_BINANCE_UNIVERSE_FINAL: INSTRUCTIONS_BINANCE_UNIVERSE_FINAL,
+        PROMPT_KEY_BINANCE_UNIVERSE_FINAL_FROM_DOSSIERS: INSTRUCTIONS_BINANCE_UNIVERSE_FINAL_FROM_DOSSIERS,
     }
 
 NEW_SIGNAL_SCHEMA = {
@@ -262,6 +315,7 @@ INSTRUCTIONS_NEW_SIGNAL = (
     "If you choose OPEN, entry_price, take_profit, and stop_loss must be non-null positive numbers. "
     "trailing_take_profit_distance may be null when no trailing take profit is desired, otherwise it must be a positive number. "
     "trailing_take_profit_activation_pct must be set together with trailing_take_profit_distance: it is the percentage gain above entry_price required to arm the trailing take profit (e.g. 5 means trailing arms once the price has risen 5% above entry). Both fields must be either both null (no trailing take profit) or both positive numbers. "
+    "Trailing-TP invariant (hard constraint): trailing_take_profit_activation_pct must exceed (trailing_take_profit_distance / entry_price * 100) by at least ~0.5 percentage points. This guarantees that when the trailing first arms, the trigger (high_water_mark - distance) is already above entry_price, so the trailing locks in a small minimum profit instead of closing at a loss. As a practical heuristic, keep trailing_take_profit_distance <= entry_price * (trailing_take_profit_activation_pct - 0.5) / 100. The bot rejects pairs that violate this rule, and at runtime it also floors the trigger at entry_price * 1.005 as a safety belt, so the trailing TP can never close the trade below entry_price. "
     "trailing_stop_distance may be null when no trailing stop is desired, otherwise it must be a positive number. "
     "trade_score must be a 0-100 score balancing expected profitability against risk after considering the user risk tolerance. "
     "Base the decision primarily on medium-term trend structure, macro or fundamental catalysts, business or ecosystem strength, and multi-week or multi-month risk/reward. "
@@ -286,6 +340,7 @@ INSTRUCTIONS_BATCH_SIGNALS = (
     "When OPEN is chosen, entry_price, take_profit, and stop_loss must be positive numbers. "
     "trailing_take_profit_distance may be null or a positive number. "
     "trailing_take_profit_activation_pct must follow trailing_take_profit_distance: both null when no trailing take profit is desired, otherwise both positive numbers. The activation percentage is the gain above entry_price (e.g. 5 means +5%) at which the trailing take profit arms; once armed, it trails the high-water mark by the specified distance, regardless of whether the hard take_profit is reached. "
+    "Trailing-TP invariant (hard constraint): trailing_take_profit_activation_pct must exceed (trailing_take_profit_distance / entry_price * 100) by at least ~0.5 percentage points so the trigger sits above entry the moment trailing first arms. Heuristic: keep distance <= entry_price * (activation_pct - 0.5) / 100. The bot rejects pairs that violate this rule and floors the runtime trigger at entry_price * 1.005 as a safety belt. "
     "trailing_stop_distance may be null or a positive number. "
     "trade_score must be a 0-100 score balancing profitability and risk for this user; the highest scores should represent the best risk-adjusted opportunities to open first. "
     "Return only JSON matching the schema."
@@ -310,7 +365,8 @@ INSTRUCTIONS_PROTECTION_REVIEW = (
     "Return the full desired trailing_take_profit_distance and trailing_take_profit_activation_pct that should apply right now: keep current values if no change is needed, "
     "return different positive numbers to tighten or loosen the trailing or to shift the activation threshold, or return both fields as null to disable the trailing take profit. "
     "trailing_take_profit_activation_pct is the percentage gain above entry_price at which trailing arms (e.g. 5 means +5%); once armed, the bot trails the high-water mark by trailing_take_profit_distance. The two fields must be either both null or both positive numbers. "
-    "As time passes and unrealized profit grows, you should generally lower the activation threshold and/or tighten the distance so that gains get captured before they can mean-revert. "
+    "Trailing-TP invariant (hard constraint): trailing_take_profit_activation_pct must exceed (trailing_take_profit_distance / entry_price * 100) by at least ~0.5 percentage points, otherwise the proposal will be rejected because the trigger would arm below entry_price and produce a loss labelled TRAILING_TAKE_PROFIT. Heuristic: keep distance <= entry_price * (activation_pct - 0.5) / 100. The bot also floors the runtime trigger at entry_price * 1.005 so a trailing TP can never close below entry. "
+    "As time passes and unrealized profit grows, you should generally lower the activation threshold and/or tighten the distance so that gains get captured before they can mean-revert — but never break the invariant above. "
     "Do not propose entry, stop loss, or hard take profit changes here. "
     "Use constraints.currency as the reference currency and keep constraints.risk_tolerance (1-10 scale, 10 = highest) in mind. "
     "ohlcv.daily contains a short window of recent daily bars; that is enough context to judge whether the trend is intact and how much room the trailing should give. "
@@ -385,6 +441,141 @@ INSTRUCTIONS_UNIVERSE_FINAL_FROM_DOSSIERS = (
     "Return only JSON matching the schema."
 )
 
+# -----------------------------------------------------------------------------
+# Binance variants. Same JSON schema, same risk-management semantics, but the
+# venue is Binance Spot and the symbol convention is BASE/QUOTE pairs against
+# the configured stablecoin (USDT/BUSD/USDC) — never US equities.
+# -----------------------------------------------------------------------------
+
+INSTRUCTIONS_BINANCE_NEW_SIGNAL = (
+    "You are a disciplined Binance Spot trading analyst. You must perform web search before deciding. "
+    "Use only LONG spot trading on Binance, never short and never margin/futures. Compute technical indicators yourself from OHLCV. "
+    "This strategy is medium-long term position trading on crypto pairs, not daily trading or scalping. "
+    "Read constraints.target_holding_period_days for the preferred holding window; setups should be holdable for 3-4 months when the thesis stays valid. "
+    "Use constraints.currency as the quote currency for the Binance pair (typically USDT). The pair format is BASE/QUOTE (e.g. BTC/USDT). "
+    "Honor constraints.risk_tolerance on a 1-10 scale where 10 is the highest risk appetite: low values should favor large-cap, deeply liquid pairs (BTC/USDT, ETH/USDT and similarly entrenched names) with tighter downside control; high values may accept lower-cap, higher-volatility ecosystems if the upside is compelling. "
+    "The OHLCV data is split into ohlcv.daily (recent daily bars) and ohlcv.weekly (older bars aggregated to weekly) — treat them as one continuous history. "
+    "Return only JSON matching the schema. If risk/reward is unattractive, choose SKIP. "
+    "If you choose OPEN, entry_price, take_profit, and stop_loss must be non-null positive numbers, all expressed in the pair's quote currency. "
+    "trailing_take_profit_distance may be null when no trailing take profit is desired, otherwise it must be a positive number. "
+    "trailing_take_profit_activation_pct must be set together with trailing_take_profit_distance: it is the percentage gain above entry_price required to arm the trailing take profit. Both fields must be either both null or both positive numbers. "
+    "Trailing-TP invariant (hard constraint): trailing_take_profit_activation_pct must exceed (trailing_take_profit_distance / entry_price * 100) by at least ~0.5 percentage points so the trigger (high_water_mark - distance) sits above entry the moment trailing first arms. Heuristic: keep distance <= entry_price * (activation_pct - 0.5) / 100. The bot rejects pairs that violate this rule and floors the runtime trigger at entry_price * 1.005 as a safety belt, so the trailing TP can never close the trade below entry_price. "
+    "trailing_stop_distance may be null when no trailing stop is desired, otherwise it must be a positive number. "
+    "trade_score must be a 0-100 score balancing expected profitability against risk after considering the user risk tolerance. "
+    "Base the decision primarily on multi-month trend structure, on-chain or ecosystem strength, project fundamentals (developer activity, treasury, partnerships) and whether tokenomics support a multi-week / multi-month hold. Avoid pure meme-driven momentum unless the user risk tolerance is high. "
+    "The script manages take-profit, trailing-take-profit, stop-loss, and trailing-stop logic internally after entry; "
+    "Binance is used only to place the entry order (LIMIT IOC marketable) and to close the position with a MARKET sell when a rule triggers. "
+    "When the trailing take profit is provided, it arms once price reaches entry_price * (1 + trailing_take_profit_activation_pct / 100) and then trails the high-water mark by the specified distance, locking in profit even if the hard take_profit level is never reached."
+)
+
+INSTRUCTIONS_BINANCE_BATCH_SIGNALS = (
+    "You are evaluating a batch of Binance Spot pairs for a medium-long term LONG-only crypto strategy. "
+    "The asset class is in constraints.category (always CRYPTO for Binance) and the cycle limit is in constraints.max_new_trades_this_cycle. "
+    "You must perform web search before deciding. "
+    "Analyze every provided pair and return one result per symbol in the same batch. "
+    "This is not day trading: focus on setups likely to play out over weeks or months, aligned with constraints.target_holding_period_days. "
+    "Use constraints.currency as the pair's quote currency (typically USDT). Symbols are BASE/QUOTE on Binance Spot. "
+    "Honor constraints.risk_tolerance on a 1-10 scale where 10 means maximum tolerated risk. "
+    "Low risk tolerance should emphasize the largest, most liquid pairs (BTC/USDT, ETH/USDT and other top-cap, well-documented projects), drawdown control, and conservative levels. "
+    "High risk tolerance can accept more volatility, wider stops, and more speculative narratives if the upside is compelling. "
+    "The portfolio can open at most constraints.max_new_trades_this_cycle new trades in this cycle. "
+    "Each symbol's OHLCV is split between ohlcv.daily (recent daily bars) and ohlcv.weekly (older bars aggregated to weekly granularity). Treat them as continuous history. "
+    "For every symbol return OPEN or SKIP. OPEN means the setup is attractive today on Binance Spot. "
+    "When OPEN is chosen, entry_price, take_profit, and stop_loss must be positive numbers in the quote currency. "
+    "trailing_take_profit_distance may be null or a positive number. "
+    "trailing_take_profit_activation_pct must follow trailing_take_profit_distance: both null when no trailing take profit is desired, otherwise both positive numbers. The activation percentage is the gain above entry_price at which the trailing TP arms; once armed it trails the high-water mark by the specified distance. "
+    "Trailing-TP invariant (hard constraint): trailing_take_profit_activation_pct must exceed (trailing_take_profit_distance / entry_price * 100) by at least ~0.5 percentage points so the trigger sits above entry when trailing first arms. Heuristic: keep distance <= entry_price * (activation_pct - 0.5) / 100. The bot rejects pairs that violate this rule and floors the runtime trigger at entry_price * 1.005. "
+    "trailing_stop_distance may be null or a positive number. "
+    "trade_score must be a 0-100 score balancing profitability and risk for this user; the highest scores should represent the best risk-adjusted opportunities to open first. "
+    "Return only JSON matching the schema."
+)
+
+INSTRUCTIONS_BINANCE_PENDING_REVIEW = (
+    "You are reviewing an existing LONG entry order on Binance Spot that has remained pending for more than constraints.pending_days_threshold days. "
+    "You must perform web search before deciding. "
+    "Decide whether the order thesis is still valid today on Binance Spot. "
+    "Return KEEP only if opening the trade at this stage is still attractive for a medium-long term position trade on the named pair. "
+    "Return CANCEL if the thesis is stale, invalidated, materially weaker, or no longer worth opening now. "
+    "Use constraints.currency as the pair's quote currency and keep constraints.risk_tolerance (1-10 scale, 10 = highest) in mind. "
+    "OHLCV is split between ohlcv.daily (recent daily bars) and ohlcv.weekly (older aggregated). Treat them as one continuous history. "
+    "Base the review on current crypto news, on-chain activity, ecosystem catalysts, multi-week trend structure, and whether the original pending entry still offers good risk/reward. "
+    "Return only JSON matching the schema."
+)
+
+INSTRUCTIONS_BINANCE_PROTECTION_REVIEW = (
+    "You are reviewing an already OPEN LONG swing-position trade on Binance Spot. "
+    "You must perform web search before deciding. "
+    "Your only task is to reassess the trailing take profit configuration for this open trade. "
+    "Return the full desired trailing_take_profit_distance and trailing_take_profit_activation_pct that should apply right now: keep current values if no change is needed, "
+    "return different positive numbers to tighten or loosen the trailing or to shift the activation threshold, or return both fields as null to disable the trailing take profit. "
+    "trailing_take_profit_activation_pct is the percentage gain above entry_price at which trailing arms; once armed, the bot trails the high-water mark by trailing_take_profit_distance. The two fields must be either both null or both positive numbers. "
+    "Trailing-TP invariant (hard constraint): trailing_take_profit_activation_pct must exceed (trailing_take_profit_distance / entry_price * 100) by at least ~0.5 percentage points, otherwise the proposal will be rejected because the trigger would arm below entry_price and produce a loss labelled TRAILING_TAKE_PROFIT. Heuristic: keep distance <= entry_price * (activation_pct - 0.5) / 100. The bot also floors the runtime trigger at entry_price * 1.005 as a safety net. "
+    "As time passes and unrealized profit grows, generally lower the activation threshold and/or tighten the distance so gains are captured before they can mean-revert. Crypto pairs can mean-revert violently — do not be afraid to tighten aggressively when profit is large, but never break the invariant above. "
+    "Do not propose entry, stop loss, or hard take profit changes here. "
+    "Use constraints.currency as the pair's quote currency and keep constraints.risk_tolerance (1-10 scale, 10 = highest) in mind. "
+    "ohlcv.daily contains a short window of recent daily bars; that is enough context to judge whether the trend is intact and how much room the trailing should give. "
+    "Base the review on current news, on-chain or catalyst evolution, multi-week trend structure, current profit cushion, and whether upside should be given more room or protected more tightly. "
+    "Return only JSON matching the schema."
+)
+
+INSTRUCTIONS_BINANCE_UNIVERSE_DOSSIER = (
+    "Create a compact JSON dossier for one Binance Spot weekly universe candidate. "
+    "The asset class is CRYPTO and the venue is Binance Spot. "
+    "Do mandatory web search before deciding. "
+    "Use both the provided 24h volume / market metrics and current web information about the project. "
+    "This is a medium-long term position-trading strategy, not intraday trading. "
+    "Favor pairs suitable for selection_rules.target_holding_period_days, possibly 3-4 months if the thesis remains intact. "
+    "Honor selection_rules.risk_tolerance on a 1-10 scale where 10 means maximum risk appetite. "
+    "Score quality, liquidity, momentum, downside control, and fit for this strategy on a 0-100 scale where higher is better. "
+    "Use recent crypto news, ecosystem activity, on-chain signals, and project fundamentals from web search. "
+    "When the provided market metrics conflict with the web narrative, acknowledge the tension in the reasoning. "
+    "Keep the summary concise and practical. "
+    "Use selection_rules.currency as the quote currency, and keep Binance pair format like BTC/<currency>. "
+    "Return only JSON matching the schema."
+)
+
+INSTRUCTIONS_BINANCE_UNIVERSE_SHORTLIST = (
+    "Review one batch of Binance Spot pairs for the weekly universe selection. "
+    "The asset class is CRYPTO. The batch index is in selection_rules.batch_number out of selection_rules.batch_count, and the target shortlist size is selection_rules.shortlist_size. "
+    "Do mandatory web search before choosing. Avoid extremely illiquid pairs and obvious wash-traded names. "
+    "Use only the provided Binance Spot candidate list for this batch. "
+    "When local 24h-volume / volatility metrics are provided for a candidate, treat them as hard context and use them alongside web search. "
+    "This strategy is medium-long term position trading, not daily trading. "
+    "Favor assets suitable for holding selection_rules.target_holding_period_days, potentially 3-4 months if the thesis remains intact. "
+    "Honor selection_rules.risk_tolerance on a 1-10 scale where 10 means maximum risk appetite. "
+    "Adjust the shortlist accordingly: low risk should favor BTC, ETH and other top-cap pairs with deep order books; high risk can include lower-cap, narrative-driven pairs but still avoid obvious low-quality / wash-traded instruments. "
+    "Base the selection on tradability, liquidity proxies (24h quote volume), ecosystem relevance, recent news flow, and sentiment from web search. "
+    "Prefer pairs with strong potential over the next months, driven by token fundamentals or ecosystem catalysts, while keeping the selection coherent with the user risk tolerance. "
+    "Use selection_rules.currency as the quote currency. Return only Binance pair symbols quoted in that currency, formatted as BASE/<currency>. "
+    "Return up to selection_rules.shortlist_size symbols from this batch as the best intermediate shortlist for the final universe decision. "
+    "Return only JSON matching the schema."
+)
+
+INSTRUCTIONS_BINANCE_UNIVERSE_FINAL = (
+    "Select exactly selection_rules.required_count Binance Spot pairs for the weekly trading universe from the provided shortlist. "
+    "The asset class is CRYPTO and the venue is Binance Spot. "
+    "Do mandatory web search before choosing. "
+    "Use only the shortlisted candidates provided in this final consolidation step. "
+    "When local market metrics are provided for a candidate, treat them as hard context and use them alongside web search. "
+    "This strategy is medium-long term position trading, not daily trading. "
+    "Honor selection_rules.risk_tolerance on a 1-10 scale where 10 means maximum risk appetite. "
+    "Choose the strongest multi-month opportunities while balancing upside, liquidity, quality, and downside control according to that risk preference. "
+    "Use selection_rules.currency as the quote currency. Return only Binance pair symbols (BASE/QUOTE) quoted in that currency. "
+    "Return only JSON matching the schema."
+)
+
+INSTRUCTIONS_BINANCE_UNIVERSE_FINAL_FROM_DOSSIERS = (
+    "Select exactly selection_rules.required_count Binance Spot pairs for the weekly trading universe from the provided candidate dossiers. "
+    "The asset class is CRYPTO. "
+    "Use only the dossier information provided in this final consolidation step. Do not invent candidates outside the dossier list. "
+    "Optimize for overall portfolio quality, liquidity (24h volume), conviction, and medium-term opportunity. "
+    "Honor selection_rules.risk_tolerance on a 1-10 scale where 10 means maximum risk appetite. "
+    "Prefer some diversification across crypto themes (L1, L2, DeFi, AI, infra, real-world assets) when multiple candidates are similarly strong, rather than concentrating too heavily in near-duplicates. "
+    "It is acceptable to keep some continuity with selection_rules.current_universe when dossier quality is still competitive, but do not keep a weaker name purely for continuity. "
+    "Use selection_rules.currency as the quote currency, and return only Binance pair symbols (BASE/QUOTE) quoted in that currency. "
+    "Return only JSON matching the schema."
+)
+
 
 class GPTClient:
     """OpenAI Responses API wrapper with mandatory web search."""
@@ -453,19 +644,24 @@ class GPTClient:
         result = json.loads(response.output_text)
         return result
 
+    def _provider_currency(self, provider: str) -> str:
+        return self.config.provider_account_currency(provider)
+
     def build_symbol_payload(
         self,
         symbol: str,
         category: str,
         candles: list[dict[str, Any]],
         existing_trades: list[dict[str, Any]],
+        provider: str = "alpaca",
     ) -> dict[str, Any]:
         return {
             "constraints": {
                 "direction": "LONG",
                 "web_search_required": True,
                 "no_etf": True,
-                "currency": self.config.account_currency,
+                "currency": self._provider_currency(provider),
+                "provider": provider,
                 "risk_tolerance": self.config.risk_tolerance,
                 "strategy_style": "medium_long_term_position_trading",
                 "target_holding_period_days": {
@@ -495,10 +691,15 @@ class GPTClient:
         category: str,
         candles: list[dict[str, Any]],
         existing_trades: list[dict[str, Any]],
+        provider: str = "alpaca",
     ) -> dict[str, Any]:
-        payload = self.build_symbol_payload(symbol, category, candles, existing_trades)
+        payload = self.build_symbol_payload(symbol, category, candles, existing_trades, provider=provider)
+        prompt_key = _resolve_provider_prompt_key(PROMPT_KEY_NEW_SIGNAL, provider)
+        default = (
+            INSTRUCTIONS_BINANCE_NEW_SIGNAL if provider == "binance" else INSTRUCTIONS_NEW_SIGNAL
+        )
         return self._request_json(
-            self._resolve_prompt(PROMPT_KEY_NEW_SIGNAL, INSTRUCTIONS_NEW_SIGNAL),
+            self._resolve_prompt(prompt_key, default),
             payload,
             NEW_SIGNAL_SCHEMA,
         )
@@ -509,12 +710,14 @@ class GPTClient:
         symbol_payloads: list[dict[str, Any]],
         existing_trades: list[dict[str, Any]],
         max_new_trades: int,
+        provider: str = "alpaca",
     ) -> dict[str, Any]:
         payload = {
             "constraints": {
                 "direction": "LONG",
                 "web_search_required": True,
-                "currency": self.config.account_currency,
+                "currency": self._provider_currency(provider),
+                "provider": provider,
                 "risk_tolerance": self.config.risk_tolerance,
                 "category": category,
                 "max_new_trades_this_cycle": max_new_trades,
@@ -527,8 +730,12 @@ class GPTClient:
             "symbols": symbol_payloads,
             "existing_trades": existing_trades,
         }
+        prompt_key = _resolve_provider_prompt_key(PROMPT_KEY_BATCH_SIGNALS, provider)
+        default = (
+            INSTRUCTIONS_BINANCE_BATCH_SIGNALS if provider == "binance" else INSTRUCTIONS_BATCH_SIGNALS
+        )
         return self._request_json(
-            self._resolve_prompt(PROMPT_KEY_BATCH_SIGNALS, INSTRUCTIONS_BATCH_SIGNALS),
+            self._resolve_prompt(prompt_key, default),
             payload,
             BATCH_SIGNALS_SCHEMA,
         )
@@ -538,11 +745,13 @@ class GPTClient:
         category: str,
         candidate: dict[str, Any],
         peer_context: dict[str, Any],
+        provider: str = "alpaca",
     ) -> dict[str, Any]:
         payload = {
             "selection_rules": {
                 "category": category,
-                "currency": self.config.account_currency,
+                "currency": self._provider_currency(provider),
+                "provider": provider,
                 "risk_tolerance": self.config.risk_tolerance,
                 "strategy_style": "medium_long_term_position_trading",
                 "target_holding_period_days": {
@@ -554,8 +763,12 @@ class GPTClient:
             "candidate": candidate,
             "peer_context": peer_context,
         }
+        prompt_key = _resolve_provider_prompt_key(PROMPT_KEY_UNIVERSE_DOSSIER, provider)
+        default = (
+            INSTRUCTIONS_BINANCE_UNIVERSE_DOSSIER if provider == "binance" else INSTRUCTIONS_UNIVERSE_DOSSIER
+        )
         return self._request_json(
-            self._resolve_prompt(PROMPT_KEY_UNIVERSE_DOSSIER, INSTRUCTIONS_UNIVERSE_DOSSIER),
+            self._resolve_prompt(prompt_key, default),
             payload,
             UNIVERSE_SYMBOL_DOSSIER_SCHEMA,
             use_web_search=True,
@@ -570,6 +783,7 @@ class GPTClient:
         shortlist_size: int,
         batch_number: int,
         batch_count: int,
+        provider: str = "alpaca",
     ) -> dict[str, Any]:
         payload = {
             "selection_rules": {
@@ -577,7 +791,8 @@ class GPTClient:
                 "shortlist_size": shortlist_size,
                 "batch_number": batch_number,
                 "batch_count": batch_count,
-                "currency": self.config.account_currency,
+                "currency": self._provider_currency(provider),
+                "provider": provider,
                 "risk_tolerance": self.config.risk_tolerance,
                 "strategy_style": "medium_long_term_position_trading",
                 "target_holding_period_days": {
@@ -594,9 +809,12 @@ class GPTClient:
             },
             "candidates": candidates,
         }
-
+        prompt_key = _resolve_provider_prompt_key(PROMPT_KEY_UNIVERSE_SHORTLIST, provider)
+        default = (
+            INSTRUCTIONS_BINANCE_UNIVERSE_SHORTLIST if provider == "binance" else INSTRUCTIONS_UNIVERSE_SHORTLIST
+        )
         return self._request_json(
-            self._resolve_prompt(PROMPT_KEY_UNIVERSE_SHORTLIST, INSTRUCTIONS_UNIVERSE_SHORTLIST),
+            self._resolve_prompt(prompt_key, default),
             payload,
             UNIVERSE_BATCH_SHORTLIST_SCHEMA,
             model_tier="mid",
@@ -607,12 +825,14 @@ class GPTClient:
         category: str,
         shortlisted_candidates: list[dict[str, Any]],
         required_count: int,
+        provider: str = "alpaca",
     ) -> dict[str, Any]:
         payload = {
             "selection_rules": {
                 "category": category,
                 "required_count": required_count,
-                "currency": self.config.account_currency,
+                "currency": self._provider_currency(provider),
+                "provider": provider,
                 "risk_tolerance": self.config.risk_tolerance,
                 "strategy_style": "medium_long_term_position_trading",
                 "target_holding_period_days": {
@@ -622,8 +842,12 @@ class GPTClient:
             },
             "shortlisted_candidates": shortlisted_candidates,
         }
+        prompt_key = _resolve_provider_prompt_key(PROMPT_KEY_UNIVERSE_FINAL, provider)
+        default = (
+            INSTRUCTIONS_BINANCE_UNIVERSE_FINAL if provider == "binance" else INSTRUCTIONS_UNIVERSE_FINAL
+        )
         return self._request_json(
-            self._resolve_prompt(PROMPT_KEY_UNIVERSE_FINAL, INSTRUCTIONS_UNIVERSE_FINAL),
+            self._resolve_prompt(prompt_key, default),
             payload,
             UNIVERSE_FINAL_SCHEMA,
         )
@@ -634,12 +858,14 @@ class GPTClient:
         dossiers: list[dict[str, Any]],
         required_count: int,
         current_universe: list[str] | None = None,
+        provider: str = "alpaca",
     ) -> dict[str, Any]:
         payload = {
             "selection_rules": {
                 "category": category,
                 "required_count": required_count,
-                "currency": self.config.account_currency,
+                "currency": self._provider_currency(provider),
+                "provider": provider,
                 "risk_tolerance": self.config.risk_tolerance,
                 "strategy_style": "medium_long_term_position_trading",
                 "target_holding_period_days": {
@@ -651,11 +877,14 @@ class GPTClient:
             },
             "candidate_dossiers": dossiers,
         }
+        prompt_key = _resolve_provider_prompt_key(PROMPT_KEY_UNIVERSE_FINAL_FROM_DOSSIERS, provider)
+        default = (
+            INSTRUCTIONS_BINANCE_UNIVERSE_FINAL_FROM_DOSSIERS
+            if provider == "binance"
+            else INSTRUCTIONS_UNIVERSE_FINAL_FROM_DOSSIERS
+        )
         return self._request_json(
-            self._resolve_prompt(
-                PROMPT_KEY_UNIVERSE_FINAL_FROM_DOSSIERS,
-                INSTRUCTIONS_UNIVERSE_FINAL_FROM_DOSSIERS,
-            ),
+            self._resolve_prompt(prompt_key, default),
             payload,
             UNIVERSE_DOSSIER_FINAL_SCHEMA,
             use_web_search=False,
@@ -667,12 +896,14 @@ class GPTClient:
         self,
         trade: dict[str, Any],
         candles: list[dict[str, Any]],
+        provider: str = "alpaca",
     ) -> dict[str, Any]:
         payload = {
             "constraints": {
                 "direction": "LONG",
                 "web_search_required": True,
-                "currency": self.config.account_currency,
+                "currency": self._provider_currency(provider),
+                "provider": provider,
                 "risk_tolerance": self.config.risk_tolerance,
                 "strategy_style": "medium_long_term_position_trading",
                 "pending_days_threshold": 7,
@@ -684,8 +915,12 @@ class GPTClient:
             "trade": trade,
             "ohlcv": build_mixed_timeframe_ohlcv(candles),
         }
+        prompt_key = _resolve_provider_prompt_key(PROMPT_KEY_PENDING_REVIEW, provider)
+        default = (
+            INSTRUCTIONS_BINANCE_PENDING_REVIEW if provider == "binance" else INSTRUCTIONS_PENDING_REVIEW
+        )
         return self._request_json(
-            self._resolve_prompt(PROMPT_KEY_PENDING_REVIEW, INSTRUCTIONS_PENDING_REVIEW),
+            self._resolve_prompt(prompt_key, default),
             payload,
             PENDING_REVIEW_SCHEMA,
         )
@@ -694,12 +929,14 @@ class GPTClient:
         self,
         trade: dict[str, Any],
         candles: list[dict[str, Any]],
+        provider: str = "alpaca",
     ) -> dict[str, Any]:
         payload = {
             "constraints": {
                 "direction": "LONG",
                 "web_search_required": True,
-                "currency": self.config.account_currency,
+                "currency": self._provider_currency(provider),
+                "provider": provider,
                 "risk_tolerance": self.config.risk_tolerance,
                 "strategy_style": "medium_long_term_position_trading",
                 "review_frequency": "six_times_per_day",
@@ -711,9 +948,15 @@ class GPTClient:
             "trade": trade,
             "ohlcv": {"daily": candles, "weekly": []},
         }
+        prompt_key = _resolve_provider_prompt_key(PROMPT_KEY_PROTECTION_REVIEW, provider)
+        default = (
+            INSTRUCTIONS_BINANCE_PROTECTION_REVIEW if provider == "binance" else INSTRUCTIONS_PROTECTION_REVIEW
+        )
         return self._request_json(
-            self._resolve_prompt(PROMPT_KEY_PROTECTION_REVIEW, INSTRUCTIONS_PROTECTION_REVIEW),
+            self._resolve_prompt(prompt_key, default),
             payload,
             OPEN_PROTECTION_REVIEW_SCHEMA,
             model_tier="mid",
         )
+
+    # `build_batch_symbol_entry` is already provider-agnostic.

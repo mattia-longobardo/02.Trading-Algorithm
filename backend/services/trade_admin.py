@@ -23,6 +23,10 @@ EDITABLE_TRADE_FIELDS: tuple[str, ...] = (
     "trailing_take_profit_activation_pct",
     "stop_loss",
     "trailing_stop_distance",
+    # ``high_water_mark`` drives the trailing TP / trailing stop levels: letting
+    # the operator override it is what allows them to "reset" a runaway trailing
+    # TP that has armed below entry, without waiting for the bot to recompute.
+    "high_water_mark",
 )
 
 
@@ -106,4 +110,53 @@ def update_trade(
     after = get_trade_row(config, trade_id)
     if after is None:
         raise TradeValidationError("Trade vanished during update")
+    return before, after
+
+
+def manual_close_or_cancel(
+    trade_manager: Any,
+    trade_id: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Operator-driven close (OPEN) or cancel (PENDING) of a trade.
+
+    Dispatches based on current status:
+      * ``PENDING`` → cancel any open broker order, mark the row CANCELLED
+        with reason ``MANUAL_CANCEL``.
+      * ``OPEN``    → request a market exit via the broker with reason
+        ``MANUAL_CLOSE``. The exit fill is reconciled by ``sync_broker_state``
+        on the next scheduler tick.
+      * anything else → :class:`TradeValidationError`.
+
+    Returns ``(before, after)`` rows for audit. The trade is read back from
+    the DB after the action so the caller gets the post-state.
+    """
+
+    before = trade_manager.get_trade(int(trade_id))
+    if before is None:
+        raise TradeValidationError("Trade not found")
+    status = str(before.get("status") or "").upper()
+    if status == "PENDING":
+        order_id = before.get("alpaca_order_id")
+        if order_id:
+            try:
+                trade_manager._cancel_broker_order(before, str(order_id))
+            except Exception:
+                trade_manager.logger.exception(
+                    "Manual cancel: broker rejected cancel of order %s for trade %s",
+                    order_id,
+                    trade_id,
+                )
+        trade_manager._cancel_pending_trade_record(before, "MANUAL_CANCEL")
+    elif status == "OPEN":
+        trigger_price = (
+            float(before.get("current_price") or 0.0)
+            or float(before.get("entry_price") or 0.0)
+        )
+        trade_manager._request_market_close(before, "MANUAL_CLOSE", trigger_price)
+    else:
+        raise TradeValidationError(
+            f"Trade is {status or 'in an unknown state'} and cannot be manually closed"
+        )
+
+    after = trade_manager.get_trade(int(trade_id)) or before
     return before, after

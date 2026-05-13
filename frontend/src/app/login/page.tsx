@@ -5,6 +5,7 @@ import { Suspense, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { StatusBanner } from "@/components/ui/status-banner";
 import { useAuth } from "@/lib/auth";
 import { ApiError } from "@/lib/api";
 
@@ -72,11 +73,7 @@ function LoginForm() {
             onChange={(e) => setPassword(e.target.value)}
           />
         </div>
-        {error && (
-          <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
-            {error}
-          </div>
-        )}
+        {error && <StatusBanner kind="error">{error}</StatusBanner>}
         <Button type="submit" className="w-full" disabled={submitting}>
           {submitting ? "Accesso in corso…" : "Accedi"}
         </Button>

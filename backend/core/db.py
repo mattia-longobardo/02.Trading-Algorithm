@@ -52,11 +52,14 @@ CREATE TABLE IF NOT EXISTS trades (
     exit_requested_at TEXT,
     reasoning TEXT,
     confidence REAL,
+    provider TEXT NOT NULL DEFAULT 'alpaca',
+    account_currency TEXT NOT NULL DEFAULT 'USD',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_trades_symbol_status ON trades(symbol, status);
 CREATE INDEX IF NOT EXISTS idx_trades_category_status ON trades(category, status);
+CREATE INDEX IF NOT EXISTS idx_trades_provider_status ON trades(provider, status);
 """
 
 TRADE_OPTIONAL_COLUMNS: dict[str, str] = {
@@ -74,6 +77,8 @@ TRADE_OPTIONAL_COLUMNS: dict[str, str] = {
     "exit_client_order_id": "TEXT",
     "exit_requested_at": "TEXT",
     "trade_score": "REAL",
+    "provider": "TEXT NOT NULL DEFAULT 'alpaca'",
+    "account_currency": "TEXT NOT NULL DEFAULT 'USD'",
 }
 
 SYMBOL_TABLE_PREFIX = "ohlcv_"

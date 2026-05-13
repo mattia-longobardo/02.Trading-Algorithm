@@ -1,21 +1,33 @@
-"""Trading workflow orchestration and script-managed trade persistence."""
+"""Trading workflow orchestration and script-managed trade persistence.
+
+Multi-provider aware: every trade row carries a ``provider`` tag and the
+manager dispatches all broker calls (entry order, position lookup, exit,
+quote refresh, …) to the right client. The lifecycle logic itself
+(TP / SL / trailing TP / trailing stop / GPT batch decisions) is shared.
+"""
 
 from __future__ import annotations
 
 import logging
 from collections import Counter
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Mapping
 
-from clients.alpaca_client import AlpacaClient
 from clients.gpt_client import GPTClient
 from core.db import db_cursor, fetch_all, fetch_one
-from core.utils import AppConfig, isoformat_utc, parse_datetime, utc_now
+from core.utils import (
+    PROVIDER_ALPACA,
+    PROVIDER_BINANCE,
+    AppConfig,
+    isoformat_utc,
+    parse_datetime,
+    utc_now,
+)
 from services.data_manager import DataManager
 
 
 class TradeManager:
-    """Coordinate Alpaca orders, DB state, and GPT entry decisions."""
+    """Coordinate broker orders, DB state, and GPT entry decisions."""
 
     TERMINAL_PENDING_STATUSES = {
         "canceled": "CANCELED",
@@ -31,15 +43,51 @@ class TradeManager:
         self,
         config: AppConfig,
         logger: logging.Logger,
-        alpaca_client: AlpacaClient,
-        data_manager: DataManager,
-        gpt_client: GPTClient,
+        broker_clients: Mapping[str, Any] | Any | None = None,
+        data_manager: DataManager | None = None,
+        gpt_client: GPTClient | None = None,
+        *,
+        alpaca_client: Any | None = None,
     ) -> None:
         self.config = config
         self.logger = logger.getChild("trade_manager")
-        self.alpaca_client = alpaca_client
+        # Accept either the new ``broker_clients`` mapping or the legacy
+        # single-broker ``alpaca_client`` keyword (still used by tests).
+        if isinstance(broker_clients, Mapping):
+            self._brokers: dict[str, Any] = dict(broker_clients)
+        elif broker_clients is not None:
+            self._brokers = {PROVIDER_ALPACA: broker_clients}
+        else:
+            self._brokers = {}
+        if alpaca_client is not None:
+            self._brokers[PROVIDER_ALPACA] = alpaca_client
+        if data_manager is None:
+            raise TypeError("TradeManager requires a data_manager")
+        if gpt_client is None:
+            raise TypeError("TradeManager requires a gpt_client")
         self.data_manager = data_manager
         self.gpt_client = gpt_client
+
+    @property
+    def alpaca_client(self) -> Any | None:
+        return self._brokers.get(PROVIDER_ALPACA)
+
+    @property
+    def binance_client(self) -> Any | None:
+        return self._brokers.get(PROVIDER_BINANCE)
+
+    @property
+    def brokers(self) -> dict[str, Any]:
+        return self._brokers
+
+    def broker(self, provider: str) -> Any | None:
+        return self._brokers.get(provider)
+
+    def _trade_provider(self, trade: dict[str, Any]) -> str:
+        return str(trade.get("provider") or PROVIDER_ALPACA).lower()
+
+    def _trade_broker(self, trade: dict[str, Any]) -> Any | None:
+        return self.broker(self._trade_provider(trade))
 
     @staticmethod
     def _as_float(value: Any) -> float | None:
@@ -78,9 +126,13 @@ class TradeManager:
         category: str,
         position: Any | None = None,
         fallback: float | None = None,
+        provider: str = PROVIDER_ALPACA,
     ) -> float:
+        broker = self.broker(provider) or self.alpaca_client
         try:
-            return self.alpaca_client.get_latest_price(symbol, category)
+            if broker is None:
+                raise RuntimeError(f"No broker registered for provider {provider}")
+            return broker.get_latest_price(symbol, category)
         except Exception:
             current_price = self._as_float(getattr(position, "current_price", None)) if position is not None else None
             if current_price is not None:
@@ -101,7 +153,19 @@ class TradeManager:
         entry_price: float | None,
         trailing_take_profit_distance: float | None,
         trailing_take_profit_activation_pct: float | None,
+        min_profit_buffer_pct: float = 0.0,
     ) -> float | None:
+        """Compute the trailing TP trigger, floored at entry + min profit buffer.
+
+        Without the floor, a trade with ``distance > (HWM − entry)`` would
+        trigger below the entry price and close at a loss labelled
+        ``TRAILING_TAKE_PROFIT``. The floor guarantees that whenever the
+        trailing arms it will close, at worst, at a small minimum profit —
+        which is what "take profit" is supposed to mean. The signal-side
+        validator (`_validate_trailing_take_profit_pair`) keeps the floor
+        from ever silently changing GPT's intent on healthy signals.
+        """
+
         if (
             entry_price is None
             or entry_price <= 0
@@ -114,7 +178,38 @@ class TradeManager:
         activation_threshold = entry_price * (1 + trailing_take_profit_activation_pct / 100.0)
         if high_water_mark < activation_threshold:
             return None
-        return round(high_water_mark - trailing_take_profit_distance, 8)
+        raw_trigger = high_water_mark - trailing_take_profit_distance
+        floor = entry_price * (1 + max(min_profit_buffer_pct, 0.0) / 100.0)
+        return round(max(raw_trigger, floor), 8)
+
+    @staticmethod
+    def _trailing_take_profit_pair_is_valid(
+        entry_price: float | None,
+        trailing_take_profit_distance: float | None,
+        trailing_take_profit_activation_pct: float | None,
+        min_profit_buffer_pct: float,
+    ) -> bool:
+        """Return True when (activation_pct, distance) lock in a profit at arming.
+
+        Invariant: at the moment the trailing first arms, ``HWM == entry × (1
+        + activation_pct/100)`` and the trigger is ``HWM − distance``. We
+        require ``trigger ≥ entry × (1 + buffer/100)``, which simplifies to
+        ``activation_pct ≥ buffer + (distance / entry) × 100``. A pair that
+        violates this would arm with the trigger already below entry (loss
+        territory) — the runtime floor would mask it but the trailing would
+        not actually "trail" anything, so we reject such pairs at the source.
+        """
+
+        if entry_price is None or entry_price <= 0:
+            return False
+        if trailing_take_profit_distance is None or trailing_take_profit_activation_pct is None:
+            # Caller is responsible for the "both null" case; here we only
+            # validate when the pair is set.
+            return False
+        if trailing_take_profit_distance <= 0 or trailing_take_profit_activation_pct <= 0:
+            return False
+        distance_pct = (trailing_take_profit_distance / entry_price) * 100.0
+        return trailing_take_profit_activation_pct >= distance_pct + max(min_profit_buffer_pct, 0.0)
 
     @staticmethod
     def _downside_close_reason(
@@ -167,25 +262,59 @@ class TradeManager:
             (f"-{int(min_age_days)} days",),
         )
 
-    def get_symbol_trades(self, symbol: str) -> list[dict[str, Any]]:
+    def get_symbol_trades(self, symbol: str, provider: str | None = None) -> list[dict[str, Any]]:
+        if provider:
+            return fetch_all(
+                self.config.db_trades,
+                """
+                SELECT * FROM trades
+                WHERE symbol = ? AND provider = ? AND status IN ('PENDING', 'OPEN')
+                ORDER BY created_at
+                """,
+                (symbol, provider),
+            )
         return fetch_all(
             self.config.db_trades,
             "SELECT * FROM trades WHERE symbol = ? AND status IN ('PENDING', 'OPEN') ORDER BY created_at",
             (symbol,),
         )
 
-    def count_active_trades(self, category: str) -> int:
-        row = fetch_one(
-            self.config.db_trades,
-            "SELECT COUNT(*) AS count FROM trades WHERE category = ? AND status IN ('PENDING', 'OPEN')",
-            (category,),
-        )
+    def count_active_trades(self, category: str, provider: str | None = None) -> int:
+        if provider:
+            row = fetch_one(
+                self.config.db_trades,
+                """
+                SELECT COUNT(*) AS count FROM trades
+                WHERE category = ? AND provider = ? AND status IN ('PENDING', 'OPEN')
+                """,
+                (category, provider),
+            )
+        else:
+            row = fetch_one(
+                self.config.db_trades,
+                "SELECT COUNT(*) AS count FROM trades WHERE category = ? AND status IN ('PENDING', 'OPEN')",
+                (category,),
+            )
         return int(row["count"]) if row else 0
 
-    def compute_allocated_capital(self) -> float:
-        cash = self.alpaca_client.get_available_cash()
-        slots = self.config.max_open_trades_stock + self.config.max_open_trades_crypto
-        active = len(self.get_open_or_pending_trades())
+    def compute_allocated_capital(self, provider: str = PROVIDER_ALPACA) -> float:
+        broker = self.broker(provider)
+        if broker is None:
+            return 0.0
+        cash = broker.get_available_cash()
+        if provider == PROVIDER_BINANCE:
+            slots = max(int(self.config.max_open_trades_binance), 1)
+            active = self.count_active_trades("CRYPTO", provider=PROVIDER_BINANCE)
+        else:
+            slots = self.config.max_open_trades_stock + self.config.max_open_trades_crypto
+            # For Alpaca we use the legacy aggregate (across STOCK + CRYPTO)
+            # because the cash pool itself is shared between the two
+            # categories on Alpaca's side.
+            active = sum(
+                1
+                for t in self.get_open_or_pending_trades()
+                if self._trade_provider(t) == PROVIDER_ALPACA
+            )
         available_slots = max(slots - active, 1)
         return round(cash / available_slots, 2)
 
@@ -241,9 +370,44 @@ class TradeManager:
     def _max_acceptable_crypto_entry_price(self, target_entry_price: float) -> float:
         return target_entry_price * (1 + (self.config.crypto_entry_max_chase_bps / 10_000.0))
 
+    def _max_acceptable_crypto_entry_price_for(self, trade: dict[str, Any], target_entry_price: float) -> float:
+        provider = self._trade_provider(trade)
+        if provider == PROVIDER_BINANCE:
+            chase_bps = int(self.config.binance_entry_max_chase_bps)
+        else:
+            chase_bps = int(self.config.crypto_entry_max_chase_bps)
+        return target_entry_price * (1 + (chase_bps / 10_000.0))
+
+    def _pending_reprice_minutes(self, trade: dict[str, Any]) -> int:
+        if self._trade_provider(trade) == PROVIDER_BINANCE:
+            return int(self.config.binance_pending_reprice_minutes)
+        return int(self.config.crypto_pending_reprice_minutes)
+
+    def _pending_cancel_minutes(self, trade: dict[str, Any]) -> int:
+        if self._trade_provider(trade) == PROVIDER_BINANCE:
+            return int(self.config.binance_pending_cancel_minutes)
+        return int(self.config.crypto_pending_cancel_minutes)
+
+    def _cancel_broker_order(self, trade: dict[str, Any], order_id: str) -> None:
+        broker = self._trade_broker(trade)
+        if broker is None:
+            return
+        provider = self._trade_provider(trade)
+        try:
+            if provider == PROVIDER_BINANCE:
+                broker.cancel_order_for_symbol(str(trade["symbol"]), str(order_id))
+            else:
+                broker.cancel_order(str(order_id))
+        except Exception as exc:
+            if "not found" not in str(exc).lower():
+                raise
+
     def _refresh_live_crypto_pending_trade(self, trade: dict[str, Any], order: Any) -> None:
         target_entry_price = self._as_float(trade.get("target_entry_price")) or self._as_float(trade.get("entry_price"))
         if target_entry_price is None or target_entry_price <= 0:
+            return
+        broker = self._trade_broker(trade)
+        if broker is None:
             return
 
         trade_age_minutes = self._minutes_since(parse_datetime(trade.get("created_at"))) or 0.0
@@ -251,7 +415,7 @@ class TradeManager:
         order_age_minutes = self._minutes_since(order_age_anchor) or 0.0
 
         try:
-            quote = self.alpaca_client.get_latest_quote(str(trade["symbol"]), str(trade["category"]))
+            quote = broker.get_latest_quote(str(trade["symbol"]), str(trade["category"]))
         except Exception:
             self.logger.warning("Could not fetch latest quote for pending crypto trade %s", trade["id"], exc_info=True)
             return
@@ -260,14 +424,11 @@ class TradeManager:
         if live_ask is None or live_ask <= 0:
             return
 
-        if live_ask > self._max_acceptable_crypto_entry_price(target_entry_price):
-            order_id = trade.get("alpaca_order_id")
+        order_id = trade.get("alpaca_order_id")
+
+        if live_ask > self._max_acceptable_crypto_entry_price_for(trade, target_entry_price):
             if order_id:
-                try:
-                    self.alpaca_client.cancel_order(str(order_id))
-                except Exception as exc:
-                    if "not found" not in str(exc).lower():
-                        raise
+                self._cancel_broker_order(trade, str(order_id))
             self._cancel_pending_trade_record(trade, "ENTRY_PRICE_MOVED")
             self.logger.info(
                 "Cancelled pending crypto trade %s because live ask %s moved above the allowed target drift from %s",
@@ -277,31 +438,21 @@ class TradeManager:
             )
             return
 
-        if trade_age_minutes >= self.config.crypto_pending_cancel_minutes:
-            order_id = trade.get("alpaca_order_id")
+        if trade_age_minutes >= self._pending_cancel_minutes(trade):
             if order_id:
-                try:
-                    self.alpaca_client.cancel_order(str(order_id))
-                except Exception as exc:
-                    if "not found" not in str(exc).lower():
-                        raise
+                self._cancel_broker_order(trade, str(order_id))
             self._cancel_pending_trade_record(trade, "CRYPTO_ENTRY_TIMEOUT")
             self.logger.info("Cancelled pending crypto trade %s after %s minutes without a fill", trade["id"], round(trade_age_minutes, 2))
             return
 
-        if order_age_minutes < self.config.crypto_pending_reprice_minutes:
+        if order_age_minutes < self._pending_reprice_minutes(trade):
             return
 
-        order_id = trade.get("alpaca_order_id")
         if order_id:
-            try:
-                self.alpaca_client.cancel_order(str(order_id))
-            except Exception as exc:
-                if "not found" not in str(exc).lower():
-                    raise
+            self._cancel_broker_order(trade, str(order_id))
 
         try:
-            replacement_order = self.alpaca_client.place_limit_entry_order(
+            replacement_order = broker.place_limit_entry_order(
                 symbol=str(trade["symbol"]),
                 category=str(trade["category"]),
                 entry_price=target_entry_price,
@@ -324,12 +475,14 @@ class TradeManager:
         signal: dict[str, Any],
         order_payload: dict[str, Any],
         allocated_capital: float,
+        provider: str = PROVIDER_ALPACA,
     ) -> None:
         order = order_payload["order"]
         trailing_take_profit_distance = self._as_float(signal.get("trailing_take_profit_distance"))
         trailing_take_profit_activation_pct = self._as_float(signal.get("trailing_take_profit_activation_pct"))
         trailing_stop_distance = self._as_float(signal.get("trailing_stop_distance"))
         submitted_entry_price = self._as_float(order_payload.get("submitted_entry_price")) or float(signal["entry_price"])
+        account_currency = self.config.provider_account_currency(provider)
         with db_cursor(self.config.db_trades) as cursor:
             cursor.execute(
                 """
@@ -338,8 +491,9 @@ class TradeManager:
                     take_profit, trailing_take_profit_distance, trailing_take_profit_activation_pct,
                     stop_loss, trailing_stop_distance,
                     alpaca_order_id, client_order_id,
-                    reasoning, confidence, trade_score
-                ) VALUES (?, ?, 'LONG', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    reasoning, confidence, trade_score,
+                    provider, account_currency
+                ) VALUES (?, ?, 'LONG', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     symbol,
@@ -358,9 +512,11 @@ class TradeManager:
                     signal.get("reasoning"),
                     signal.get("confidence"),
                     self._as_float(signal.get("trade_score")),
+                    provider,
+                    account_currency,
                 ),
             )
-        self.logger.info("Stored new pending trade for %s", symbol)
+        self.logger.info("Stored new pending trade for %s on %s", symbol, provider)
 
     def _signal_has_required_levels(self, signal: dict[str, Any]) -> bool:
         for field in ("entry_price", "take_profit", "stop_loss"):
@@ -399,6 +555,27 @@ class TradeManager:
                 trailing_take_profit_activation_pct,
             )
             return False
+        if trailing_take_profit_distance is not None and trailing_take_profit_activation_pct is not None:
+            entry_price = float(signal["entry_price"])
+            min_buffer = float(self.config.trailing_tp_min_profit_buffer_pct)
+            if not self._trailing_take_profit_pair_is_valid(
+                entry_price,
+                float(trailing_take_profit_distance),
+                float(trailing_take_profit_activation_pct),
+                min_buffer,
+            ):
+                self.logger.warning(
+                    "GPT returned OPEN for %s with a trailing-TP pair that would arm below entry "
+                    "(entry=%s, distance=%s ≈ %.3f%%, activation_pct=%s, required min %s%% above distance%%); "
+                    "skipping trade",
+                    signal.get("symbol"),
+                    entry_price,
+                    trailing_take_profit_distance,
+                    (float(trailing_take_profit_distance) / entry_price) * 100.0 if entry_price > 0 else 0.0,
+                    trailing_take_profit_activation_pct,
+                    min_buffer,
+                )
+                return False
         trailing_stop_distance = signal.get("trailing_stop_distance")
         if trailing_stop_distance is None:
             return True
@@ -411,23 +588,38 @@ class TradeManager:
             return False
         return True
 
-    def _available_trade_slots(self, category: str) -> int:
-        max_trades = self.config.max_open_trades_stock if category == "STOCK" else self.config.max_open_trades_crypto
-        return max(max_trades - self.count_active_trades(category), 0)
+    def _available_trade_slots(self, category: str, provider: str = PROVIDER_ALPACA) -> int:
+        if provider == PROVIDER_BINANCE:
+            max_trades = int(self.config.max_open_trades_binance)
+        elif category == "STOCK":
+            max_trades = int(self.config.max_open_trades_stock)
+        else:
+            max_trades = int(self.config.max_open_trades_crypto)
+        return max(max_trades - self.count_active_trades(category, provider=provider), 0)
 
     def _build_batch_payloads(
         self,
         category: str,
         symbols: list[str],
+        provider: str = PROVIDER_ALPACA,
     ) -> list[dict[str, Any]]:
+        broker = self.broker(provider)
         payloads: list[dict[str, Any]] = []
         for symbol in symbols:
-            if self.get_symbol_trades(symbol):
+            if self.get_symbol_trades(symbol, provider=provider):
                 self.logger.debug("Skipping %s because an active trade already exists for the symbol", symbol)
                 continue
-            if self.alpaca_client.get_open_position(symbol) is not None:
-                self.logger.debug("Skipping %s because Alpaca already reports an open position", symbol)
-                continue
+            if broker is not None:
+                try:
+                    if broker.get_open_position(symbol) is not None:
+                        self.logger.debug(
+                            "Skipping %s because %s already reports an open position", symbol, provider
+                        )
+                        continue
+                except Exception:
+                    self.logger.warning(
+                        "Position lookup failed for %s/%s; continuing", provider, symbol, exc_info=True
+                    )
             candles = self.data_manager.get_symbol_history(symbol, limit=260)
             if not candles:
                 self.logger.warning("No market data found for %s, skipping batch analysis", symbol)
@@ -443,50 +635,88 @@ class TradeManager:
 
         return sorted(signals, key=sort_key, reverse=True)
 
-    def _open_trade_from_signal(self, category: str, symbol: str, signal: dict[str, Any]) -> bool:
-        if self.get_symbol_trades(symbol):
+    def _open_trade_from_signal(
+        self,
+        category: str,
+        symbol: str,
+        signal: dict[str, Any],
+        provider: str = PROVIDER_ALPACA,
+    ) -> bool:
+        if self.get_symbol_trades(symbol, provider=provider):
             self.logger.debug("Skipping %s because an active trade already exists for the symbol", symbol)
             return False
-        if self.alpaca_client.get_open_position(symbol) is not None:
-            self.logger.debug("Skipping %s because Alpaca already reports an open position", symbol)
+        broker = self.broker(provider)
+        if broker is None:
+            self.logger.warning("Skipping %s because %s broker is not configured", symbol, provider)
             return False
-        if self._available_trade_slots(category) <= 0:
-            self.logger.debug("Skipping %s because no %s slots are available", symbol, category)
+        try:
+            if broker.get_open_position(symbol) is not None:
+                self.logger.debug(
+                    "Skipping %s because %s already reports an open position", symbol, provider
+                )
+                return False
+        except Exception:
+            self.logger.warning(
+                "Position lookup failed for %s/%s; continuing", provider, symbol, exc_info=True
+            )
+        if self._available_trade_slots(category, provider=provider) <= 0:
+            self.logger.debug(
+                "Skipping %s because no %s/%s slots are available", symbol, provider, category
+            )
             return False
         if not self._signal_has_required_levels(signal):
             return False
 
-        allocated_capital = self.compute_allocated_capital()
+        allocated_capital = self.compute_allocated_capital(provider=provider)
         try:
-            order_payload = self.alpaca_client.place_limit_entry_order(
+            order_payload = broker.place_limit_entry_order(
                 symbol=symbol,
                 category=category,
                 entry_price=float(signal["entry_price"]),
                 allocated_capital=allocated_capital,
             )
         except Exception as exc:
-            if self.alpaca_client.is_insufficient_balance_error(exc):
+            if broker.is_insufficient_balance_error(exc):
                 self.logger.warning(
                     "Skipping %s because available capital is insufficient for the proposed entry",
                     symbol,
                 )
                 return False
             if category == "CRYPTO" and "too far above target" in str(exc).lower():
-                self.logger.info("Skipping %s because the live crypto ask moved too far above the GPT target", symbol)
+                self.logger.info(
+                    "Skipping %s because the live %s ask moved too far above the GPT target",
+                    symbol,
+                    provider,
+                )
                 return False
             raise
-        self._save_new_trade(category, symbol, signal, order_payload, allocated_capital)
+        self._save_new_trade(category, symbol, signal, order_payload, allocated_capital, provider=provider)
         return True
 
-    def maybe_open_trade(self, category: str, symbol: str) -> None:
-        if self.get_symbol_trades(symbol):
+    def maybe_open_trade(self, category: str, symbol: str, provider: str = PROVIDER_ALPACA) -> None:
+        broker = self.broker(provider)
+        if broker is None:
+            return
+        if self.get_symbol_trades(symbol, provider=provider):
             self.logger.debug("Skipping %s because an active trade already exists for the symbol", symbol)
             return
-        if self.alpaca_client.get_open_position(symbol) is not None:
-            self.logger.debug("Skipping %s because Alpaca already reports an open position", symbol)
-            return
-        if self._available_trade_slots(category) <= 0:
-            self.logger.debug("Skipping %s because the max number of active %s trades has been reached", symbol, category)
+        try:
+            if broker.get_open_position(symbol) is not None:
+                self.logger.debug(
+                    "Skipping %s because %s already reports an open position", symbol, provider
+                )
+                return
+        except Exception:
+            self.logger.warning(
+                "Position lookup failed for %s/%s; continuing", provider, symbol, exc_info=True
+            )
+        if self._available_trade_slots(category, provider=provider) <= 0:
+            self.logger.debug(
+                "Skipping %s because the max number of active %s/%s trades has been reached",
+                symbol,
+                provider,
+                category,
+            )
             return
 
         candles = self.data_manager.get_symbol_history(symbol)
@@ -494,14 +724,15 @@ class TradeManager:
             self.logger.warning("No market data found for %s, skipping new trade decision", symbol)
             return
 
-        signal = self.gpt_client.request_new_signal(symbol, category, candles, [])
+        signal = self.gpt_client.request_new_signal(symbol, category, candles, [], provider=provider)
         if signal["action"] != "OPEN":
             self.logger.debug("GPT skipped %s", symbol)
             return
-        self._open_trade_from_signal(category, symbol, signal)
+        self._open_trade_from_signal(category, symbol, signal, provider=provider)
 
     def _activate_trade_from_entry_fill(self, trade: dict[str, Any], order: Any) -> None:
-        position = self.alpaca_client.get_open_position(trade["symbol"])
+        broker = self._trade_broker(trade)
+        position = broker.get_open_position(trade["symbol"]) if broker is not None else None
         filled_quantity = (
             self._as_float(getattr(order, "filled_qty", None))
             or self._as_float(getattr(position, "qty", None))
@@ -517,6 +748,7 @@ class TradeManager:
             trade["category"],
             position=position,
             fallback=entry_price,
+            provider=self._trade_provider(trade),
         )
         high_water_mark = max(
             self._as_float(trade.get("high_water_mark")) or entry_price,
@@ -532,6 +764,7 @@ class TradeManager:
             entry_price,
             self._as_float(trade.get("trailing_take_profit_distance")),
             self._as_float(trade.get("trailing_take_profit_activation_pct")),
+            self.config.trailing_tp_min_profit_buffer_pct,
         )
         pnl = (current_price - entry_price) * filled_quantity
         open_timestamp = self._order_timestamp(order, "filled_at", "updated_at", "submitted_at") or utc_now()
@@ -557,20 +790,32 @@ class TradeManager:
             )
         self.logger.info("Trade %s moved from PENDING to OPEN", trade["id"])
 
+    def _fetch_trade_order(self, trade: dict[str, Any], order_id: str) -> Any | None:
+        broker = self._trade_broker(trade)
+        if broker is None:
+            return None
+        try:
+            if self._trade_provider(trade) == PROVIDER_BINANCE:
+                return broker.get_order_for_symbol(str(trade["symbol"]), str(order_id))
+            return broker.get_order(str(order_id))
+        except Exception:
+            self.logger.warning(
+                "Could not fetch order %s for trade %s; falling back to position lookup",
+                order_id,
+                trade["id"],
+                exc_info=True,
+            )
+            return None
+
     def sync_pending_trade(self, trade: dict[str, Any]) -> None:
+        broker = self._trade_broker(trade)
+        if broker is None:
+            return
         order = None
         if trade.get("alpaca_order_id"):
-            try:
-                order = self.alpaca_client.get_order(str(trade["alpaca_order_id"]))
-            except Exception:
-                self.logger.warning(
-                    "Could not fetch entry order %s for trade %s; falling back to position lookup",
-                    trade["alpaca_order_id"],
-                    trade["id"],
-                    exc_info=True,
-                )
+            order = self._fetch_trade_order(trade, str(trade["alpaca_order_id"]))
 
-        position = self.alpaca_client.get_open_position(trade["symbol"])
+        position = broker.get_open_position(trade["symbol"])
         if position is not None:
             self._activate_trade_from_entry_fill(trade, order or position)
             return
@@ -582,7 +827,7 @@ class TradeManager:
         if status in self.FILLED_ENTRY_STATUSES:
             if status == "partially_filled":
                 try:
-                    self.alpaca_client.cancel_order(str(trade["alpaca_order_id"]))
+                    self._cancel_broker_order(trade, str(trade["alpaca_order_id"]))
                 except Exception:
                     self.logger.warning("Could not cancel partially-filled remainder for trade %s", trade["id"], exc_info=True)
             self._activate_trade_from_entry_fill(trade, order)
@@ -623,7 +868,9 @@ class TradeManager:
             self.logger.warning("No market data found for stale pending trade %s (%s); skipping GPT review", trade["id"], symbol)
             return
 
-        review = self.gpt_client.request_pending_trade_review(trade, candles)
+        review = self.gpt_client.request_pending_trade_review(
+            trade, candles, provider=self._trade_provider(trade)
+        )
         action = str(review.get("action", "")).upper()
         reasoning = str(review.get("reasoning", "")).strip()
         self.logger.info(
@@ -639,11 +886,7 @@ class TradeManager:
 
         order_id = trade.get("alpaca_order_id")
         if order_id:
-            try:
-                self.alpaca_client.cancel_order(str(order_id))
-            except Exception as exc:
-                if "not found" not in str(exc).lower():
-                    raise
+            self._cancel_broker_order(trade, str(order_id))
 
         self._cancel_pending_trade_record(
             trade,
@@ -676,11 +919,15 @@ class TradeManager:
     def _request_market_close(self, trade: dict[str, Any], close_reason: str, trigger_price: float) -> None:
         if trade.get("exit_order_id"):
             return
+        broker = self._trade_broker(trade)
+        if broker is None:
+            self._mark_trade_closed(trade, close_reason, trigger_price)
+            return
         try:
-            order = self.alpaca_client.close_position_market(trade["symbol"])
+            order = broker.close_position_market(trade["symbol"])
         except Exception as exc:
             message = str(exc).lower()
-            if "position does not exist" in message or "not found" in message:
+            if "position does not exist" in message or "not found" in message or "no open" in message:
                 self._mark_trade_closed(trade, close_reason, trigger_price)
                 return
             raise
@@ -713,7 +960,13 @@ class TradeManager:
         exit_order_id = trade.get("exit_order_id")
         if not exit_order_id:
             return
-        order = self.alpaca_client.get_order(str(exit_order_id))
+        broker = self._trade_broker(trade)
+        if broker is None:
+            return
+        order = self._fetch_trade_order(trade, str(exit_order_id))
+        if order is None:
+            # Without order context we can't decide; leave the trade as-is.
+            return
         status = self._order_status(order)
         if status == "filled":
             close_price = self._as_float(getattr(order, "filled_avg_price", None)) or float(trade.get("current_price") or trade["entry_price"])
@@ -726,7 +979,7 @@ class TradeManager:
             )
             return
         if status in self.TERMINAL_EXIT_STATUSES:
-            position = self.alpaca_client.get_open_position(trade["symbol"])
+            position = broker.get_open_position(trade["symbol"])
             if position is None:
                 self._close_trade_without_position(trade)
                 return
@@ -742,7 +995,7 @@ class TradeManager:
                 )
             self.logger.warning("Exit order for trade %s ended with %s; trade remains OPEN", trade["id"], status)
             return
-        if self.alpaca_client.get_open_position(trade["symbol"]) is None:
+        if broker.get_open_position(trade["symbol"]) is None:
             self._close_trade_without_position(trade)
 
     def refresh_open_trade_protections(self) -> None:
@@ -768,7 +1021,9 @@ class TradeManager:
             self.logger.warning("No market data found for open trade %s (%s); skipping GPT protection review", trade["id"], symbol)
             return
 
-        review = self.gpt_client.request_open_trade_protection_review(trade, candles)
+        review = self.gpt_client.request_open_trade_protection_review(
+            trade, candles, provider=self._trade_provider(trade)
+        )
         proposed_distance = self._as_float(review.get("trailing_take_profit_distance"))
         raw_distance = review.get("trailing_take_profit_distance")
         if raw_distance is not None and proposed_distance is None:
@@ -811,18 +1066,41 @@ class TradeManager:
             )
             return
 
+        entry_price = float(trade["entry_price"])
+        min_buffer = float(self.config.trailing_tp_min_profit_buffer_pct)
+        if proposed_distance is not None and proposed_activation_pct is not None:
+            if not self._trailing_take_profit_pair_is_valid(
+                entry_price,
+                proposed_distance,
+                proposed_activation_pct,
+                min_buffer,
+            ):
+                self.logger.warning(
+                    "GPT proposed a trailing-TP pair that would arm below entry for trade %s (%s) "
+                    "(entry=%s, distance=%s ≈ %.3f%%, activation_pct=%s, required min %s%% above distance%%); "
+                    "keeping previous values",
+                    trade["id"],
+                    symbol,
+                    entry_price,
+                    proposed_distance,
+                    (proposed_distance / entry_price) * 100.0 if entry_price > 0 else 0.0,
+                    proposed_activation_pct,
+                    min_buffer,
+                )
+                return
+
         current_distance = self._as_float(trade.get("trailing_take_profit_distance"))
         current_activation_pct = self._as_float(trade.get("trailing_take_profit_activation_pct"))
         if current_distance == proposed_distance and current_activation_pct == proposed_activation_pct:
             return
 
-        entry_price = float(trade["entry_price"])
         current_high_water_mark = self._as_float(trade.get("high_water_mark")) or entry_price
         trailing_take_profit_price = self._compute_trailing_take_profit_price(
             current_high_water_mark,
             entry_price,
             proposed_distance,
             proposed_activation_pct,
+            self.config.trailing_tp_min_profit_buffer_pct,
         )
         with db_cursor(self.config.db_trades) as cursor:
             cursor.execute(
@@ -849,7 +1127,10 @@ class TradeManager:
             self._sync_exit_order(trade)
             return
 
-        position = self.alpaca_client.get_open_position(trade["symbol"])
+        broker = self._trade_broker(trade)
+        if broker is None:
+            return
+        position = broker.get_open_position(trade["symbol"])
         if position is None:
             self._close_trade_without_position(trade)
             return
@@ -860,6 +1141,7 @@ class TradeManager:
             trade["category"],
             position=position,
             fallback=float(trade.get("current_price") or trade["entry_price"]),
+            provider=self._trade_provider(trade),
         )
         entry_price = float(trade["entry_price"])
         stop_loss = self._as_float(trade.get("stop_loss"))
@@ -872,6 +1154,7 @@ class TradeManager:
             entry_price,
             trailing_take_profit_distance,
             trailing_take_profit_activation_pct,
+            self.config.trailing_tp_min_profit_buffer_pct,
         )
         trailing_stop_price = self._compute_trailing_stop_price(
             high_water_mark,
@@ -903,7 +1186,9 @@ class TradeManager:
         if close_reason:
             self._request_market_close(trade, close_reason, current_price)
 
-    def sync_alpaca_state(self) -> None:
+    def sync_broker_state(self) -> None:
+        """Iterate every active trade and reconcile with the matching broker."""
+
         for trade in self.get_open_or_pending_trades():
             try:
                 if trade["status"] == "PENDING":
@@ -913,61 +1198,111 @@ class TradeManager:
             except Exception:
                 self.logger.exception("Failed to sync trade %s", trade["id"])
 
-    def evaluate_cycle(self, universe: dict[str, list[str]]) -> None:
-        for category, symbols in universe.items():
-            try:
-                available_slots = self._available_trade_slots(category)
-                if available_slots <= 0:
-                    self.logger.debug("Skipping %s batch evaluation because no slots are available", category)
-                    continue
+    # Legacy alias retained for any external caller still using the
+    # Alpaca-flavoured method name.
+    sync_alpaca_state = sync_broker_state
 
-                symbol_payloads = self._build_batch_payloads(category, list(symbols))
-                if not symbol_payloads:
-                    continue
-
-                batch_response = self.gpt_client.request_batch_trade_signals(
-                    category=category,
-                    symbol_payloads=symbol_payloads,
-                    existing_trades=[],
-                    max_new_trades=available_slots,
+    def _evaluate_provider_category(
+        self,
+        provider: str,
+        category: str,
+        symbols: list[str],
+    ) -> None:
+        try:
+            available_slots = self._available_trade_slots(category, provider=provider)
+            if available_slots <= 0:
+                self.logger.debug(
+                    "Skipping %s/%s batch evaluation because no slots are available",
+                    provider,
+                    category,
                 )
-                by_symbol = {payload["symbol"]: payload for payload in symbol_payloads}
-                candidate_signals = [
-                    signal
-                    for signal in batch_response.get("signals", [])
-                    if signal.get("action") == "OPEN" and str(signal.get("symbol")) in by_symbol
-                ]
-                ranked_signals = self._rank_signals(candidate_signals)
-                if ranked_signals:
-                    self.logger.info(
-                        "Top %s signals: %s",
-                        category,
-                        [
-                            {
-                                "symbol": signal.get("symbol"),
-                                "trade_score": self._as_float(signal.get("trade_score")),
-                                "confidence": self._as_float(signal.get("confidence")),
-                            }
-                            for signal in ranked_signals
-                        ],
-                    )
+                return
 
-                opened = 0
-                for signal in ranked_signals:
-                    if self._available_trade_slots(category) <= 0:
-                        break
-                    symbol = str(signal["symbol"])
-                    if self._open_trade_from_signal(category, symbol, signal):
-                        opened += 1
-                self.logger.info("Opened %s new %s trades in this cycle", opened, category)
-            except Exception:
-                self.logger.exception("Failed to evaluate %s universe batch", category)
+            symbol_payloads = self._build_batch_payloads(category, list(symbols), provider=provider)
+            if not symbol_payloads:
+                return
 
-    def symbols_to_monitor(self, universe: dict[str, list[str]]) -> dict[str, str]:
-        monitored = {symbol: "STOCK" for symbol in universe.get("STOCK", [])}
-        monitored.update({symbol: "CRYPTO" for symbol in universe.get("CRYPTO", [])})
+            batch_response = self.gpt_client.request_batch_trade_signals(
+                category=category,
+                symbol_payloads=symbol_payloads,
+                existing_trades=[],
+                max_new_trades=available_slots,
+                provider=provider,
+            )
+            by_symbol = {payload["symbol"]: payload for payload in symbol_payloads}
+            candidate_signals = [
+                signal
+                for signal in batch_response.get("signals", [])
+                if signal.get("action") == "OPEN" and str(signal.get("symbol")) in by_symbol
+            ]
+            ranked_signals = self._rank_signals(candidate_signals)
+            if ranked_signals:
+                self.logger.info(
+                    "Top %s/%s signals: %s",
+                    provider,
+                    category,
+                    [
+                        {
+                            "symbol": signal.get("symbol"),
+                            "trade_score": self._as_float(signal.get("trade_score")),
+                            "confidence": self._as_float(signal.get("confidence")),
+                        }
+                        for signal in ranked_signals
+                    ],
+                )
+
+            opened = 0
+            for signal in ranked_signals:
+                if self._available_trade_slots(category, provider=provider) <= 0:
+                    break
+                symbol = str(signal["symbol"])
+                if self._open_trade_from_signal(category, symbol, signal, provider=provider):
+                    opened += 1
+            self.logger.info(
+                "Opened %s new %s/%s trades in this cycle", opened, provider, category
+            )
+        except Exception:
+            self.logger.exception("Failed to evaluate %s/%s universe batch", provider, category)
+
+    def evaluate_cycle(self, universe: Mapping[str, Any]) -> None:
+        """Iterate the provider-tagged universe and run a GPT cycle per provider/category."""
+
+        for provider, categories in universe.items():
+            if not isinstance(categories, dict):
+                # Legacy flat dict — assume Alpaca.
+                if isinstance(categories, list):
+                    self._evaluate_provider_category(PROVIDER_ALPACA, str(provider).upper(), list(categories))
+                continue
+            if self.broker(provider) is None:
+                continue
+            for category, symbols in categories.items():
+                self._evaluate_provider_category(provider, str(category).upper(), list(symbols or []))
+
+    def symbols_to_monitor(self, universe: Mapping[str, Any]) -> dict[str, dict[str, str]]:
+        """Return ``{symbol: {category, provider}}`` for the data manager to refresh.
+
+        The data manager understands the dict shape and dispatches to the
+        right broker. Existing pending/open trades are always included so
+        in-flight positions stay refreshed even if a symbol fell out of the
+        universe.
+        """
+
+        monitored: dict[str, dict[str, str]] = {}
+        for provider, categories in universe.items():
+            if not isinstance(categories, dict):
+                if isinstance(categories, list):
+                    for sym in categories:
+                        monitored[sym] = {"category": str(provider).upper(), "provider": PROVIDER_ALPACA}
+                continue
+            for category, symbols in categories.items():
+                cat = str(category).upper()
+                for sym in symbols or []:
+                    monitored[sym] = {"category": cat, "provider": str(provider)}
         for trade in self.get_open_or_pending_trades():
-            monitored[trade["symbol"]] = trade["category"]
+            monitored[trade["symbol"]] = {
+                "category": str(trade["category"]),
+                "provider": str(trade.get("provider") or PROVIDER_ALPACA),
+            }
         return monitored
 
     def weekly_summary(self) -> dict[str, Any]:
