@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { History, Save, Undo2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,18 +14,25 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { StatusBanner } from "@/components/ui/status-banner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
+import { useProviders } from "@/lib/use-providers";
 import {
-  PROMPT_KEYS,
+  ALPACA_PROMPT_KEYS,
+  BINANCE_PROMPT_KEYS,
+  PROVIDER_LABELS,
+  type Provider,
   type PromptDetail,
   type PromptKey,
   type PromptVersion,
 } from "@/lib/types";
 
 const PROMPT_LABELS: Record<PromptKey, string> = {
+  // Alpaca
   new_signal: "new_signal — single-symbol entry decision",
   batch_signals: "batch_signals — batch entry analysis (6×/day)",
   pending_review: "pending_review — daily review of stale PENDING",
@@ -34,12 +41,26 @@ const PROMPT_LABELS: Record<PromptKey, string> = {
   universe_shortlist: "universe_shortlist — weekly shortlist phase",
   universe_final: "universe_final — final consolidation (legacy)",
   universe_final_from_dossiers: "universe_final_from_dossiers — final from dossiers",
+  // Binance
+  binance_new_signal: "binance_new_signal — single-pair entry decision",
+  binance_batch_signals: "binance_batch_signals — batch pair analysis (6×/day)",
+  binance_pending_review: "binance_pending_review — daily review of stale PENDING",
+  binance_protection_review: "binance_protection_review — trailing TP reassessment",
+  binance_universe_dossier: "binance_universe_dossier — per-pair weekly dossier",
+  binance_universe_shortlist: "binance_universe_shortlist — weekly shortlist phase",
+  binance_universe_final: "binance_universe_final — final consolidation",
+  binance_universe_final_from_dossiers:
+    "binance_universe_final_from_dossiers — final from dossiers",
+};
+
+const KEYS_BY_PROVIDER: Record<Provider, PromptKey[]> = {
+  alpaca: [...ALPACA_PROMPT_KEYS],
+  binance: [...BINANCE_PROMPT_KEYS],
 };
 
 export default function PromptsPage() {
   const { user } = useAuth();
-  const [activeKey, setActiveKey] = useState<PromptKey>("new_signal");
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const providers = useProviders();
 
   if (user?.role !== "admin") {
     return (
@@ -56,6 +77,22 @@ export default function PromptsPage() {
     );
   }
 
+  if (!providers.isLoading && providers.active.length === 0) {
+    return (
+      <section className="space-y-6">
+        <header>
+          <h1 className="text-3xl font-semibold">Prompt</h1>
+          <p className="text-sm text-(--color-muted)">
+            Nessun broker configurato. Imposta le credenziali nel <code>.env</code> del backend per
+            sbloccare i prompt.
+          </p>
+        </header>
+      </section>
+    );
+  }
+
+  const defaultProvider: Provider = providers.active[0] ?? "alpaca";
+
   return (
     <section className="space-y-6">
       <header>
@@ -66,13 +103,44 @@ export default function PromptsPage() {
         </p>
       </header>
 
+      <Tabs defaultValue={defaultProvider}>
+        <TabsList>
+          {providers.active.map((p) => (
+            <TabsTrigger key={p} value={p}>
+              {PROVIDER_LABELS[p]}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        {providers.active.map((provider) => (
+          <TabsContent key={provider} value={provider}>
+            <PromptsProviderSection provider={provider} />
+          </TabsContent>
+        ))}
+      </Tabs>
+    </section>
+  );
+}
+
+function PromptsProviderSection({ provider }: { provider: Provider }) {
+  const keys = useMemo(() => KEYS_BY_PROVIDER[provider], [provider]);
+  const [activeKey, setActiveKey] = useState<PromptKey>(keys[0]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  // When the provider tab changes, snap the editor back to the first prompt
+  // of that provider so the right-hand panel stays in sync.
+  useEffect(() => {
+    setActiveKey(keys[0]);
+  }, [keys]);
+
+  return (
+    <>
       <div className="grid gap-4 lg:grid-cols-[18rem_1fr]">
         <Card>
           <CardHeader>
-            <CardTitle>Prompt</CardTitle>
+            <CardTitle>Prompt — {PROVIDER_LABELS[provider]}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-1">
-            {PROMPT_KEYS.map((key) => (
+            {keys.map((key) => (
               <button
                 key={key}
                 onClick={() => setActiveKey(key)}
@@ -88,10 +156,7 @@ export default function PromptsPage() {
           </CardContent>
         </Card>
 
-        <PromptEditor
-          activeKey={activeKey}
-          onOpenHistory={() => setHistoryOpen(true)}
-        />
+        <PromptEditor activeKey={activeKey} onOpenHistory={() => setHistoryOpen(true)} />
       </div>
 
       <Dialog open={historyOpen} onOpenChange={(o) => !o && setHistoryOpen(false)}>
@@ -99,7 +164,7 @@ export default function PromptsPage() {
           <PromptHistory promptKey={activeKey} onClose={() => setHistoryOpen(false)} />
         </DialogContent>
       </Dialog>
-    </section>
+    </>
   );
 }
 
@@ -163,13 +228,22 @@ function PromptEditor({
               Versione corrente: <code>#{detail.data?.version_id}</code> aggiornata{" "}
               {formatDateTime(detail.data?.updated_at)}
             </p>
-            <Textarea
-              rows={20}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              spellCheck={false}
-              className="font-mono text-xs"
-            />
+            <div className="space-y-1">
+              <Textarea
+                rows={20}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                spellCheck={false}
+                className="font-mono text-xs"
+              />
+              <p className="flex items-center justify-end gap-3 text-xs text-(--color-muted)">
+                <span>{draft.length.toLocaleString("it-IT")} caratteri</span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  {draft.split(/\s+/).filter(Boolean).length.toLocaleString("it-IT")} parole
+                </span>
+              </p>
+            </div>
             <div className="grid gap-3 md:grid-cols-[1fr_auto]">
               <Input
                 value={comment}
@@ -186,11 +260,7 @@ function PromptEditor({
                 <Save className="size-4" /> Salva versione
               </Button>
             </div>
-            {error && (
-              <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
-                {error}
-              </div>
-            )}
+            {error && <StatusBanner kind="error">{error}</StatusBanner>}
           </div>
         )}
       </CardContent>

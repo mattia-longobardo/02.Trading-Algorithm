@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, Folder, FolderPlus, Search, Trash2 } from "lucide-react";
+import { Download, FileSearch, Folder, FolderPlus, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { EmptyState } from "@/components/ui/empty-state";
+import { StatusBanner } from "@/components/ui/status-banner";
 import { ApiError, api, streamUrl } from "@/lib/api";
 import { formatDateTime, formatNumber } from "@/lib/format";
 import type { ReportFolder, ReportRow } from "@/lib/types";
@@ -179,7 +181,17 @@ export default function ReportsPage() {
         <CardContent>
           {reports.isLoading && <p className="text-sm text-(--color-muted)">Caricamento…</p>}
           {!reports.isLoading && (reports.data?.items.length ?? 0) === 0 && (
-            <p className="text-sm text-(--color-muted)">Nessun report trovato.</p>
+            <EmptyState
+              icon={FileSearch}
+              title="Nessun report trovato"
+              description={
+                <>
+                  I report settimanali sono generati ogni domenica alle 23:00 UTC.
+                  Puoi lanciarne uno manualmente dalla Console oppure cambiare i
+                  filtri qui sopra.
+                </>
+              }
+            />
           )}
           {(reports.data?.items.length ?? 0) > 0 && (
             <div className="overflow-x-auto">
@@ -199,7 +211,7 @@ export default function ReportsPage() {
                   {reports.data!.items.map((r) => (
                     <tr
                       key={r.id}
-                      className="bg-slate-950/40 [&>td]:border-y [&>td]:border-(--color-line)"
+                      className="bg-slate-950/40 transition-colors hover:bg-slate-900/60 [&>td]:border-y [&>td]:border-(--color-line)"
                     >
                       <td className="px-2 py-2 font-medium first:rounded-l-lg">{r.filename}</td>
                       <td className="px-2 py-2">
@@ -241,7 +253,7 @@ export default function ReportsPage() {
                             Apri
                           </Button>
                           <a
-                            href={streamUrl(`/api/reports/${r.id}/file`)}
+                            href={streamUrl(`/api/reports/${r.id}/file?download=true`)}
                             download={r.filename}
                           >
                             <Button size="icon" variant="ghost" className="size-8">
@@ -356,6 +368,16 @@ function ReportPreview({ report }: { report: ReportRow }) {
           src={streamUrl(`/api/reports/${report.id}/file`)}
           className="h-[70vh] w-full rounded-lg border border-(--color-line) bg-slate-950"
         />
+        <div className="mt-3 flex justify-end">
+          <a
+            href={streamUrl(`/api/reports/${report.id}/file?download=true`)}
+            download={report.filename}
+          >
+            <Button size="sm" variant="secondary">
+              <Download className="size-4" /> Scarica
+            </Button>
+          </a>
+        </div>
       </div>
     );
   }
@@ -381,6 +403,16 @@ function ReportJsonViewer({ report }: { report: ReportRow }) {
           ? JSON.stringify(json.data.content, null, 2)
           : "—"}
       </pre>
+      <div className="mt-3 flex justify-end">
+        <a
+          href={streamUrl(`/api/reports/${report.id}/file?download=true`)}
+          download={report.filename}
+        >
+          <Button size="sm" variant="secondary">
+            <Download className="size-4" /> Scarica
+          </Button>
+        </a>
+      </div>
     </div>
   );
 }
@@ -415,11 +447,7 @@ function CreateFolderDialog({ open, onClose }: { open: boolean; onClose: () => v
             placeholder="Nome cartella"
             autoFocus
           />
-          {error && (
-            <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
-              {error}
-            </div>
-          )}
+          {error && <StatusBanner kind="error">{error}</StatusBanner>}
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={onClose}>
               Annulla

@@ -13,10 +13,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { StatusBanner } from "@/components/ui/status-banner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
+import { useProviders } from "@/lib/use-providers";
 import type { SettingsResponse, UserRow } from "@/lib/types";
 
 const SETTING_FIELDS: Array<{
@@ -28,26 +30,48 @@ const SETTING_FIELDS: Array<{
   restartRequired?: boolean;
 }> = [
   { key: "max_open_trades_stock", label: "Max open trade stock", hint: "Slot massimi attivi su azioni.", kind: "number" },
-  { key: "max_open_trades_crypto", label: "Max open trade crypto", hint: "Slot massimi attivi su crypto.", kind: "number" },
+  { key: "max_open_trades_crypto", label: "Max open trade crypto (Alpaca)", hint: "Slot massimi attivi su crypto Alpaca.", kind: "number" },
+  { key: "max_open_trades_binance", label: "Max open trade crypto (Binance)", hint: "Slot massimi attivi su Binance Spot.", kind: "number" },
   { key: "weekly_universe_stocks", label: "Universe stock", hint: "Numero di simboli stock nell'universe settimanale.", kind: "number" },
-  { key: "weekly_universe_crypto", label: "Universe crypto", hint: "Numero di simboli crypto nell'universe settimanale.", kind: "number" },
-  { key: "currency", label: "Currency", hint: "Valuta di riferimento (per crypto Alpaca usa USD).", kind: "string" },
+  { key: "weekly_universe_crypto", label: "Universe crypto (Alpaca)", hint: "Numero di simboli crypto Alpaca nell'universe settimanale.", kind: "number" },
+  { key: "weekly_universe_binance", label: "Universe Binance", hint: "Numero di pair Binance nell'universe settimanale.", kind: "number" },
+  { key: "currency", label: "Display currency", hint: "Valuta di display nella UI.", kind: "string" },
   { key: "risk_tolerance", label: "Risk tolerance", hint: "1 = conservativo, 10 = aggressivo.", kind: "number" },
   { key: "strategy_horizon_days_min", label: "Horizon min (giorni)", hint: "Minimo orizzonte di holding suggerito al modello.", kind: "number" },
   { key: "strategy_horizon_days_max", label: "Horizon max (giorni)", hint: "Massimo orizzonte di holding suggerito al modello.", kind: "number" },
-  { key: "crypto_entry_limit_collar_bps", label: "Crypto entry collar (bps)", hint: "Tolleranza limit IOC marketable.", kind: "number" },
-  { key: "crypto_entry_max_chase_bps", label: "Crypto max chase (bps)", hint: "Quanto inseguire la best ask.", kind: "number" },
-  { key: "crypto_pending_reprice_minutes", label: "Crypto reprice (min)", hint: "Minuti prima di rinviare il limit pending.", kind: "number" },
-  { key: "crypto_pending_cancel_minutes", label: "Crypto cancel (min)", hint: "Minuti prima di cancellare il pending lontano dal target.", kind: "number" },
+  { key: "crypto_entry_limit_collar_bps", label: "Alpaca crypto collar (bps)", hint: "Tolleranza limit IOC marketable Alpaca.", kind: "number" },
+  { key: "crypto_entry_max_chase_bps", label: "Alpaca crypto max chase (bps)", hint: "Quanto inseguire la best ask su Alpaca.", kind: "number" },
+  { key: "crypto_pending_reprice_minutes", label: "Alpaca crypto reprice (min)", hint: "Minuti prima di rinviare il limit pending Alpaca.", kind: "number" },
+  { key: "crypto_pending_cancel_minutes", label: "Alpaca crypto cancel (min)", hint: "Minuti prima di cancellare il pending lontano dal target.", kind: "number" },
+  { key: "alpaca_max_notional_per_order", label: "Alpaca max notional/ordine", hint: "Cap notional per ordine: oltre questo Alpaca rifiuta (40310000). L'ordine viene ridotto a questo valore.", kind: "number" },
   { key: "log_level", label: "Log level", hint: "Livello log applicativo.", kind: "select", options: ["DEBUG", "INFO", "WARNING", "ERROR"], restartRequired: true },
   { key: "log_profile", label: "Log profile", hint: "Verbosity preset.", kind: "select", options: ["DEBUG", "PRODUCTION"], restartRequired: true },
 ];
 
-const SECRET_FIELDS = [
+const BINANCE_SETTING_FIELDS: Array<{
+  key: string;
+  label: string;
+  hint: string;
+  kind: "number" | "string";
+}> = [
+  { key: "binance_entry_limit_collar_bps", label: "Binance entry collar (bps)", hint: "Tolleranza limit IOC marketable Binance.", kind: "number" },
+  { key: "binance_entry_max_chase_bps", label: "Binance max chase (bps)", hint: "Quanto inseguire la best ask su Binance.", kind: "number" },
+  { key: "binance_pending_reprice_minutes", label: "Binance reprice (min)", hint: "Minuti prima di rinviare il limit pending Binance.", kind: "number" },
+  { key: "binance_pending_cancel_minutes", label: "Binance cancel (min)", hint: "Minuti prima di cancellare il pending Binance lontano dal target.", kind: "number" },
+];
+
+const ALPACA_SECRET_FIELDS = [
   { key: "openai_api_key", label: "OpenAI API key" },
   { key: "alpaca_api_key", label: "Alpaca API key" },
   { key: "alpaca_secret_key", label: "Alpaca secret key" },
 ];
+
+const BINANCE_SECRET_FIELDS = [
+  { key: "binance_api_key", label: "Binance API key" },
+  { key: "binance_secret_key", label: "Binance secret key" },
+];
+
+const ALL_SETTING_FIELDS = [...SETTING_FIELDS, ...BINANCE_SETTING_FIELDS];
 
 export default function SettingsPage() {
   const { user } = useAuth();
@@ -61,16 +85,240 @@ export default function SettingsPage() {
       <Tabs defaultValue="env">
         <TabsList>
           <TabsTrigger value="env">Ambiente</TabsTrigger>
+          <TabsTrigger value="alpaca">Alpaca</TabsTrigger>
+          <TabsTrigger value="binance">Binance</TabsTrigger>
           <TabsTrigger value="users">Account &amp; utenti</TabsTrigger>
         </TabsList>
         <TabsContent value="env">
           <EnvTab adminOnly={user.role === "admin"} />
+        </TabsContent>
+        <TabsContent value="alpaca">
+          <BrokerTab provider="alpaca" adminOnly={user.role === "admin"} />
+        </TabsContent>
+        <TabsContent value="binance">
+          <BrokerTab provider="binance" adminOnly={user.role === "admin"} />
         </TabsContent>
         <TabsContent value="users">
           <UsersTab />
         </TabsContent>
       </Tabs>
     </section>
+  );
+}
+
+function BrokerTab({
+  provider,
+  adminOnly,
+}: {
+  provider: "alpaca" | "binance";
+  adminOnly: boolean;
+}) {
+  const settings = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => api.get<SettingsResponse>("/api/settings"),
+  });
+  const providers = useProviders();
+  const data = settings.data;
+  const active = (data?.active_providers ?? []).includes(provider);
+  const secretFields = provider === "alpaca" ? ALPACA_SECRET_FIELDS : BINANCE_SECRET_FIELDS;
+  const label = provider === "alpaca" ? "Alpaca Markets" : "Binance Spot";
+  const descriptor = providers.descriptors.find((d) => d.provider === provider);
+  const binanceKeyType = provider === "binance" ? descriptor?.key_type : undefined;
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>{label}</CardTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant={active ? "open" : "muted"}>
+              {active ? "modulo attivo" : "modulo disattivato"}
+            </Badge>
+            {binanceKeyType && active && (
+              <Badge variant={binanceKeyType === "ed25519" ? "open" : "muted"}>
+                Auth: {binanceKeyType.toUpperCase()}
+              </Badge>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-(--color-muted)">
+            {active
+              ? `Le credenziali ${label} sono configurate. Il bot opera anche su questo broker e la dashboard ne aggrega i valori.`
+              : `Le credenziali ${label} non sono presenti in .env. Il modulo è spento e nessuna superficie ${label} viene mostrata in altre pagine.`}
+          </p>
+          <div className="grid gap-3 md:grid-cols-2">
+            {secretFields.map((s) => (
+              <div key={s.key} className="space-y-1">
+                <label className="text-xs uppercase text-(--color-muted)">{s.label}</label>
+                <Input value={(data?.values[s.key] as string) ?? ""} readOnly />
+              </div>
+            ))}
+            {provider === "binance" && (
+              <div className="space-y-1 md:col-span-2">
+                <label className="text-xs uppercase text-(--color-muted)">
+                  Binance private key file
+                </label>
+                <Input
+                  value={(data?.values["binance_private_key_path"] as string) ?? ""}
+                  readOnly
+                />
+                <p className="text-xs text-(--color-muted)">
+                  Path al PEM Ed25519/RSA usato per firmare le richieste. Lascialo vuoto per
+                  cadere indietro su <code>BINANCE_SECRET_KEY</code> (HMAC).
+                </p>
+              </div>
+            )}
+          </div>
+          <p className="text-xs text-(--color-muted)">
+            Per motivi di sicurezza i segreti si modificano solo via <code>.env</code> del backend, mai
+            tramite la UI.
+          </p>
+        </CardContent>
+      </Card>
+
+      {provider === "binance" && (
+        <BinanceTuningCard adminOnly={adminOnly && active} settings={data} />
+      )}
+    </div>
+  );
+}
+
+function BinanceTuningCard({
+  adminOnly,
+  settings,
+}: {
+  adminOnly: boolean;
+  settings: SettingsResponse | undefined;
+}) {
+  const qc = useQueryClient();
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!settings) return;
+    const seed: Record<string, string> = {};
+    for (const f of BINANCE_SETTING_FIELDS) {
+      const v = settings.values[f.key];
+      seed[f.key] = v === null || v === undefined ? "" : String(v);
+    }
+    seed["max_open_trades_binance"] = String(settings.values["max_open_trades_binance"] ?? "");
+    seed["weekly_universe_binance"] = String(settings.values["weekly_universe_binance"] ?? "");
+    seed["binance_quote_currency"] = String(settings.values["binance_quote_currency"] ?? "USDT");
+    setDraft(seed);
+  }, [settings]);
+
+  const mutation = useMutation({
+    mutationFn: () => {
+      const payload: Record<string, unknown> = {};
+      for (const f of BINANCE_SETTING_FIELDS) {
+        const raw = draft[f.key];
+        if (raw === "" || raw === undefined) continue;
+        const num = Number(raw);
+        if (Number.isNaN(num)) throw new Error(`${f.label} non valido`);
+        payload[f.key] = num;
+      }
+      const slots = draft["max_open_trades_binance"];
+      if (slots !== "" && slots !== undefined) {
+        const num = Number(slots);
+        if (!Number.isNaN(num)) payload["max_open_trades_binance"] = num;
+      }
+      const universe = draft["weekly_universe_binance"];
+      if (universe !== "" && universe !== undefined) {
+        const num = Number(universe);
+        if (!Number.isNaN(num)) payload["weekly_universe_binance"] = num;
+      }
+      return api.patch<SettingsResponse>("/api/settings", payload);
+    },
+    onSuccess: () => {
+      setSuccess("Impostazioni Binance salvate.");
+      qc.invalidateQueries({ queryKey: ["settings"] });
+    },
+    onError: (err) => setError(err instanceof ApiError ? err.message : (err as Error).message),
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Tuning Binance</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="space-y-1">
+          <label className="text-xs uppercase text-(--color-muted)">Max open trade Binance</label>
+          <Input
+            value={draft["max_open_trades_binance"] ?? ""}
+            onChange={(e) =>
+              setDraft((p) => ({ ...p, max_open_trades_binance: e.target.value }))
+            }
+            disabled={!adminOnly}
+            inputMode="decimal"
+          />
+          <p className="text-xs text-(--color-muted)">Slot massimi attivi su Binance Spot.</p>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs uppercase text-(--color-muted)">Universe Binance</label>
+          <Input
+            value={draft["weekly_universe_binance"] ?? ""}
+            onChange={(e) =>
+              setDraft((p) => ({ ...p, weekly_universe_binance: e.target.value }))
+            }
+            disabled={!adminOnly}
+            inputMode="decimal"
+          />
+          <p className="text-xs text-(--color-muted)">Pair selezionate ogni settimana.</p>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs uppercase text-(--color-muted)">Quote currency</label>
+          <Input value={draft["binance_quote_currency"] ?? "USDT"} readOnly />
+          <p className="text-xs text-(--color-muted)">
+            Configurabile solo via <code>BINANCE_QUOTE_CURRENCY</code> in <code>.env</code>.
+          </p>
+        </div>
+        {BINANCE_SETTING_FIELDS.map((f) => (
+          <div key={f.key} className="space-y-1">
+            <label className="text-xs uppercase text-(--color-muted)">{f.label}</label>
+            <Input
+              value={draft[f.key] ?? ""}
+              onChange={(e) => setDraft((p) => ({ ...p, [f.key]: e.target.value }))}
+              disabled={!adminOnly}
+              inputMode={f.kind === "number" ? "decimal" : "text"}
+            />
+            <p className="text-xs text-(--color-muted)">{f.hint}</p>
+          </div>
+        ))}
+        {error && (
+          <StatusBanner kind="error" className="md:col-span-2 xl:col-span-3">
+            {error}
+          </StatusBanner>
+        )}
+        {success && (
+          <StatusBanner kind="success" className="md:col-span-2 xl:col-span-3">
+            {success}
+          </StatusBanner>
+        )}
+        {adminOnly && (
+          <div className="md:col-span-2 xl:col-span-3 flex justify-end">
+            <Button
+              onClick={() => {
+                setError(null);
+                setSuccess(null);
+                mutation.mutate();
+              }}
+              disabled={mutation.isPending}
+            >
+              {mutation.isPending ? "Salvataggio…" : "Salva"}
+            </Button>
+          </div>
+        )}
+        {!adminOnly && (
+          <p className="md:col-span-2 xl:col-span-3 text-xs text-(--color-muted)">
+            Solo gli amministratori possono modificare queste impostazioni, e solo se Binance è
+            attivo.
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -100,7 +348,7 @@ function EnvTab({ adminOnly }: { adminOnly: boolean }) {
       for (const f of SETTING_FIELDS) {
         const raw = draft[f.key];
         if (f.kind === "number") {
-          if (raw === "") continue;
+          if (raw === "" || raw === undefined) continue;
           const num = Number(raw);
           if (Number.isNaN(num)) throw new Error(`${f.label} non valido`);
           payload[f.key] = num;
@@ -167,13 +415,13 @@ function EnvTab({ adminOnly }: { adminOnly: boolean }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Segreti (sola lettura)</CardTitle>
+          <CardTitle>Segreti Alpaca (sola lettura)</CardTitle>
           <span className="text-xs text-(--color-muted)">
-            Modificali solo via .env per sicurezza.
+            Modificali solo via .env per sicurezza. Le credenziali Binance sono nella tab dedicata.
           </span>
         </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-3">
-          {SECRET_FIELDS.map((s) => (
+        <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {ALPACA_SECRET_FIELDS.map((s) => (
             <div key={s.key} className="space-y-1">
               <label className="text-xs uppercase text-(--color-muted)">{s.label}</label>
               <Input value={(settings.data?.values[s.key] as string) ?? ""} readOnly />
@@ -182,16 +430,8 @@ function EnvTab({ adminOnly }: { adminOnly: boolean }) {
         </CardContent>
       </Card>
 
-      {error && (
-        <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
-          {error}
-        </div>
-      )}
-      {success && (
-        <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300">
-          {success}
-        </div>
-      )}
+      {error && <StatusBanner kind="error">{error}</StatusBanner>}
+      {success && <StatusBanner kind="success">{success}</StatusBanner>}
 
       {adminOnly && (
         <div className="flex justify-end">
@@ -264,7 +504,7 @@ function OwnProfileCard() {
       <CardHeader>
         <CardTitle>Profilo personale</CardTitle>
       </CardHeader>
-      <CardContent className="grid gap-3 md:grid-cols-3">
+      <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div className="space-y-1">
           <label className="text-xs uppercase text-(--color-muted)">Username</label>
           <Input value={username} onChange={(e) => setUsername(e.target.value)} />
@@ -283,14 +523,14 @@ function OwnProfileCard() {
           />
         </div>
         {error && (
-          <div className="md:col-span-3 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
+          <StatusBanner kind="error" className="md:col-span-3">
             {error}
-          </div>
+          </StatusBanner>
         )}
         {success && (
-          <div className="md:col-span-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300">
+          <StatusBanner kind="success" className="md:col-span-3">
             {success}
-          </div>
+          </StatusBanner>
         )}
         <div className="md:col-span-3 flex justify-end">
           <Button
@@ -338,7 +578,7 @@ function ChangeOwnPasswordCard() {
       <CardHeader>
         <CardTitle>Cambia la tua password</CardTitle>
       </CardHeader>
-      <CardContent className="grid gap-3 md:grid-cols-3">
+      <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div className="space-y-1">
           <label className="text-xs uppercase text-(--color-muted)">Password attuale</label>
           <Input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} />
@@ -352,14 +592,14 @@ function ChangeOwnPasswordCard() {
           <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
         </div>
         {error && (
-          <div className="md:col-span-3 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
+          <StatusBanner kind="error" className="md:col-span-3">
             {error}
-          </div>
+          </StatusBanner>
         )}
         {success && (
-          <div className="md:col-span-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300">
+          <StatusBanner kind="success" className="md:col-span-3">
             {success}
-          </div>
+          </StatusBanner>
         )}
         <div className="md:col-span-3 flex justify-end">
           <Button
@@ -429,7 +669,7 @@ function ManageUsersCard() {
               </thead>
               <tbody>
                 {users.data.users.map((u) => (
-                  <tr key={u.id} className="bg-slate-950/40 [&>td]:border-y [&>td]:border-(--color-line)">
+                  <tr key={u.id} className="bg-slate-950/40 transition-colors hover:bg-slate-900/60 [&>td]:border-y [&>td]:border-(--color-line)">
                     <td className="px-2 py-2 first:rounded-l-lg">
                       <p className="font-medium">{u.display_name}</p>
                       <p className="text-xs text-(--color-muted)">@{u.username}</p>
@@ -562,11 +802,7 @@ function CreateUserDialog({ open, onClose }: { open: boolean; onClose: () => voi
               <option value="admin">admin</option>
             </select>
           </div>
-          {error && (
-            <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
-              {error}
-            </div>
-          )}
+          {error && <StatusBanner kind="error">{error}</StatusBanner>}
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={onClose}>
               Annulla
@@ -631,11 +867,7 @@ function ResetPasswordDialog({
             onChange={(e) => setPw(e.target.value)}
             placeholder="Nuova password"
           />
-          {error && (
-            <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
-              {error}
-            </div>
-          )}
+          {error && <StatusBanner kind="error">{error}</StatusBanner>}
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={onClose}>
               Annulla

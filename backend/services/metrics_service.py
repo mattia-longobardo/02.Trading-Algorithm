@@ -4,6 +4,12 @@ Used by the dashboard endpoints (KPIs, equity curve, PnL-by-symbol,
 allocation, return distribution). Closed trades drive realized PnL;
 open trades drive unrealized PnL using the current price kept up to
 date by the script-managed lifecycle every minute.
+
+Multi-provider aware: each trade carries its own ``provider`` and
+``account_currency``. Monetary fields are converted to the user's
+display currency at API edge using the trade's own native currency,
+so the dashboard sums Alpaca (USD) and Binance (USDT) trades into the
+same display number.
 """
 
 from __future__ import annotations
@@ -12,12 +18,16 @@ import logging
 import math
 from collections import Counter
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Mapping
 
-from clients.alpaca_client import AlpacaClient
 from core import fx
 from core.db import fetch_all
-from core.utils import AppConfig, parse_datetime, utc_now
+from core.utils import (
+    PROVIDER_ALPACA,
+    AppConfig,
+    parse_datetime,
+    utc_now,
+)
 
 
 # Trade columns whose stored value is a *monetary amount* (price, capital,
@@ -93,16 +103,40 @@ class MetricsService:
         self,
         config: AppConfig,
         logger: logging.Logger,
-        alpaca_client: AlpacaClient | None = None,
+        broker_clients: Mapping[str, Any] | Any | None = None,
+        *,
+        alpaca_client: Any | None = None,
     ) -> None:
         self.config = config
         self.logger = logger.getChild("metrics")
-        self.alpaca_client = alpaca_client
+        if broker_clients is None:
+            self._brokers: dict[str, Any] = {}
+        elif isinstance(broker_clients, Mapping):
+            self._brokers = dict(broker_clients)
+        else:
+            # Backwards-compat for the single-broker constructor.
+            self._brokers = {PROVIDER_ALPACA: broker_clients}
+        if alpaca_client is not None:
+            self._brokers[PROVIDER_ALPACA] = alpaca_client
+
+    @property
+    def alpaca_client(self) -> Any | None:
+        return self._brokers.get(PROVIDER_ALPACA)
+
+    @property
+    def brokers(self) -> dict[str, Any]:
+        return self._brokers
 
     # -- FX helpers -------------------------------------------------------
 
-    def _fx_convert(self, value: Any) -> float | None:
-        """Convert a monetary amount from account_currency to display currency."""
+    def _fx_convert(self, value: Any, source_currency: str | None = None) -> float | None:
+        """Convert a monetary amount to the operator's display currency.
+
+        ``source_currency`` lets the caller specify the trade's own native
+        currency (different brokers report in different currencies). If
+        omitted we fall back to the global account_currency for backwards
+        compatibility.
+        """
 
         if value is None:
             return None
@@ -110,13 +144,21 @@ class MetricsService:
             num = float(value)
         except (TypeError, ValueError):
             return None
-        return fx.convert(num, self.config.account_currency, self.config.currency)
+        source = source_currency or self.config.account_currency
+        return fx.convert(num, source, self.config.currency)
 
-    def _fx_round(self, value: Any, decimals: int = 2) -> float:
-        converted = self._fx_convert(value)
+    def _fx_round(self, value: Any, decimals: int = 2, source_currency: str | None = None) -> float:
+        converted = self._fx_convert(value, source_currency=source_currency)
         if converted is None:
             return 0.0
         return round(converted, decimals)
+
+    def _trade_native_currency(self, trade: dict[str, Any]) -> str:
+        currency = str(trade.get("account_currency") or "").strip().upper()
+        if currency:
+            return currency
+        provider = str(trade.get("provider") or PROVIDER_ALPACA)
+        return self.config.provider_account_currency(provider)
 
     # -- raw trade access --------------------------------------------------
 
@@ -178,17 +220,21 @@ class MetricsService:
 
     def _decorate(self, row: dict[str, Any]) -> dict[str, Any]:
         out = dict(row)
+        native = self._trade_native_currency(row)
         # Compute realized / unrealized PnL on the broker-native values
         # FIRST, then convert everything monetary into the display currency.
         realized_native = _realized_pnl(row)
         unrealized_native = _unrealized_pnl(row)
-        out["realized_pnl"] = self._fx_convert(realized_native) or 0.0
-        out["unrealized_pnl"] = self._fx_convert(unrealized_native) or 0.0
+        out["realized_pnl"] = self._fx_convert(realized_native, source_currency=native) or 0.0
+        out["unrealized_pnl"] = self._fx_convert(unrealized_native, source_currency=native) or 0.0
         for field in _MONETARY_TRADE_FIELDS:
             if field in out and out[field] is not None:
-                converted = self._fx_convert(out[field])
+                converted = self._fx_convert(out[field], source_currency=native)
                 if converted is not None:
                     out[field] = converted
+        # Surface the originating provider so the UI can group / badge.
+        out.setdefault("provider", str(row.get("provider") or PROVIDER_ALPACA))
+        out.setdefault("account_currency", native)
         return out
 
     def get_trade(self, trade_id: int) -> dict[str, Any] | None:
@@ -198,22 +244,65 @@ class MetricsService:
     # -- account ----------------------------------------------------------
 
     def account_equity(self) -> float:
-        """Return the broker-native account equity (no FX applied)."""
+        """Sum of broker-native equity across providers, expressed in display currency.
 
-        if self.alpaca_client is None:
-            return 0.0
-        try:
-            return float(self.alpaca_client.get_account_equity())
-        except Exception:
-            self.logger.exception("Failed to fetch account equity")
-            return 0.0
+        Each provider's native value is FX-converted to the user's
+        display currency *before* summation (different brokers can report
+        in different currencies).
+        """
+
+        total = 0.0
+        for provider, broker in self._brokers.items():
+            if broker is None:
+                continue
+            try:
+                native = float(broker.get_account_equity())
+            except Exception:
+                self.logger.exception("Failed to fetch %s account equity", provider)
+                continue
+            converted = self._fx_convert(
+                native, source_currency=self.config.provider_account_currency(provider)
+            )
+            if converted is not None:
+                total += float(converted)
+        return total
 
     def account_equity_display(self) -> float:
-        """Equity converted to the operator's display currency."""
+        """Equity (already converted) rounded for the UI."""
 
-        return round(self._fx_convert(self.account_equity()) or 0.0, 2)
+        return round(self.account_equity(), 2)
+
+    def account_equity_breakdown(self) -> list[dict[str, Any]]:
+        """Per-provider equity values, in both native and display currency."""
+
+        rows: list[dict[str, Any]] = []
+        for provider, broker in self._brokers.items():
+            if broker is None:
+                continue
+            native_currency = self.config.provider_account_currency(provider)
+            try:
+                native_value = float(broker.get_account_equity())
+            except Exception:
+                self.logger.exception("Failed to fetch %s account equity", provider)
+                continue
+            converted = self._fx_convert(native_value, source_currency=native_currency) or 0.0
+            rows.append(
+                {
+                    "provider": provider,
+                    "equity_native": round(native_value, 8),
+                    "native_currency": native_currency,
+                    "equity_display": round(converted, 2),
+                    "display_currency": self.config.currency,
+                }
+            )
+        return rows
 
     # -- KPIs -------------------------------------------------------------
+
+    def _pnl_in_display(self, row: dict[str, Any]) -> float:
+        native = self._trade_native_currency(row)
+        converted = self._fx_convert(_realized_pnl(row), source_currency=native)
+        return float(converted or 0.0)
 
     def compute_metrics(
         self,
@@ -224,25 +313,26 @@ class MetricsService:
         non_cancelled = [r for r in rows if r.get("status") != "CANCELLED"]
         closed_in_period = [r for r in non_cancelled if _within(r, from_dt, to_dt)]
 
-        pnls = [_realized_pnl(r) for r in closed_in_period]
-        wins = [v for v in pnls if v > 0]
-        losses = [v for v in pnls if v < 0]
+        # PnL values, converted to display currency (each trade by its own
+        # native currency) so multi-broker portfolios sum correctly.
+        pnls_display = [self._pnl_in_display(r) for r in closed_in_period]
+        allocated_display = [
+            float(self._fx_convert(_safe_float(r.get("allocated_capital")), source_currency=self._trade_native_currency(r)) or 0.0)
+            for r in closed_in_period
+        ]
+        wins = [v for v in pnls_display if v > 0]
+        losses = [v for v in pnls_display if v < 0]
         n_trades = len(closed_in_period)
         n_open = sum(1 for r in non_cancelled if r.get("status") == "OPEN")
         n_pending = sum(1 for r in non_cancelled if r.get("status") == "PENDING")
-        total_pnl_abs_native = sum(pnls)
-        # PnL % is cumulative return: sum(pnl) / sum(allocated) on closed trades.
-        # Both numerator and denominator are in the same (native) currency,
-        # so the ratio is identical regardless of FX — compute it before
-        # converting any individual value.
-        allocated_sum = sum(_safe_float(r.get("allocated_capital")) for r in closed_in_period)
-        total_pnl_pct = (
-            round((total_pnl_abs_native / allocated_sum) * 100.0, 2) if allocated_sum > 0 else 0.0
-        )
-        total_pnl_abs = self._fx_round(total_pnl_abs_native, 2)
+
+        total_pnl_abs = round(sum(pnls_display), 2)
+        allocated_sum = sum(allocated_display)
+        total_pnl_pct = round((total_pnl_abs / allocated_sum) * 100.0, 2) if allocated_sum > 0 else 0.0
+
         win_rate = round(len(wins) / n_trades, 4) if n_trades else 0.0
-        avg_win = self._fx_round(sum(wins) / len(wins), 2) if wins else 0.0
-        avg_loss = self._fx_round(sum(losses) / len(losses), 2) if losses else 0.0
+        avg_win = round(sum(wins) / len(wins), 2) if wins else 0.0
+        avg_loss = round(sum(losses) / len(losses), 2) if losses else 0.0
         sum_wins = sum(wins)
         sum_losses_abs = abs(sum(losses))
         if sum_losses_abs > 0:
@@ -251,12 +341,11 @@ class MetricsService:
             profit_factor = float("inf")
         else:
             profit_factor = 0.0
-        # Sanitize infinities so JSON encoding doesn't blow up downstream.
         if not math.isfinite(profit_factor):
             profit_factor = 9999.0
 
-        equity_points = self._equity_curve_points(closed_in_period)
-        max_drawdown_native = self._max_drawdown(equity_points)
+        equity_points = self._equity_curve_points_display(closed_in_period)
+        max_drawdown_display = self._max_drawdown(equity_points)
         sharpe = self._sharpe_from_curve(equity_points)
 
         return {
@@ -266,7 +355,7 @@ class MetricsService:
             "avg_win": avg_win,
             "avg_loss": avg_loss,
             "profit_factor": profit_factor,
-            "max_drawdown": self._fx_round(max_drawdown_native, 2),
+            "max_drawdown": round(max_drawdown_display, 2),
             "sharpe": round(sharpe, 4),
             "n_trades": n_trades,
             "n_open": n_open,
@@ -274,6 +363,11 @@ class MetricsService:
             "account_equity": self.account_equity_display(),
             "currency": self.config.currency,
             "account_currency": self.config.account_currency,
+            "providers": [
+                p
+                for p, broker in self._brokers.items()
+                if broker is not None
+            ],
         }
 
     def _equity_curve_points(self, closed: list[dict[str, Any]]) -> list[tuple[datetime, float]]:
@@ -284,6 +378,23 @@ class MetricsService:
             if close_dt is None:
                 continue
             running += _realized_pnl(row)
+            points.append((close_dt, round(running, 2)))
+        return points
+
+    def _equity_curve_points_display(self, closed: list[dict[str, Any]]) -> list[tuple[datetime, float]]:
+        """Same as :meth:`_equity_curve_points` but in the display currency.
+
+        Each trade's PnL is converted by its own native currency before being
+        added to the running total, so multi-broker portfolios are coherent.
+        """
+
+        points: list[tuple[datetime, float]] = []
+        running = 0.0
+        for row in sorted(closed, key=lambda r: _trade_close_dt(r) or datetime.min.replace(tzinfo=UTC)):
+            close_dt = _trade_close_dt(row)
+            if close_dt is None:
+                continue
+            running += self._pnl_in_display(row)
             points.append((close_dt, round(running, 2)))
         return points
 
@@ -339,21 +450,19 @@ class MetricsService:
         closed.sort(key=lambda r: _trade_close_dt(r) or datetime.min.replace(tzinfo=UTC))
         running = 0.0
         bucket = "%Y-%m-%dT%H:00:00+00:00" if granularity == "hourly" else "%Y-%m-%d"
-        # Map of bucket key -> last running equity for that bucket
-        # (still in the broker's native currency at this stage).
+        # Map bucket key -> last running equity (already in display currency,
+        # because we convert each trade's PnL by its own native currency
+        # before accumulating).
         buckets: dict[str, float] = {}
         for r in closed:
             close_dt = _trade_close_dt(r)
             if close_dt is None:
                 continue
-            running += _realized_pnl(r)
+            running += self._pnl_in_display(r)
             key = close_dt.strftime(bucket)
             buckets[key] = round(running, 2)
 
-        # Convert each point to the display currency before returning.
-        points = [
-            {"t": k, "equity": self._fx_round(v, 2)} for k, v in sorted(buckets.items())
-        ]
+        points = [{"t": k, "equity": v} for k, v in sorted(buckets.items())]
         if from_dt is not None or to_dt is not None:
             def _within_str(point_t: str) -> bool:
                 try:
@@ -382,28 +491,33 @@ class MetricsService:
         closed_in_period = [
             r for r in rows if r.get("status") == "CLOSED" and _within(r, from_dt, to_dt)
         ]
-        agg: dict[str, dict[str, Any]] = {}
+        agg: dict[tuple[str, str], dict[str, Any]] = {}
         for r in closed_in_period:
             sym = str(r.get("symbol", "")).upper()
+            provider = str(r.get("provider") or PROVIDER_ALPACA)
+            key = (sym, provider)
             entry = agg.setdefault(
-                sym,
-                {"symbol": sym, "pnl_abs": 0.0, "allocated": 0.0, "n_trades": 0},
+                key,
+                {"symbol": sym, "provider": provider, "pnl_abs": 0.0, "allocated": 0.0, "n_trades": 0},
             )
-            entry["pnl_abs"] += _realized_pnl(r)
-            entry["allocated"] += _safe_float(r.get("allocated_capital"))
+            entry["pnl_abs"] += self._pnl_in_display(r)
+            allocated_native = _safe_float(r.get("allocated_capital"))
+            allocated_display = self._fx_convert(
+                allocated_native, source_currency=self._trade_native_currency(r)
+            ) or 0.0
+            entry["allocated"] += float(allocated_display)
             entry["n_trades"] += 1
         items = []
-        for sym, e in agg.items():
-            allocated = e["allocated"]
-            # pnl_pct uses native currency for both numerator and
-            # denominator so FX is irrelevant for the ratio.
-            pnl_pct = round((e["pnl_abs"] / allocated) * 100.0, 2) if allocated > 0 else 0.0
+        for entry in agg.values():
+            allocated = entry["allocated"]
+            pnl_pct = round((entry["pnl_abs"] / allocated) * 100.0, 2) if allocated > 0 else 0.0
             items.append(
                 {
-                    "symbol": sym,
-                    "pnl_abs": self._fx_round(e["pnl_abs"], 2),
+                    "symbol": entry["symbol"],
+                    "provider": entry["provider"],
+                    "pnl_abs": round(entry["pnl_abs"], 2),
                     "pnl_pct": pnl_pct,
-                    "n_trades": e["n_trades"],
+                    "n_trades": entry["n_trades"],
                 }
             )
         items.sort(key=lambda x: x["pnl_abs"], reverse=True)
@@ -415,28 +529,34 @@ class MetricsService:
         rows = self.all_trades()
         open_trades = [r for r in rows if r.get("status") == "OPEN"]
         by_category: dict[str, float] = {}
+        by_provider: dict[str, float] = {}
         by_symbol: list[dict[str, Any]] = []
         for r in open_trades:
+            native = self._trade_native_currency(r)
             qty = _safe_float(r.get("quantity"))
             current = _safe_float(r.get("current_price"))
             entry = _safe_float(r.get("entry_price"))
-            value = qty * (current if current > 0 else entry)
+            value_native = qty * (current if current > 0 else entry)
+            value_display = float(self._fx_convert(value_native, source_currency=native) or 0.0)
             cat = str(r.get("category", "")).upper()
-            by_category[cat] = by_category.get(cat, 0.0) + value
+            provider = str(r.get("provider") or PROVIDER_ALPACA)
+            by_category[cat] = by_category.get(cat, 0.0) + value_display
+            by_provider[provider] = by_provider.get(provider, 0.0) + value_display
             by_symbol.append(
                 {
                     "symbol": str(r.get("symbol", "")).upper(),
                     "category": cat,
-                    "value": round(value, 2),
+                    "provider": provider,
+                    "value": round(value_display, 2),
                 }
             )
         by_symbol.sort(key=lambda x: x["value"], reverse=True)
-        # Convert allocation values to the display currency.
-        for entry in by_symbol:
-            entry["value"] = self._fx_round(entry["value"], 2)
         return {
             "by_category": [
-                {"category": k, "value": self._fx_round(v, 2)} for k, v in by_category.items()
+                {"category": k, "value": round(v, 2)} for k, v in by_category.items()
+            ],
+            "by_provider": [
+                {"provider": k, "value": round(v, 2)} for k, v in by_provider.items()
             ],
             "by_symbol": by_symbol,
             "currency": self.config.currency,

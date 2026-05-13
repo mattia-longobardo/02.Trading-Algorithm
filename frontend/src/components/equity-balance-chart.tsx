@@ -158,23 +158,23 @@ export function EquityBalanceChart({ fallbackCurrency }: { fallbackCurrency: str
           </div>
         </div>
         {period === "Custom" && (
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-(--color-muted)">
-            <label className="flex items-center gap-2">
+          <div className="mt-3 grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="flex flex-col gap-1 text-xs text-(--color-muted)">
               Da
               <Input
                 type="datetime-local"
                 value={customFrom}
                 onChange={(e) => setCustomFrom(e.target.value)}
-                className="h-8 w-56"
+                className="h-8"
               />
             </label>
-            <label className="flex items-center gap-2">
+            <label className="flex flex-col gap-1 text-xs text-(--color-muted)">
               A
               <Input
                 type="datetime-local"
                 value={customTo}
                 onChange={(e) => setCustomTo(e.target.value)}
-                className="h-8 w-56"
+                className="h-8"
               />
             </label>
           </div>
@@ -185,7 +185,8 @@ export function EquityBalanceChart({ fallbackCurrency }: { fallbackCurrency: str
           <p className="text-sm text-(--color-muted)">Caricamento…</p>
         ) : points.length === 0 ? (
           <p className="text-sm text-(--color-muted)">
-            Nessuno snapshot nel periodo selezionato.
+            Nessuno snapshot nel periodo selezionato. Allarga l&apos;intervallo o
+            aspetta lo snapshot equity ogni 15 minuti.
           </p>
         ) : (
           <ResponsiveContainer>

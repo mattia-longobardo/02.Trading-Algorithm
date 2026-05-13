@@ -13,3 +13,4 @@ fastapi
 uvicorn[standard]
 bcrypt
 pydantic
+cryptography

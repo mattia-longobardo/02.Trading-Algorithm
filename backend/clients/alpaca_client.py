@@ -21,6 +21,31 @@ from alpaca.trading.requests import GetAssetsRequest, GetOrderByIdRequest, GetOr
 from core.utils import AppConfig, retry, utc_now
 
 
+def _is_transient_alpaca_error(exc: BaseException) -> bool:
+    """Decide whether an order-placement failure is worth retrying.
+
+    Alpaca returns 4xx for deterministic problems — invalid notional,
+    fractional-qty rules, missing position, malformed payload — that will
+    fail identically on every retry. Retrying those just multiplies log
+    noise (3× "Submitting…" per pair) and, on writes, risks creating
+    duplicate orders if a transient blip ever partially succeeded.
+
+    We retry only 5xx / network-class errors, plus our own ``ValueError``
+    pre-checks (insufficient capital, etc.) that are raised before the API
+    is even contacted and are inherently safe to re-evaluate.
+    """
+
+    if isinstance(exc, APIError):
+        status = getattr(exc, "status_code", None)
+        try:
+            code = int(status) if status is not None else 0
+        except (TypeError, ValueError):
+            code = 0
+        if 400 <= code < 500:
+            return False
+    return True
+
+
 class AlpacaClient:
     """Thin wrapper around alpaca-py with retries and normalization."""
 
@@ -201,7 +226,7 @@ class AlpacaClient:
             "ask_size": float(getattr(quote, "ask_size", 0.0) or 0.0) or None,
         }
 
-    @retry()
+    @retry(should_retry=_is_transient_alpaca_error)
     def close_position_market(self, symbol: str) -> Any:
         self.logger.info("Closing position at market for %s", symbol)
         if "/" in symbol:
@@ -211,12 +236,12 @@ class AlpacaClient:
                 return self.trading_client.close_position(str(asset_id))
         return self.trading_client.close_position(symbol)
 
-    @retry()
+    @retry(should_retry=_is_transient_alpaca_error)
     def cancel_order(self, order_id: str) -> None:
         self.logger.info("Cancelling order %s", order_id)
         self.trading_client.cancel_order_by_id(order_id)
 
-    @retry()
+    @retry(should_retry=_is_transient_alpaca_error)
     def replace_order(self, order_id: str, limit_price: float | None = None, stop_price: float | None = None) -> Any:
         self.logger.info("Replacing order %s", order_id)
         request = ReplaceOrderRequest(limit_price=limit_price, stop_price=stop_price)
@@ -304,6 +329,32 @@ class AlpacaClient:
         decimals = 8 if category == "CRYPTO" else 4
         return round(float(price), decimals)
 
+    def _cap_allocated_capital(self, symbol: str, allocated_capital: float) -> float:
+        """Clamp the per-trade allocation to Alpaca's per-order notional cap.
+
+        Alpaca rejects orders whose ``qty * limit_price`` exceeds the
+        configured notional ceiling (default $200k, error 40310000). When
+        the strategy's per-slot allocation is larger, we shrink the order
+        to the cap rather than skip the trade entirely. ``_calculate_quantity``
+        floors qty so the resulting notional is always ``<= allocated_capital``,
+        so capping the input keeps us inside the broker limit.
+        """
+
+        cap = float(self.config.alpaca_max_notional_per_order or 0.0)
+        if cap <= 0 or allocated_capital <= cap:
+            return allocated_capital
+        # 1¢ headroom: ``qty * price`` lands at most at ``allocated_capital``
+        # via the floor in ``_calculate_quantity``, but float roundoff in
+        # Alpaca's server-side check could still tip it just above the cap.
+        adjusted = cap - 0.01
+        self.logger.warning(
+            "Capping %s allocation from %.2f to Alpaca per-order max notional %.2f",
+            symbol,
+            allocated_capital,
+            adjusted,
+        )
+        return adjusted
+
     def _resolve_crypto_reference_price(self, symbol: str, target_entry_price: float) -> tuple[float, dict[str, float | None]]:
         quote: dict[str, float | None] = {}
         try:
@@ -325,6 +376,7 @@ class AlpacaClient:
         target_entry_price: float,
         allocated_capital: float,
     ) -> dict[str, Any]:
+        allocated_capital = self._cap_allocated_capital(symbol, allocated_capital)
         live_reference_price, quote = self._resolve_crypto_reference_price(symbol, target_entry_price)
         max_acceptable_price = target_entry_price * (1 + (self.config.crypto_entry_max_chase_bps / 10_000.0))
         if live_reference_price > max_acceptable_price:
@@ -382,7 +434,7 @@ class AlpacaClient:
             return True
         return float(quantity).is_integer()
 
-    @retry()
+    @retry(should_retry=_is_transient_alpaca_error)
     def place_limit_entry_order(
         self,
         symbol: str,
@@ -396,6 +448,7 @@ class AlpacaClient:
                 target_entry_price=entry_price,
                 allocated_capital=allocated_capital,
             )
+        allocated_capital = self._cap_allocated_capital(symbol, allocated_capital)
         qty = self._calculate_quantity(entry_price, allocated_capital, category)
         if qty <= 0:
             raise ValueError(f"Allocated capital {allocated_capital} is insufficient to buy any quantity of {symbol} at {entry_price}")
@@ -412,7 +465,7 @@ class AlpacaClient:
         submitted = self.trading_client.submit_order(order_data=order)
         return {"order": submitted, "quantity": qty, "client_order_id": client_order_id}
 
-    @retry()
+    @retry(should_retry=_is_transient_alpaca_error)
     def place_limit_bracket_order(
         self,
         symbol: str,
@@ -422,6 +475,7 @@ class AlpacaClient:
         stop_loss: float,
         allocated_capital: float,
     ) -> dict[str, Any]:
+        allocated_capital = self._cap_allocated_capital(symbol, allocated_capital)
         qty = self._calculate_quantity(entry_price, allocated_capital, category)
         if qty <= 0:
             raise ValueError(f"Allocated capital {allocated_capital} is insufficient to buy any quantity of {symbol} at {entry_price}")
@@ -457,7 +511,7 @@ class AlpacaClient:
         submitted = self.trading_client.submit_order(order_data=order)
         return {"order": submitted, "quantity": qty, "client_order_id": client_order_id}
 
-    @retry()
+    @retry(should_retry=_is_transient_alpaca_error)
     def place_market_exit_order(self, symbol: str, quantity: float, category: str) -> Any:
         order = MarketOrderRequest(
             symbol=symbol,
@@ -469,7 +523,7 @@ class AlpacaClient:
         self.logger.info("Submitting market exit order for %s", symbol)
         return self.trading_client.submit_order(order_data=order)
 
-    @retry()
+    @retry(should_retry=_is_transient_alpaca_error)
     def place_trailing_stop_order(self, symbol: str, quantity: float, category: str, trail_price: float) -> dict[str, Any]:
         if trail_price <= 0:
             raise ValueError("trail_price must be positive")
@@ -487,7 +541,7 @@ class AlpacaClient:
         submitted = self.trading_client.submit_order(order_data=order)
         return {"order": submitted, "client_order_id": client_order_id}
 
-    @retry()
+    @retry(should_retry=_is_transient_alpaca_error)
     def replace_trailing_stop_order(self, order_id: str, trail_price: float) -> Any:
         if trail_price <= 0:
             raise ValueError("trail_price must be positive")

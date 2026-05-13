@@ -28,7 +28,7 @@ export const TabsTrigger = forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium text-(--color-muted) transition-colors hover:text-(--color-text) data-[state=active]:bg-slate-800 data-[state=active]:text-(--color-text)",
+      "inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium text-(--color-muted) transition-colors hover:text-(--color-text) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent) focus-visible:ring-offset-2 focus-visible:ring-offset-(--color-panel) data-[state=active]:bg-slate-700 data-[state=active]:text-(--color-text) data-[state=active]:shadow-sm data-[state=active]:ring-1 data-[state=active]:ring-(--color-line)",
       className
     )}
     {...props}

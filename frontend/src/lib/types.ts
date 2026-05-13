@@ -1,5 +1,29 @@
 export type UserRole = "admin" | "user";
 
+export type Provider = "alpaca" | "binance";
+
+export const ALL_PROVIDERS: Provider[] = ["alpaca", "binance"];
+
+export const PROVIDER_LABELS: Record<Provider, string> = {
+  alpaca: "Alpaca Markets",
+  binance: "Binance",
+};
+
+export interface ProviderDescriptor {
+  provider: Provider;
+  active: boolean;
+  account_currency: string;
+  display_currency: string;
+  categories: string[];
+  /** Only set for Binance: "hmac" | "ed25519" | "rsa" | "none" | "unknown" */
+  key_type?: string;
+}
+
+export interface ProvidersResponse {
+  active: Provider[];
+  providers: ProviderDescriptor[];
+}
+
 export interface AuthUser {
   id: number;
   username: string;
@@ -45,6 +69,8 @@ export interface Trade {
   alpaca_order_id: string | null;
   reasoning: string | null;
   confidence: number | null;
+  provider: Provider;
+  account_currency: string;
   created_at: string;
   updated_at: string;
   trade_score: number | null;
@@ -65,6 +91,7 @@ export interface Metrics {
   account_equity: number;
   currency: string;
   account_currency: string;
+  providers?: Provider[];
 }
 
 export interface EquityPoint {
@@ -77,6 +104,7 @@ export interface PnlBySymbolRow {
   pnl_abs: number;
   pnl_pct: number;
   n_trades: number;
+  provider?: Provider;
 }
 
 export interface AllocationCategory {
@@ -87,6 +115,12 @@ export interface AllocationCategory {
 export interface AllocationSymbol {
   symbol: string;
   category: string;
+  value: number;
+  provider?: Provider;
+}
+
+export interface AllocationProvider {
+  provider: Provider;
   value: number;
 }
 
@@ -115,7 +149,7 @@ export interface ReportFolder {
   created_by: number | null;
 }
 
-export type PromptKey =
+export type AlpacaPromptKey =
   | "new_signal"
   | "batch_signals"
   | "pending_review"
@@ -125,7 +159,19 @@ export type PromptKey =
   | "universe_final"
   | "universe_final_from_dossiers";
 
-export const PROMPT_KEYS: PromptKey[] = [
+export type BinancePromptKey =
+  | "binance_new_signal"
+  | "binance_batch_signals"
+  | "binance_pending_review"
+  | "binance_protection_review"
+  | "binance_universe_dossier"
+  | "binance_universe_shortlist"
+  | "binance_universe_final"
+  | "binance_universe_final_from_dossiers";
+
+export type PromptKey = AlpacaPromptKey | BinancePromptKey;
+
+export const ALPACA_PROMPT_KEYS: AlpacaPromptKey[] = [
   "new_signal",
   "batch_signals",
   "pending_review",
@@ -135,6 +181,26 @@ export const PROMPT_KEYS: PromptKey[] = [
   "universe_final",
   "universe_final_from_dossiers",
 ];
+
+export const BINANCE_PROMPT_KEYS: BinancePromptKey[] = [
+  "binance_new_signal",
+  "binance_batch_signals",
+  "binance_pending_review",
+  "binance_protection_review",
+  "binance_universe_dossier",
+  "binance_universe_shortlist",
+  "binance_universe_final",
+  "binance_universe_final_from_dossiers",
+];
+
+export const PROMPT_KEYS: PromptKey[] = [
+  ...ALPACA_PROMPT_KEYS,
+  ...BINANCE_PROMPT_KEYS,
+];
+
+export function promptProvider(key: PromptKey): Provider {
+  return key.startsWith("binance_") ? "binance" : "alpaca";
+}
 
 export interface PromptSummary {
   key: PromptKey;
@@ -163,6 +229,7 @@ export interface PromptVersion {
 export interface SettingsResponse {
   values: Record<string, unknown>;
   restart_required: boolean;
+  active_providers?: Provider[];
 }
 
 export interface AuditEntry {

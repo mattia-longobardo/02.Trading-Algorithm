@@ -1,53 +1,89 @@
-"""Periodic capture of the broker's account equity into app.sqlite.
+"""Periodic capture of broker account equity (per provider) into app.sqlite.
 
 The dashboard's "andamento del saldo totale" chart needs a history of
-balance values, but Alpaca only exposes the *current* state. We persist
-a rolling time series in `account_equity_snapshots` so the chart has
-something to draw across the timeframe selector.
+balance values, but brokers only expose the *current* state. We persist a
+rolling time series in ``account_equity_snapshots`` so the chart can plot
+across the timeframe selector.
 
-Snapshots are written by a low-frequency scheduler job (default every
-15 minutes); read endpoints layer FX conversion on top of the stored
-broker-native value at request time.
+Multi-provider note: each broker is sampled independently, with its own
+broker-native currency. ``equity_curve_for_api`` then sums the
+per-provider series at each bucket so the dashboard sees a single
+aggregated equity line in the user's display currency.
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Mapping
 
-from clients.alpaca_client import AlpacaClient
 from core import fx
 from core.app_db import app_cursor, app_fetch_all, app_fetch_one
-from core.utils import AppConfig, isoformat_utc, parse_datetime, utc_now
+from core.utils import (
+    PROVIDER_ALPACA,
+    PROVIDER_BINANCE,
+    AppConfig,
+    isoformat_utc,
+    parse_datetime,
+    utc_now,
+)
 
 
 def record_snapshot(
     config: AppConfig,
-    alpaca_client: AlpacaClient,
+    broker_client: Any,
     logger: logging.Logger,
+    provider: str = PROVIDER_ALPACA,
 ) -> dict[str, Any] | None:
     """Persist the current account equity (in broker-native currency).
 
     Returns the inserted row dict, or ``None`` if the broker call failed.
     """
 
+    if broker_client is None:
+        return None
     try:
-        equity = float(alpaca_client.get_account_equity())
+        equity = float(broker_client.get_account_equity())
     except Exception:
-        logger.exception("equity snapshot: failed to read account balance")
+        logger.exception("equity snapshot: failed to read %s account balance", provider)
         return None
     if equity <= 0:
-        logger.debug("equity snapshot: balance is zero, skipping")
+        logger.debug("equity snapshot: %s balance is zero, skipping", provider)
         return None
 
+    currency = config.provider_account_currency(provider)
     now_iso = isoformat_utc(utc_now()) or ""
     with app_cursor(config.db_app) as cursor:
         cursor.execute(
-            "INSERT INTO account_equity_snapshots (recorded_at, equity, currency) VALUES (?, ?, ?)",
-            (now_iso, equity, config.account_currency),
+            "INSERT INTO account_equity_snapshots (recorded_at, equity, currency, provider) VALUES (?, ?, ?, ?)",
+            (now_iso, equity, currency, provider),
         )
-    return {"recorded_at": now_iso, "equity": equity, "currency": config.account_currency}
+    return {
+        "recorded_at": now_iso,
+        "equity": equity,
+        "currency": currency,
+        "provider": provider,
+    }
+
+
+def record_snapshots_all(
+    config: AppConfig,
+    brokers: Mapping[str, Any],
+    logger: logging.Logger,
+) -> dict[str, dict[str, Any] | None]:
+    """Snapshot every active provider in one call. Used by the scheduler."""
+
+    out: dict[str, dict[str, Any] | None] = {}
+    for provider in (PROVIDER_ALPACA, PROVIDER_BINANCE):
+        broker = brokers.get(provider)
+        if broker is None:
+            continue
+        try:
+            out[provider] = record_snapshot(config, broker, logger, provider=provider)
+        except Exception:
+            logger.exception("equity snapshot: provider %s failed", provider)
+            out[provider] = None
+    return out
 
 
 def list_snapshots(
@@ -56,16 +92,21 @@ def list_snapshots(
     from_dt: datetime | None,
     to_dt: datetime | None,
     granularity: str = "hourly",
+    provider: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return raw (broker-native) snapshots within the requested window.
 
     The caller is responsible for FX conversion at the API edge so the
     same series can be presented in any display currency without
-    rewriting history.
+    rewriting history. Pass ``provider`` to constrain the result to a
+    single broker.
     """
 
-    sql = ["SELECT recorded_at, equity, currency FROM account_equity_snapshots WHERE 1=1"]
+    sql = ["SELECT recorded_at, equity, currency, provider FROM account_equity_snapshots WHERE 1=1"]
     params: list[Any] = []
+    if provider:
+        sql.append("AND provider = ?")
+        params.append(provider)
     if from_dt is not None:
         sql.append("AND recorded_at >= ?")
         params.append(isoformat_utc(from_dt))
@@ -95,7 +136,9 @@ def list_snapshots(
     else:
         floor_minutes = 60
 
-    buckets: dict[str, dict[str, Any]] = {}
+    # Per-provider buckets are kept independent so the API view can decide
+    # whether to sum them or surface a single provider's line.
+    buckets: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
         recorded = parse_datetime(row["recorded_at"])
         if recorded is None:
@@ -109,18 +152,26 @@ def list_snapshots(
                 hour=floored // 60, minute=floored % 60, second=0, microsecond=0
             )
         key = bucket_dt.strftime("%Y-%m-%dT%H:%M:00+00:00")
-        buckets[key] = {
+        prov = str(row.get("provider") or PROVIDER_ALPACA)
+        buckets[(key, prov)] = {
             "t": key,
             "equity": float(row["equity"]),
             "currency": str(row["currency"]),
+            "provider": prov,
         }
-    return [buckets[k] for k in sorted(buckets.keys())]
+    return [buckets[bucket_key] for bucket_key in sorted(buckets.keys())]
 
 
-def latest_snapshot(db_path: str) -> dict[str, Any] | None:
+def latest_snapshot(db_path: str, provider: str | None = None) -> dict[str, Any] | None:
+    if provider:
+        return app_fetch_one(
+            db_path,
+            "SELECT recorded_at, equity, currency, provider FROM account_equity_snapshots WHERE provider = ? ORDER BY recorded_at DESC LIMIT 1",
+            (provider,),
+        )
     return app_fetch_one(
         db_path,
-        "SELECT recorded_at, equity, currency FROM account_equity_snapshots ORDER BY recorded_at DESC LIMIT 1",
+        "SELECT recorded_at, equity, currency, provider FROM account_equity_snapshots ORDER BY recorded_at DESC LIMIT 1",
     )
 
 
@@ -143,17 +194,39 @@ def equity_curve_for_api(
     to_dt: datetime | None,
     granularity: str,
     target_currency: str,
+    provider: str | None = None,
 ) -> dict[str, Any]:
-    """Build the dashboard payload: snapshots + FX-converted points."""
+    """Build the dashboard payload: snapshots aggregated across providers.
 
-    raw = list_snapshots(db_path, from_dt=from_dt, to_dt=to_dt, granularity=granularity)
-    points = []
-    for r in raw:
-        converted = fx.convert(r["equity"], r["currency"], target_currency)
+    For each timestamp bucket we sum the per-provider equity values after
+    converting them to ``target_currency``. This lets the user drop in a
+    second broker without ever changing the dashboard contract.
+    """
+
+    raw = list_snapshots(
+        db_path,
+        from_dt=from_dt,
+        to_dt=to_dt,
+        granularity=granularity,
+        provider=provider,
+    )
+    aggregated: dict[str, float] = {}
+    contributing_providers_per_bucket: dict[str, set[str]] = {}
+    for row in raw:
+        converted = fx.convert(row["equity"], row["currency"], target_currency)
         if converted is None:
             continue
-        points.append({"t": r["t"], "equity": round(converted, 2)})
+        bucket_t = row["t"]
+        aggregated[bucket_t] = round(aggregated.get(bucket_t, 0.0) + float(converted), 2)
+        contributing_providers_per_bucket.setdefault(bucket_t, set()).add(row["provider"])
+    points = [
+        {"t": bucket_t, "equity": value} for bucket_t, value in sorted(aggregated.items())
+    ]
     return {
         "points": points,
         "currency": target_currency,
+        "providers_per_bucket": {
+            bucket_t: sorted(provs)
+            for bucket_t, provs in contributing_providers_per_bucket.items()
+        },
     }

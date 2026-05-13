@@ -13,7 +13,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from filelock import FileLock, Timeout
 
-from core.utils import AppConfig
+from core.utils import AppConfig, merge_universe_categories
 from services.report import ReportGenerator
 from services.trade_manager import TradeManager
 from services.universe_manager import UniverseManager
@@ -46,10 +46,19 @@ class TradingScheduler:
         self._pending_jobs_drain_lock = threading.Lock()
 
     @staticmethod
-    def _universe_is_empty(universe: dict[str, list[str]]) -> bool:
-        return not universe.get("STOCK") and not universe.get("CRYPTO")
+    def _universe_is_empty(universe: Any) -> bool:
+        if not isinstance(universe, dict):
+            return True
+        for provider_universe in universe.values():
+            if isinstance(provider_universe, dict):
+                if any(provider_universe.get(category) for category in ("STOCK", "CRYPTO")):
+                    return False
+            elif isinstance(provider_universe, list) and provider_universe:
+                # Legacy flat shape — count any non-empty list as non-empty.
+                return False
+        return True
 
-    def _missing_market_data(self, universe: dict[str, list[str]]) -> bool:
+    def _missing_market_data(self, universe: Any) -> bool:
         monitored = self.trade_manager.symbols_to_monitor(universe)
         if not monitored:
             return True
@@ -70,7 +79,7 @@ class TradingScheduler:
         if self._missing_market_data(universe):
             self.logger.info("Storico mancante per il bootstrap iniziale: eseguo il primo ciclo schedulato una volta")
             self.job_download_market_data()
-            self.trade_manager.sync_alpaca_state()
+            self.trade_manager.sync_broker_state()
 
     @contextmanager
     def _process_lock(self, timeout: float) -> Any:
@@ -184,10 +193,10 @@ class TradingScheduler:
         self.trade_manager.data_manager.update_symbols(monitored)
 
     def job_monitor_trades(self) -> None:
-        self.trade_manager.sync_alpaca_state()
+        self.trade_manager.sync_broker_state()
 
     def job_evaluate_signals(self) -> None:
-        self.trade_manager.sync_alpaca_state()
+        self.trade_manager.sync_broker_state()
         universe = self.universe_manager.get_current_universe()
         if self._universe_is_empty(universe):
             universe = self.universe_manager.select_trading_universe()
@@ -223,9 +232,9 @@ class TradingScheduler:
     def job_record_equity_snapshot(self) -> None:
         # Local import to avoid pulling app_db at scheduler import time
         # (keeps the test stubs that mock out scheduler imports working).
-        from services.equity_snapshots import record_snapshot
+        from services.equity_snapshots import record_snapshots_all
 
-        record_snapshot(self.config, self.trade_manager.alpaca_client, self.logger)
+        record_snapshots_all(self.config, self.trade_manager.brokers, self.logger)
 
     def run_manual_refresh_universe(self) -> dict[str, list[str]]:
         def execute() -> dict[str, list[str]]:
