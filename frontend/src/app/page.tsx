@@ -299,9 +299,35 @@ export default function DashboardPage() {
                     innerRadius={50}
                     outerRadius={90}
                     paddingAngle={2}
-                    label={(entry: { category: string; percent?: number }) =>
-                      `${entry.category} ${((entry.percent ?? 0) * 100).toFixed(1)}%`
-                    }
+                    labelLine={false}
+                    label={(props: {
+                      cx: number;
+                      cy: number;
+                      midAngle: number;
+                      innerRadius: number;
+                      outerRadius: number;
+                      percent?: number;
+                    }) => {
+                      const pct = props.percent ?? 0;
+                      if (pct < 0.05) return null;
+                      const RADIAN = Math.PI / 180;
+                      const r = props.innerRadius + (props.outerRadius - props.innerRadius) / 2;
+                      const x = props.cx + r * Math.cos(-props.midAngle * RADIAN);
+                      const y = props.cy + r * Math.sin(-props.midAngle * RADIAN);
+                      return (
+                        <text
+                          x={x}
+                          y={y}
+                          fill="#0f172a"
+                          textAnchor="middle"
+                          dominantBaseline="central"
+                          fontSize={12}
+                          fontWeight={600}
+                        >
+                          {`${(pct * 100).toFixed(1)}%`}
+                        </text>
+                      );
+                    }}
                   >
                     {(allocation.data?.by_category ?? []).map((_, idx) => (
                       <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
@@ -374,8 +400,18 @@ export default function DashboardPage() {
                 <XAxis dataKey="symbol" stroke="#94a3b8" fontSize={12} />
                 <YAxis stroke="#94a3b8" fontSize={12} tickFormatter={(v) => formatCurrency(v, m?.currency ?? "EUR")} width={80} />
                 <Tooltip
-                  contentStyle={{ background: "#0f172a", border: "1px solid #1f2937" }}
-                  formatter={(v: number) => [formatCurrency(v, m?.currency ?? "EUR"), "PnL"]}
+                  contentStyle={{ background: "#0f172a", border: "1px solid #1f2937", borderRadius: 8 }}
+                  labelStyle={{ color: "#e2e8f0" }}
+                  itemStyle={{ color: "#e2e8f0" }}
+                  formatter={(v: number) => {
+                    const color = v < 0 ? "#f43f5e" : v > 0 ? "#22c55e" : "#e2e8f0";
+                    return [
+                      <span key="pnl" style={{ color, fontWeight: 600 }}>
+                        {formatCurrency(v, m?.currency ?? "EUR")}
+                      </span>,
+                      "PnL",
+                    ];
+                  }}
                 />
                 <Bar dataKey="pnl_abs" name="PnL">
                   {(pnlBySymbol.data?.items ?? []).map((entry, idx) => (
