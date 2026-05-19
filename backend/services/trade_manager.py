@@ -17,7 +17,6 @@ from clients.gpt_client import GPTClient
 from core.db import db_cursor, fetch_all, fetch_one
 from core.utils import (
     PROVIDER_ALPACA,
-    PROVIDER_BINANCE,
     AppConfig,
     isoformat_utc,
     parse_datetime,
@@ -71,10 +70,6 @@ class TradeManager:
     @property
     def alpaca_client(self) -> Any | None:
         return self._brokers.get(PROVIDER_ALPACA)
-
-    @property
-    def binance_client(self) -> Any | None:
-        return self._brokers.get(PROVIDER_BINANCE)
 
     @property
     def brokers(self) -> dict[str, Any]:
@@ -302,19 +297,14 @@ class TradeManager:
         if broker is None:
             return 0.0
         cash = broker.get_available_cash()
-        if provider == PROVIDER_BINANCE:
-            slots = max(int(self.config.max_open_trades_binance), 1)
-            active = self.count_active_trades("CRYPTO", provider=PROVIDER_BINANCE)
-        else:
-            slots = self.config.max_open_trades_stock + self.config.max_open_trades_crypto
-            # For Alpaca we use the legacy aggregate (across STOCK + CRYPTO)
-            # because the cash pool itself is shared between the two
-            # categories on Alpaca's side.
-            active = sum(
-                1
-                for t in self.get_open_or_pending_trades()
-                if self._trade_provider(t) == PROVIDER_ALPACA
-            )
+        slots = self.config.max_open_trades_stock + self.config.max_open_trades_crypto
+        # The cash pool is shared between STOCK and CRYPTO on Alpaca's side,
+        # so we use the legacy aggregate across both categories.
+        active = sum(
+            1
+            for t in self.get_open_or_pending_trades()
+            if self._trade_provider(t) == PROVIDER_ALPACA
+        )
         available_slots = max(slots - active, 1)
         return round(cash / available_slots, 2)
 
@@ -371,33 +361,21 @@ class TradeManager:
         return target_entry_price * (1 + (self.config.crypto_entry_max_chase_bps / 10_000.0))
 
     def _max_acceptable_crypto_entry_price_for(self, trade: dict[str, Any], target_entry_price: float) -> float:
-        provider = self._trade_provider(trade)
-        if provider == PROVIDER_BINANCE:
-            chase_bps = int(self.config.binance_entry_max_chase_bps)
-        else:
-            chase_bps = int(self.config.crypto_entry_max_chase_bps)
+        chase_bps = int(self.config.crypto_entry_max_chase_bps)
         return target_entry_price * (1 + (chase_bps / 10_000.0))
 
     def _pending_reprice_minutes(self, trade: dict[str, Any]) -> int:
-        if self._trade_provider(trade) == PROVIDER_BINANCE:
-            return int(self.config.binance_pending_reprice_minutes)
         return int(self.config.crypto_pending_reprice_minutes)
 
     def _pending_cancel_minutes(self, trade: dict[str, Any]) -> int:
-        if self._trade_provider(trade) == PROVIDER_BINANCE:
-            return int(self.config.binance_pending_cancel_minutes)
         return int(self.config.crypto_pending_cancel_minutes)
 
     def _cancel_broker_order(self, trade: dict[str, Any], order_id: str) -> None:
         broker = self._trade_broker(trade)
         if broker is None:
             return
-        provider = self._trade_provider(trade)
         try:
-            if provider == PROVIDER_BINANCE:
-                broker.cancel_order_for_symbol(str(trade["symbol"]), str(order_id))
-            else:
-                broker.cancel_order(str(order_id))
+            broker.cancel_order(str(order_id))
         except Exception as exc:
             if "not found" not in str(exc).lower():
                 raise
@@ -589,9 +567,7 @@ class TradeManager:
         return True
 
     def _available_trade_slots(self, category: str, provider: str = PROVIDER_ALPACA) -> int:
-        if provider == PROVIDER_BINANCE:
-            max_trades = int(self.config.max_open_trades_binance)
-        elif category == "STOCK":
+        if category == "STOCK":
             max_trades = int(self.config.max_open_trades_stock)
         else:
             max_trades = int(self.config.max_open_trades_crypto)
@@ -795,8 +771,6 @@ class TradeManager:
         if broker is None:
             return None
         try:
-            if self._trade_provider(trade) == PROVIDER_BINANCE:
-                return broker.get_order_for_symbol(str(trade["symbol"]), str(order_id))
             return broker.get_order(str(order_id))
         except Exception:
             self.logger.warning(

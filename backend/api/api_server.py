@@ -43,7 +43,6 @@ from core import app_db, auth as auth_lib, fx, prompt_store
 from core.utils import (
     ALL_PROVIDERS,
     PROVIDER_ALPACA,
-    PROVIDER_BINANCE,
     SETTINGS_OVERRIDABLE_KEYS,
     SETTINGS_RESTART_REQUIRED_KEYS,
     AppConfig,
@@ -210,10 +209,8 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
                 "active": True,
                 "account_currency": account_currency,
                 "display_currency": config.currency,
-                "categories": ["STOCK", "CRYPTO"] if provider == PROVIDER_ALPACA else ["CRYPTO"],
+                "categories": ["STOCK", "CRYPTO"],
             }
-            if provider == PROVIDER_BINANCE:
-                descriptor["key_type"] = getattr(broker, "key_type", "unknown")
             out.append(descriptor)
         return out
 
@@ -931,18 +928,11 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
             "openai_api_key",
             "alpaca_api_key",
             "alpaca_secret_key",
-            "binance_api_key",
-            "binance_secret_key",
         ):
             values[secret_key] = "********" if getattr(config, secret_key, "") else ""
-        # Also expose the per-provider quote/account currency labels read-only
-        # so the Binance settings tab can render them as informational fields.
-        values["binance_quote_currency"] = config.binance_quote_currency
+        # Expose the account currency label read-only so the settings tab can
+        # render it as an informational field.
         values["account_currency"] = config.account_currency
-        # Path to the Binance Ed25519/RSA PEM file (not a secret — just a
-        # filesystem path), so the UI can show operators which file the bot
-        # actually loaded.
-        values["binance_private_key_path"] = config.binance_private_key_path or ""
         restart_required = any(key in SETTINGS_RESTART_REQUIRED_KEYS for key in overlay)
         return {
             "values": values,

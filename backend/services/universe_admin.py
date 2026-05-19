@@ -5,10 +5,9 @@ operator may want to nudge it — pin a conviction symbol that the GPT
 shortlist missed, or remove one that no longer makes sense. This module
 exposes the validated add/remove primitives the universe page calls.
 
-The new schema is provider-tagged: each broker has its own
-``{category: [symbols]}`` map and we never mix Alpaca and Binance symbols
-together. The operator picks the provider in the UI; we validate the
-symbol against that broker's catalogue and live quote feed.
+The schema is provider-tagged: each broker has its own
+``{category: [symbols]}`` map. The operator picks the provider in the UI;
+we validate the symbol against that broker's catalogue and live quote feed.
 """
 
 from __future__ import annotations
@@ -19,7 +18,6 @@ from typing import Any, Mapping
 from core.utils import (
     ALL_PROVIDERS,
     PROVIDER_ALPACA,
-    PROVIDER_BINANCE,
     AppConfig,
     read_universe_file,
     write_universe_file,
@@ -28,7 +26,6 @@ from core.utils import (
 
 VALID_CATEGORIES_BY_PROVIDER: dict[str, tuple[str, ...]] = {
     PROVIDER_ALPACA: ("STOCK", "CRYPTO"),
-    PROVIDER_BINANCE: ("CRYPTO",),
 }
 
 
@@ -59,21 +56,6 @@ def _normalize_symbol(symbol: str, provider: str, category: str, config: AppConf
     raw = (symbol or "").strip().upper()
     if not raw:
         raise UniverseValidationError("Symbol is required")
-    if provider == PROVIDER_BINANCE:
-        # Accept BTCUSDT, BTC/USDT or just BTC; normalize to BASE/<quote>
-        # using the configured quote currency. Operators typing only the
-        # base get the right pair without surprises.
-        quote = (config.binance_quote_currency or "USDT").upper()
-        clean = raw.replace("/", "")
-        if clean.endswith(quote):
-            base = clean[: -len(quote)]
-        else:
-            base = clean
-        if not base:
-            raise UniverseValidationError(
-                f"Binance symbol must include a base asset (e.g. BTC/{quote})"
-            )
-        return f"{base}/{quote}"
     if category == "CRYPTO":
         # Alpaca pair format BASE/QUOTE.
         if "/" not in raw:
@@ -120,21 +102,6 @@ def _validate_symbol_with_broker(
         )
 
     try:
-        if provider == PROVIDER_BINANCE:
-            assets = broker.list_assets("CRYPTO")
-            wanted = symbol.upper()
-            for asset in assets:
-                ticker = str(getattr(asset, "symbol", "") or "").upper()
-                if ticker == wanted:
-                    if not bool(getattr(asset, "tradable", True)):
-                        raise UniverseValidationError(
-                            f"{symbol} is listed but not currently tradable on Binance Spot"
-                        )
-                    return
-            raise UniverseValidationError(
-                f"{symbol} is not in the Binance Spot catalogue"
-            )
-
         if category == "STOCK":
             assets = broker.list_assets("US_EQUITY")
             wanted = symbol.upper()
@@ -174,14 +141,12 @@ def get_universe_with_metadata(
     """Read the saved universe and decorate each symbol with a live price.
 
     Returned shape:
-    ``{"alpaca": {"STOCK": [entry, ...], "CRYPTO": [...]},
-       "binance": {"CRYPTO": [...]}}``
+    ``{"alpaca": {"STOCK": [entry, ...], "CRYPTO": [...]}}``
     """
 
     universe = read_universe_file()
     out: dict[str, dict[str, list[dict[str, Any]]]] = {
         PROVIDER_ALPACA: {"STOCK": [], "CRYPTO": []},
-        PROVIDER_BINANCE: {"CRYPTO": []},
     }
     for provider, categories in VALID_CATEGORIES_BY_PROVIDER.items():
         broker = brokers.get(provider)
