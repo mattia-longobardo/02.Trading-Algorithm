@@ -40,7 +40,6 @@ interface UniverseEnvelope {
 
 const PROVIDER_CATEGORIES: Record<Provider, Category[]> = {
   alpaca: ["STOCK", "CRYPTO"],
-  binance: ["CRYPTO"],
 };
 
 export default function UniversePage() {
@@ -68,7 +67,7 @@ export default function UniversePage() {
         <header>
           <h1 className="text-3xl font-semibold">Universe</h1>
           <p className="text-sm text-(--color-muted)">
-            Nessun broker configurato. Imposta le credenziali Alpaca e/o Binance nel <code>.env</code>{" "}
+            Nessun broker configurato. Imposta le credenziali Alpaca nel <code>.env</code>{" "}
             del backend e riavvia per popolare l&apos;universe.
           </p>
         </header>
@@ -190,10 +189,7 @@ function AddSymbolCard({
     onError: (err) => setError(err instanceof ApiError ? err.message : (err as Error).message),
   });
 
-  const placeholder = (() => {
-    if (provider === "binance") return "es. BTC/USDT o BTCUSDT";
-    return category === "CRYPTO" ? "es. BTC/USD" : "es. AAPL";
-  })();
+  const placeholder = category === "CRYPTO" ? "es. BTC/USD" : "es. AAPL";
 
   return (
     <Card>

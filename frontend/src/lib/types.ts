@@ -1,12 +1,11 @@
 export type UserRole = "admin" | "user";
 
-export type Provider = "alpaca" | "binance";
+export type Provider = "alpaca";
 
-export const ALL_PROVIDERS: Provider[] = ["alpaca", "binance"];
+export const ALL_PROVIDERS: Provider[] = ["alpaca"];
 
 export const PROVIDER_LABELS: Record<Provider, string> = {
   alpaca: "Alpaca Markets",
-  binance: "Binance",
 };
 
 export interface ProviderDescriptor {
@@ -15,8 +14,6 @@ export interface ProviderDescriptor {
   account_currency: string;
   display_currency: string;
   categories: string[];
-  /** Only set for Binance: "hmac" | "ed25519" | "rsa" | "none" | "unknown" */
-  key_type?: string;
 }
 
 export interface ProvidersResponse {
@@ -159,17 +156,7 @@ export type AlpacaPromptKey =
   | "universe_final"
   | "universe_final_from_dossiers";
 
-export type BinancePromptKey =
-  | "binance_new_signal"
-  | "binance_batch_signals"
-  | "binance_pending_review"
-  | "binance_protection_review"
-  | "binance_universe_dossier"
-  | "binance_universe_shortlist"
-  | "binance_universe_final"
-  | "binance_universe_final_from_dossiers";
-
-export type PromptKey = AlpacaPromptKey | BinancePromptKey;
+export type PromptKey = AlpacaPromptKey;
 
 export const ALPACA_PROMPT_KEYS: AlpacaPromptKey[] = [
   "new_signal",
@@ -182,25 +169,7 @@ export const ALPACA_PROMPT_KEYS: AlpacaPromptKey[] = [
   "universe_final_from_dossiers",
 ];
 
-export const BINANCE_PROMPT_KEYS: BinancePromptKey[] = [
-  "binance_new_signal",
-  "binance_batch_signals",
-  "binance_pending_review",
-  "binance_protection_review",
-  "binance_universe_dossier",
-  "binance_universe_shortlist",
-  "binance_universe_final",
-  "binance_universe_final_from_dossiers",
-];
-
-export const PROMPT_KEYS: PromptKey[] = [
-  ...ALPACA_PROMPT_KEYS,
-  ...BINANCE_PROMPT_KEYS,
-];
-
-export function promptProvider(key: PromptKey): Provider {
-  return key.startsWith("binance_") ? "binance" : "alpaca";
-}
+export const PROMPT_KEYS: PromptKey[] = [...ALPACA_PROMPT_KEYS];
 
 export interface PromptSummary {
   key: PromptKey;
