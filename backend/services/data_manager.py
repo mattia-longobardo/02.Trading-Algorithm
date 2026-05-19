@@ -1,8 +1,8 @@
 """Market data download, persistence, and cleanup.
 
 Multi-provider aware: receives a registry of broker clients keyed by provider
-name (``alpaca``, ``binance``) and dispatches OHLCV fetches to whichever
-broker owns the symbol.
+name (``alpaca``) and dispatches OHLCV fetches to whichever broker owns the
+symbol.
 """
 
 from __future__ import annotations

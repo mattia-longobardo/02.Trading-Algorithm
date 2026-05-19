@@ -21,7 +21,6 @@ from core import fx
 from core.app_db import app_cursor, app_fetch_all, app_fetch_one
 from core.utils import (
     PROVIDER_ALPACA,
-    PROVIDER_BINANCE,
     AppConfig,
     isoformat_utc,
     parse_datetime,
@@ -74,7 +73,7 @@ def record_snapshots_all(
     """Snapshot every active provider in one call. Used by the scheduler."""
 
     out: dict[str, dict[str, Any] | None] = {}
-    for provider in (PROVIDER_ALPACA, PROVIDER_BINANCE):
+    for provider in (PROVIDER_ALPACA,):
         broker = brokers.get(provider)
         if broker is None:
             continue

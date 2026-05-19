@@ -150,7 +150,7 @@ export default function DashboardPage() {
         <header>
           <h1 className="text-3xl font-semibold">Dashboard</h1>
           <p className="text-sm text-(--color-muted)">
-            Nessun broker configurato. Aggiungi le credenziali Alpaca e/o Binance nel{" "}
+            Nessun broker configurato. Aggiungi le credenziali Alpaca nel{" "}
             <code>.env</code> del backend e riavvia per vedere KPI, equity curve e allocazione.
           </p>
         </header>
