@@ -237,24 +237,7 @@ ALPACA_PROMPT_KEYS: tuple[str, ...] = (
     "universe_final_from_dossiers",
 )
 
-BINANCE_PROMPT_KEYS: tuple[str, ...] = (
-    "binance_new_signal",
-    "binance_batch_signals",
-    "binance_pending_review",
-    "binance_protection_review",
-    "binance_universe_dossier",
-    "binance_universe_shortlist",
-    "binance_universe_final",
-    "binance_universe_final_from_dossiers",
-)
-
-PROMPT_KEYS: tuple[str, ...] = ALPACA_PROMPT_KEYS + BINANCE_PROMPT_KEYS
-
-
-def prompt_key_provider(key: str) -> str:
-    """Return the provider that owns a prompt key (``alpaca`` or ``binance``)."""
-
-    return "binance" if key.startswith("binance_") else "alpaca"
+PROMPT_KEYS: tuple[str, ...] = ALPACA_PROMPT_KEYS
 
 
 def seed_initial_prompt_versions(db_path: str, defaults: dict[str, str]) -> None:

@@ -14,12 +14,6 @@ services:
       - ./backend/data:/app/data
       - ./backend/run:/app/run
       - ./backend/.env:/app/.env
-      # Read-only mount of the host's ~/.ssh so the Binance client can read
-      # its Ed25519 / RSA private-key PEM (configured via
-      # BINANCE_PRIVATE_KEY_PATH=/home/mattia/.ssh/binance_public.pem).
-      # Leaving the path identical inside the container keeps the env value
-      # portable between bare-metal and Docker runs.
-      - /home/mattia/.ssh:/home/mattia/.ssh:ro
     environment:
       - TZ=Europe/Rome
     # The backend lives only on the private internal network. The frontend

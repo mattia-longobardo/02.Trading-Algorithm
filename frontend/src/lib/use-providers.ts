@@ -31,7 +31,6 @@ export function useProviders() {
     descriptors: query.data?.providers ?? [],
     isActive,
     alpaca: isActive("alpaca"),
-    binance: isActive("binance"),
     none: query.data ? active.length === 0 : false,
   };
 }

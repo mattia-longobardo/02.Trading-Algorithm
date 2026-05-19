@@ -23,7 +23,6 @@ import { formatDateTime } from "@/lib/format";
 import { useProviders } from "@/lib/use-providers";
 import {
   ALPACA_PROMPT_KEYS,
-  BINANCE_PROMPT_KEYS,
   PROVIDER_LABELS,
   type Provider,
   type PromptDetail,
@@ -41,21 +40,10 @@ const PROMPT_LABELS: Record<PromptKey, string> = {
   universe_shortlist: "universe_shortlist — weekly shortlist phase",
   universe_final: "universe_final — final consolidation (legacy)",
   universe_final_from_dossiers: "universe_final_from_dossiers — final from dossiers",
-  // Binance
-  binance_new_signal: "binance_new_signal — single-pair entry decision",
-  binance_batch_signals: "binance_batch_signals — batch pair analysis (6×/day)",
-  binance_pending_review: "binance_pending_review — daily review of stale PENDING",
-  binance_protection_review: "binance_protection_review — trailing TP reassessment",
-  binance_universe_dossier: "binance_universe_dossier — per-pair weekly dossier",
-  binance_universe_shortlist: "binance_universe_shortlist — weekly shortlist phase",
-  binance_universe_final: "binance_universe_final — final consolidation",
-  binance_universe_final_from_dossiers:
-    "binance_universe_final_from_dossiers — final from dossiers",
 };
 
 const KEYS_BY_PROVIDER: Record<Provider, PromptKey[]> = {
   alpaca: [...ALPACA_PROMPT_KEYS],
-  binance: [...BINANCE_PROMPT_KEYS],
 };
 
 export default function PromptsPage() {

@@ -35,7 +35,7 @@ import {
 
 const STATUSES: TradeStatus[] = ["PENDING", "OPEN", "CLOSED", "CANCELLED"];
 const CATEGORIES: TradeCategory[] = ["STOCK", "CRYPTO"];
-const PROVIDERS: Provider[] = ["alpaca", "binance"];
+const PROVIDERS: Provider[] = ["alpaca"];
 
 interface TradesEnvelope {
   items: Trade[];

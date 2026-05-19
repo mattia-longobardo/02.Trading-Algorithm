@@ -8,8 +8,7 @@ date by the script-managed lifecycle every minute.
 Multi-provider aware: each trade carries its own ``provider`` and
 ``account_currency``. Monetary fields are converted to the user's
 display currency at API edge using the trade's own native currency,
-so the dashboard sums Alpaca (USD) and Binance (USDT) trades into the
-same display number.
+so the dashboard reports every trade in the same display number.
 """
 
 from __future__ import annotations
