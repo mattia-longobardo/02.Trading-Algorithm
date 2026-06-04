@@ -18,6 +18,7 @@ from typing import Any, Mapping
 from core.utils import (
     ALL_PROVIDERS,
     PROVIDER_ALPACA,
+    PROVIDER_ETORO,
     AppConfig,
     read_universe_file,
     write_universe_file,
@@ -26,6 +27,7 @@ from core.utils import (
 
 VALID_CATEGORIES_BY_PROVIDER: dict[str, tuple[str, ...]] = {
     PROVIDER_ALPACA: ("STOCK", "CRYPTO"),
+    PROVIDER_ETORO: ("STOCK", "CRYPTO"),
 }
 
 
@@ -57,6 +59,11 @@ def _normalize_symbol(symbol: str, provider: str, category: str, config: AppConf
     if not raw:
         raise UniverseValidationError("Symbol is required")
     if category == "CRYPTO":
+        if provider == PROVIDER_ETORO:
+            # eToro uses native crypto tickers (e.g. BTC), no quote suffix.
+            if "/" in raw or " " in raw:
+                raise UniverseValidationError("eToro crypto symbol must be a plain ticker (e.g. BTC)")
+            return raw
         # Alpaca pair format BASE/QUOTE.
         if "/" not in raw:
             if len(raw) > 3:
@@ -100,6 +107,18 @@ def _validate_symbol_with_broker(
         raise UniverseValidationError(
             f"{provider} returned a non-positive price for {symbol}"
         )
+
+    if provider == PROVIDER_ETORO:
+        try:
+            asset = broker.resolve_instrument(symbol)
+        except Exception:
+            logger.exception("eToro instrument resolution failed for %s; trusting price quote", symbol)
+            return
+        if asset is None:
+            raise UniverseValidationError(f"{symbol} is not an eToro instrument")
+        if not asset.get("tradable", True):
+            raise UniverseValidationError(f"{symbol} is listed on eToro but not currently tradable")
+        return
 
     try:
         if category == "STOCK":
@@ -146,7 +165,8 @@ def get_universe_with_metadata(
 
     universe = read_universe_file()
     out: dict[str, dict[str, list[dict[str, Any]]]] = {
-        PROVIDER_ALPACA: {"STOCK": [], "CRYPTO": []},
+        provider: {category: [] for category in categories}
+        for provider, categories in VALID_CATEGORIES_BY_PROVIDER.items()
     }
     for provider, categories in VALID_CATEGORIES_BY_PROVIDER.items():
         broker = brokers.get(provider)
