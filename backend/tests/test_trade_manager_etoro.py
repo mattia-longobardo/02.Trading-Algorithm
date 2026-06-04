@@ -10,6 +10,8 @@ from unittest.mock import Mock
 for name, attr in (("clients.alpaca_client", "AlpacaClient"), ("clients.gpt_client", "GPTClient")):
     stub = ModuleType(name)
     setattr(stub, attr, object)
+    if name == "clients.gpt_client":
+        stub.get_default_prompts = lambda: {}
     sys.modules.setdefault(name, stub)
 dotenv_stub = ModuleType("dotenv")
 dotenv_stub.load_dotenv = lambda: None
