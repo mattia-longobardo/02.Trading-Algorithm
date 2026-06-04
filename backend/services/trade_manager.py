@@ -298,15 +298,19 @@ class TradeManager:
             return 0.0
         cash = broker.get_available_cash()
         slots = self.config.max_open_trades_stock + self.config.max_open_trades_crypto
-        # The cash pool is shared between STOCK and CRYPTO on Alpaca's side,
-        # so we use the legacy aggregate across both categories.
+        # The cash pool is shared between STOCK and CRYPTO, so we use the
+        # aggregate count of this provider's active trades across categories.
         active = sum(
             1
             for t in self.get_open_or_pending_trades()
-            if self._trade_provider(t) == PROVIDER_ALPACA
+            if self._trade_provider(t) == provider
         )
         available_slots = max(slots - active, 1)
-        return round(cash / available_slots, 2)
+        allocated = round(cash / available_slots, 2)
+        minimum = float(getattr(self.config, "etoro_min_trade_amount", 0.0) or 0.0)
+        if minimum > 0 and 0 < allocated < minimum and cash >= minimum:
+            return minimum
+        return allocated
 
     def _cancel_pending_trade_record(
         self,
@@ -451,15 +455,15 @@ class TradeManager:
         category: str,
         symbol: str,
         signal: dict[str, Any],
-        order_payload: dict[str, Any],
+        instrument_id: int,
         allocated_capital: float,
         provider: str = PROVIDER_ALPACA,
     ) -> None:
-        order = order_payload["order"]
         trailing_take_profit_distance = self._as_float(signal.get("trailing_take_profit_distance"))
         trailing_take_profit_activation_pct = self._as_float(signal.get("trailing_take_profit_activation_pct"))
         trailing_stop_distance = self._as_float(signal.get("trailing_stop_distance"))
-        submitted_entry_price = self._as_float(order_payload.get("submitted_entry_price")) or float(signal["entry_price"])
+        target_entry_price = float(signal["entry_price"])
+        provisional_quantity = (allocated_capital / target_entry_price) if target_entry_price > 0 else 0.0
         account_currency = self.config.provider_account_currency(provider)
         with db_cursor(self.config.db_trades) as cursor:
             cursor.execute(
@@ -468,25 +472,23 @@ class TradeManager:
                     symbol, category, direction, status, entry_price, target_entry_price, quantity, allocated_capital,
                     take_profit, trailing_take_profit_distance, trailing_take_profit_activation_pct,
                     stop_loss, trailing_stop_distance,
-                    alpaca_order_id, client_order_id,
-                    reasoning, confidence, trade_score,
+                    instrument_id, reasoning, confidence, trade_score,
                     provider, account_currency
-                ) VALUES (?, ?, 'LONG', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, 'LONG', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     symbol,
                     category,
-                    submitted_entry_price,
-                    float(signal["entry_price"]),
-                    float(order_payload["quantity"]),
+                    target_entry_price,
+                    target_entry_price,
+                    provisional_quantity,
                     allocated_capital,
                     float(signal["take_profit"]),
                     trailing_take_profit_distance,
                     trailing_take_profit_activation_pct,
                     float(signal["stop_loss"]),
                     trailing_stop_distance,
-                    str(getattr(order, "id", "")),
-                    order_payload["client_order_id"],
+                    int(instrument_id),
                     signal.get("reasoning"),
                     signal.get("confidence"),
                     self._as_float(signal.get("trade_score")),
@@ -494,7 +496,7 @@ class TradeManager:
                     account_currency,
                 ),
             )
-        self.logger.info("Stored new pending trade for %s on %s", symbol, provider)
+        self.logger.info("Stored new pending (emulated-limit) trade for %s on %s", symbol, provider)
 
     def _signal_has_required_levels(self, signal: dict[str, Any]) -> bool:
         for field in ("entry_price", "take_profit", "stop_loss"):
@@ -644,29 +646,14 @@ class TradeManager:
             return False
 
         allocated_capital = self.compute_allocated_capital(provider=provider)
-        try:
-            order_payload = broker.place_limit_entry_order(
-                symbol=symbol,
-                category=category,
-                entry_price=float(signal["entry_price"]),
-                allocated_capital=allocated_capital,
-            )
-        except Exception as exc:
-            if broker.is_insufficient_balance_error(exc):
-                self.logger.warning(
-                    "Skipping %s because available capital is insufficient for the proposed entry",
-                    symbol,
-                )
-                return False
-            if category == "CRYPTO" and "too far above target" in str(exc).lower():
-                self.logger.info(
-                    "Skipping %s because the live %s ask moved too far above the GPT target",
-                    symbol,
-                    provider,
-                )
-                return False
-            raise
-        self._save_new_trade(category, symbol, signal, order_payload, allocated_capital, provider=provider)
+        if allocated_capital <= 0:
+            self.logger.warning("Skipping %s because allocated capital is zero", symbol)
+            return False
+        instrument_id = broker.instrument_id_for_symbol(symbol)
+        if instrument_id is None:
+            self.logger.warning("Skipping %s because it is not a tradable %s instrument", symbol, provider)
+            return False
+        self._save_new_trade(category, symbol, signal, instrument_id, allocated_capital, provider=provider)
         return True
 
     def maybe_open_trade(self, category: str, symbol: str, provider: str = PROVIDER_ALPACA) -> None:
