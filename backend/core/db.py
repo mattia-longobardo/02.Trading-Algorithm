@@ -19,6 +19,18 @@ CREATE TABLE IF NOT EXISTS market_symbols (
 );
 """
 
+INSTRUMENT_MAP_SCHEMA = """
+CREATE TABLE IF NOT EXISTS instrument_map (
+    symbol TEXT PRIMARY KEY,
+    instrument_id INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    display_name TEXT,
+    tradable INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_instrument_map_id ON instrument_map(instrument_id);
+"""
+
 TRADES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS trades (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -212,6 +224,7 @@ def initialize_databases(market_db_path: str, trades_db_path: str) -> None:
     market_conn = _connect(market_db_path)
     try:
         market_conn.executescript(MARKET_SCHEMA)
+        market_conn.executescript(INSTRUMENT_MAP_SCHEMA)
         _migrate_legacy_ohlcv_table(market_conn)
         market_conn.commit()
     finally:
@@ -271,3 +284,41 @@ def fetch_one(db_path: str, query: str, params: tuple[Any, ...] = ()) -> dict[st
     finally:
         connection.close()
     return dict(row) if row else None
+
+
+def upsert_instrument_mapping(
+    db_path: str,
+    symbol: str,
+    instrument_id: int,
+    category: str,
+    display_name: str | None,
+    tradable: bool,
+) -> None:
+    """Insert or update a symbol → eToro instrumentId mapping."""
+
+    normalized = str(symbol).upper().strip()
+    with db_cursor(db_path) as cursor:
+        cursor.execute(
+            """
+            INSERT INTO instrument_map (symbol, instrument_id, category, display_name, tradable, updated_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(symbol) DO UPDATE SET
+                instrument_id = excluded.instrument_id,
+                category = excluded.category,
+                display_name = excluded.display_name,
+                tradable = excluded.tradable,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (normalized, int(instrument_id), str(category).upper().strip(), display_name, 1 if tradable else 0),
+        )
+
+
+def get_instrument_mapping(db_path: str, symbol: str) -> dict[str, Any] | None:
+    """Return the cached mapping row for a symbol, or None."""
+
+    normalized = str(symbol).upper().strip()
+    return fetch_one(
+        db_path,
+        "SELECT symbol, instrument_id, category, display_name, tradable FROM instrument_map WHERE symbol = ?",
+        (normalized,),
+    )
