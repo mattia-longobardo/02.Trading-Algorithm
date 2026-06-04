@@ -12,6 +12,7 @@ sys.modules.setdefault("clients.alpaca_client", alpaca_client_stub)
 
 gpt_client_stub = ModuleType("clients.gpt_client")
 gpt_client_stub.GPTClient = object
+gpt_client_stub.get_default_prompts = lambda: {}
 sys.modules.setdefault("clients.gpt_client", gpt_client_stub)
 
 dotenv_stub = ModuleType("dotenv")
