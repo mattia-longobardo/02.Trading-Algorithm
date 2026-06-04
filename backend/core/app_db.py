@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS account_equity_snapshots (
     recorded_at TEXT NOT NULL,
     equity      REAL NOT NULL,
     currency    TEXT NOT NULL DEFAULT 'USD',
-    provider    TEXT NOT NULL DEFAULT 'alpaca'
+    provider    TEXT NOT NULL DEFAULT 'etoro'
 );
 CREATE INDEX IF NOT EXISTS idx_equity_snapshots_recorded ON account_equity_snapshots(recorded_at);
 CREATE INDEX IF NOT EXISTS idx_equity_snapshots_provider ON account_equity_snapshots(provider, recorded_at);
@@ -173,7 +173,7 @@ def _ensure_equity_snapshot_columns(connection: sqlite3.Connection) -> None:
         cursor.close()
     if "provider" not in existing:
         connection.execute(
-            "ALTER TABLE account_equity_snapshots ADD COLUMN provider TEXT NOT NULL DEFAULT 'alpaca'"
+            "ALTER TABLE account_equity_snapshots ADD COLUMN provider TEXT NOT NULL DEFAULT 'etoro'"
         ).close()
 
 
