@@ -21,7 +21,8 @@ from uuid import uuid4
 import requests
 
 from clients.etoro_rate_limiter import RateLimiter
-from core.utils import AppConfig, retry
+from core.db import get_instrument_mapping, upsert_instrument_mapping
+from core.utils import AppConfig, parse_datetime, retry, utc_now
 
 ETORO_BASE_URL = "https://public-api.etoro.com"
 
@@ -170,6 +171,75 @@ class EToroClient:
         rows.sort(key=lambda r: r["timestamp"])
         return rows
 
+    _MAX_DAILY_CANDLES = 1000
+
+    def _candles_count_for_start(self, start: Any) -> int:
+        start_dt = parse_datetime(start) if isinstance(start, str) else start
+        if start_dt is None:
+            return self._MAX_DAILY_CANDLES
+        days = (utc_now() - start_dt).days + 2
+        return max(1, min(self._MAX_DAILY_CANDLES, days))
+
+    def get_bars(self, symbol: str, category: str, start: Any, end: Any = None) -> list[dict[str, Any]]:
+        normalized = str(symbol).upper().strip()
+        instrument_id = self.instrument_id_for_symbol(normalized)
+        if instrument_id is None:
+            return []
+        count = self._candles_count_for_start(start)
+        rows = self.get_candles_by_instrument(instrument_id, normalized, count=count)
+        start_dt = parse_datetime(start) if isinstance(start, str) else start
+        end_dt = parse_datetime(end) if isinstance(end, str) else end
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            ts = parse_datetime(row["timestamp"])
+            if ts is None:
+                continue
+            if start_dt is not None and ts < start_dt:
+                continue
+            if end_dt is not None and ts > end_dt:
+                continue
+            out.append(row)
+        return out
+
+    def get_multi_bars(
+        self, symbols: list[str], category: str, start: Any, end: Any = None
+    ) -> dict[str, list[dict[str, Any]]]:
+        out: dict[str, list[dict[str, Any]]] = {}
+        for symbol in symbols:
+            normalized = str(symbol).upper().strip()
+            if not normalized:
+                continue
+            try:
+                out[normalized] = self.get_bars(normalized, category, start, end)
+            except Exception:
+                self.logger.exception("eToro get_bars failed for %s", normalized)
+                out[normalized] = []
+        return out
+
+    def _resolve_or_raise(self, symbol: str) -> int:
+        instrument_id = self.instrument_id_for_symbol(symbol)
+        if instrument_id is None:
+            raise EToroAPIError(404, f"unknown instrument for symbol {symbol}")
+        return instrument_id
+
+    def get_latest_price(self, symbol: str, category: str) -> float:
+        instrument_id = self._resolve_or_raise(symbol)
+        quote = self.get_rate_by_instrument(instrument_id)
+        price = quote.get("last_price") or quote.get("ask_price") or quote.get("bid_price")
+        if not price:
+            raise EToroAPIError(404, f"no price for {symbol}")
+        return float(price)
+
+    def get_latest_quote(self, symbol: str, category: str) -> dict[str, float | None]:
+        instrument_id = self._resolve_or_raise(symbol)
+        quote = self.get_rate_by_instrument(instrument_id)
+        return {
+            "bid_price": quote.get("bid_price"),
+            "ask_price": quote.get("ask_price"),
+            "bid_size": None,
+            "ask_size": None,
+        }
+
     # --- instruments --------------------------------------------------------
 
     _CRYPTO_TYPE_HINTS = ("crypto",)
@@ -199,6 +269,26 @@ class EToroClient:
             "name": str(payload.get("displayname") or ""),
             "tradable": bool(payload.get("isCurrentlyTradable")) and bool(payload.get("isBuyEnabled", True)),
         }
+
+    def instrument_id_for_symbol(self, symbol: str) -> int | None:
+        """Resolve a ticker to an eToro instrumentId, caching in instrument_map."""
+
+        normalized = str(symbol).upper().strip()
+        cached = get_instrument_mapping(self.config.db_market_data, normalized)
+        if cached:
+            return int(cached["instrument_id"])
+        asset = self.resolve_instrument(normalized)
+        if asset is None:
+            return None
+        upsert_instrument_mapping(
+            self.config.db_market_data,
+            asset["symbol"],
+            asset["instrument_id"],
+            asset["category"],
+            asset["name"],
+            asset["tradable"],
+        )
+        return asset["instrument_id"]
 
     # --- account & portfolio ------------------------------------------------
 
@@ -251,6 +341,16 @@ class EToroClient:
             price = float(rate.get("bid") or rate.get("lastExecution") or position["open_rate"])
             market_value += position["units"] * price
         return credit + market_value
+
+    def get_open_position(self, symbol: str) -> dict[str, Any] | None:
+        instrument_id = self.instrument_id_for_symbol(symbol)
+        if instrument_id is None:
+            return None
+        for position in self.list_open_positions():
+            if position["instrument_id"] == instrument_id:
+                position["symbol"] = str(symbol).upper().strip()
+                return position
+        return None
 
     # --- orders -------------------------------------------------------------
 
