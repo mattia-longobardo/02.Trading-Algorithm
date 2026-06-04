@@ -946,33 +946,28 @@ class TradeManager:
         if trade.get("exit_order_id"):
             return
         broker = self._trade_broker(trade)
-        if broker is None:
+        position_id = trade.get("position_id")
+        if broker is None or not position_id:
             self._mark_trade_closed(trade, close_reason, trigger_price)
             return
         try:
-            order = broker.close_position_market(trade["symbol"])
+            order = broker.close_position_market(str(position_id))
         except Exception as exc:
             message = str(exc).lower()
-            if "position does not exist" in message or "not found" in message or "no open" in message:
+            if "position" in message and ("not" in message or "exist" in message):
                 self._mark_trade_closed(trade, close_reason, trigger_price)
                 return
             raise
+        order_id = str((order or {}).get("order_id") or "") or None
         with db_cursor(self.config.db_trades) as cursor:
             cursor.execute(
                 """
                 UPDATE trades
-                SET exit_order_id = ?, exit_client_order_id = ?, exit_requested_at = ?, pending_close_reason = ?,
+                SET exit_order_id = ?, exit_requested_at = ?, pending_close_reason = ?,
                     current_price = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (
-                    str(getattr(order, "id", "")),
-                    str(getattr(order, "client_order_id", "")),
-                    isoformat_utc(utc_now()),
-                    close_reason,
-                    trigger_price,
-                    trade["id"],
-                ),
+                (order_id, isoformat_utc(utc_now()), close_reason, trigger_price, trade["id"]),
             )
         refreshed_trade = self.get_trade(trade["id"]) or trade
         self._sync_exit_order(refreshed_trade)
@@ -983,46 +978,20 @@ class TradeManager:
         self._mark_trade_closed(trade, reason, close_price)
 
     def _sync_exit_order(self, trade: dict[str, Any]) -> None:
-        exit_order_id = trade.get("exit_order_id")
-        if not exit_order_id:
+        if not trade.get("exit_order_id"):
             return
         broker = self._trade_broker(trade)
         if broker is None:
             return
-        order = self._fetch_trade_order(trade, str(exit_order_id))
-        if order is None:
-            # Without order context we can't decide; leave the trade as-is.
-            return
-        status = self._order_status(order)
-        if status == "filled":
-            close_price = self._as_float(getattr(order, "filled_avg_price", None)) or float(trade.get("current_price") or trade["entry_price"])
-            close_timestamp = self._order_timestamp(order, "filled_at", "updated_at") or utc_now()
+        position = broker.get_open_position(trade["symbol"])
+        if position is None:
+            close_price = self._as_float(trade.get("current_price")) or float(trade["entry_price"])
             self._mark_trade_closed(
-                trade,
-                str(trade.get("pending_close_reason") or "MARKET_EXIT"),
-                close_price,
-                close_timestamp,
+                trade, str(trade.get("pending_close_reason") or "MARKET_EXIT"), close_price
             )
             return
-        if status in self.TERMINAL_EXIT_STATUSES:
-            position = broker.get_open_position(trade["symbol"])
-            if position is None:
-                self._close_trade_without_position(trade)
-                return
-            with db_cursor(self.config.db_trades) as cursor:
-                cursor.execute(
-                    """
-                    UPDATE trades
-                    SET exit_order_id = NULL, exit_client_order_id = NULL, exit_requested_at = NULL,
-                        pending_close_reason = NULL, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (trade["id"],),
-                )
-            self.logger.warning("Exit order for trade %s ended with %s; trade remains OPEN", trade["id"], status)
-            return
-        if broker.get_open_position(trade["symbol"]) is None:
-            self._close_trade_without_position(trade)
+        # Position still present: the market close is in flight; retry next tick.
+        self.logger.debug("Exit for trade %s still pending (position open)", trade["id"])
 
     def refresh_open_trade_protections(self) -> None:
         open_trades = [
@@ -1161,11 +1130,11 @@ class TradeManager:
             self._close_trade_without_position(trade)
             return
 
-        quantity = self._as_float(getattr(position, "qty", None)) or float(trade["quantity"])
+        quantity = self._as_float(position.get("units")) or float(trade["quantity"])
         current_price = self._resolve_current_price(
             trade["symbol"],
             trade["category"],
-            position=position,
+            position=None,
             fallback=float(trade.get("current_price") or trade["entry_price"]),
             provider=self._trade_provider(trade),
         )
