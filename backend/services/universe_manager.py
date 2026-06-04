@@ -1,6 +1,6 @@
 """Universe selection and persistence.
 
-The Alpaca path uses a three-stage flow (prefilter → parallel GPT
+The selection path uses a three-stage flow (prefilter → parallel GPT
 dossiers → final consolidation) for both stocks and crypto.
 """
 
@@ -161,7 +161,7 @@ class UniverseManager:
             return None
         return round(((latest / base) - 1.0) * 100.0, 2)
 
-    # -- common Alpaca-style enrichment helpers ---------------------------
+    # -- common market-metric enrichment helpers ---------------------------
 
     def _compute_market_metrics(self, bars: list[dict[str, Any]], category: str) -> dict[str, Any]:
         ordered_bars = sorted(bars, key=lambda row: str(row.get("timestamp", "")))

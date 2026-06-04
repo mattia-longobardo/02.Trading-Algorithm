@@ -1,7 +1,7 @@
 """Market data download, persistence, and cleanup.
 
 Multi-provider aware: receives a registry of broker clients keyed by provider
-name (``alpaca``) and dispatches OHLCV fetches to whichever broker owns the
+name (``etoro``) and dispatches OHLCV fetches to whichever broker owns the
 symbol.
 """
 
@@ -125,7 +125,7 @@ class DataManager:
         """Bulk update OHLCV for a set of monitored symbols.
 
         ``symbol_categories`` may map ``symbol -> category`` (legacy single-broker
-        shape, defaults to Alpaca) or ``symbol -> {category, provider}`` /
+        shape, defaults to eToro) or ``symbol -> {category, provider}`` /
         ``symbol -> (category, provider)`` for the multi-provider case.
         """
 

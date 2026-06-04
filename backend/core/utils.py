@@ -459,7 +459,7 @@ def _normalize_universe_payload(raw: Any) -> ProviderUniverse:
 
     The legacy schema stored a flat ``{"STOCK": [...], "CRYPTO": [...]}`` map.
     New writers always use the provider-tagged schema
-    (``{"alpaca": {...}}``); this helper makes both forms readable so the
+    (``{"etoro": {...}}``); this helper makes both forms readable so the
     migration is transparent.
     """
 
