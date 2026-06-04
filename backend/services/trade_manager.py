@@ -768,47 +768,112 @@ class TradeManager:
             )
             return None
 
+    def _entry_fill_ceiling(self, target_entry_price: float) -> float:
+        return target_entry_price * (1 + (int(self.config.crypto_entry_max_chase_bps) / 10_000.0))
+
     def sync_pending_trade(self, trade: dict[str, Any]) -> None:
+        """Emulated limit entry: fill at market once price touches the target.
+
+        No broker order rests while PENDING — each monitor tick polls the rate
+        and, when the ask is at/below the target (within the chase tolerance),
+        fires a market open and activates the trade. Unfilled trades are
+        cancelled (a pure DB state change) once they age past the window.
+        """
+
         broker = self._trade_broker(trade)
         if broker is None:
             return
-        order = None
-        if trade.get("alpaca_order_id"):
-            order = self._fetch_trade_order(trade, str(trade["alpaca_order_id"]))
+
+        existing = broker.get_open_position(trade["symbol"])
+        if existing is not None:
+            self._activate_trade_from_position(trade, existing, None)
+            return
+
+        target = self._as_float(trade.get("target_entry_price")) or self._as_float(trade.get("entry_price"))
+        if target is None or target <= 0:
+            return
+
+        age_minutes = self._minutes_since(parse_datetime(trade.get("created_at"))) or 0.0
+        if age_minutes >= int(self.config.crypto_pending_cancel_minutes):
+            self._cancel_pending_trade_record(trade, "ENTRY_TIMEOUT")
+            self.logger.info(
+                "Cancelled pending trade %s after %s min without touching target", trade["id"], round(age_minutes, 1)
+            )
+            return
+
+        try:
+            quote = broker.get_latest_quote(str(trade["symbol"]), str(trade["category"]))
+        except Exception:
+            self.logger.warning("Could not fetch quote for pending trade %s", trade["id"], exc_info=True)
+            return
+        ask = self._as_float(quote.get("ask_price")) or self._as_float(quote.get("bid_price"))
+        if ask is None or ask <= 0:
+            return
+        if ask > self._entry_fill_ceiling(target):
+            return  # wait for price to come down to the limit
+
+        instrument_id = int(trade.get("instrument_id") or 0) or broker.instrument_id_for_symbol(trade["symbol"])
+        if not instrument_id:
+            self._cancel_pending_trade_record(trade, "INSTRUMENT_UNRESOLVED")
+            return
+        try:
+            result = broker.open_market_position(
+                instrument_id=int(instrument_id),
+                symbol=str(trade["symbol"]),
+                amount_usd=float(trade["allocated_capital"]),
+                stop_loss_rate=float(trade["stop_loss"]),
+                take_profit_rate=float(trade["take_profit"]),
+                leverage=int(getattr(self.config, "etoro_default_leverage", 1) or 1),
+            )
+        except Exception:
+            self.logger.exception("Market open failed for pending trade %s; cancelling", trade["id"])
+            self._cancel_pending_trade_record(trade, "ENTRY_FAILED")
+            return
 
         position = broker.get_open_position(trade["symbol"])
-        if position is not None:
-            self._activate_trade_from_entry_fill(trade, order or position)
-            return
+        self._activate_trade_from_position(trade, position, result)
 
-        if order is None:
-            return
+    def _activate_trade_from_position(
+        self, trade: dict[str, Any], position: Any, open_result: dict[str, Any] | None
+    ) -> None:
+        target = self._as_float(trade.get("target_entry_price")) or self._as_float(trade.get("entry_price")) or 0.0
+        pos = position if isinstance(position, dict) else {}
+        entry_price = self._as_float(pos.get("open_rate")) or target or float(trade["entry_price"])
+        quantity = self._as_float(pos.get("units")) or float(trade["quantity"])
+        position_id = str(pos.get("position_id") or (open_result or {}).get("position_id") or "") or None
+        reference_id = str((open_result or {}).get("reference_id") or (open_result or {}).get("request_id") or "") or None
 
-        status = self._order_status(order)
-        if status in self.FILLED_ENTRY_STATUSES:
-            if status == "partially_filled":
-                try:
-                    self._cancel_broker_order(trade, str(trade["alpaca_order_id"]))
-                except Exception:
-                    self.logger.warning("Could not cancel partially-filled remainder for trade %s", trade["id"], exc_info=True)
-            self._activate_trade_from_entry_fill(trade, order)
-            return
-        if status in self.TERMINAL_PENDING_STATUSES:
-            close_timestamp = self._order_timestamp(order, "expired_at", "canceled_at", "updated_at") or utc_now()
-            with db_cursor(self.config.db_trades) as cursor:
-                cursor.execute(
-                    """
-                    UPDATE trades
-                    SET status = 'CANCELLED', close_reason = ?, close_timestamp = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (self.TERMINAL_PENDING_STATUSES[status], isoformat_utc(close_timestamp), trade["id"]),
-                )
-            self.logger.info("Pending trade %s cancelled with status %s", trade["id"], status)
-            return
-
-        if trade["category"] == "CRYPTO" and status in self.LIVE_PENDING_ENTRY_STATUSES:
-            self._refresh_live_crypto_pending_trade(trade, order)
+        current_price = self._resolve_current_price(
+            trade["symbol"], trade["category"], position=None, fallback=entry_price,
+            provider=self._trade_provider(trade),
+        )
+        high_water_mark = max(self._as_float(trade.get("high_water_mark")) or entry_price, entry_price, current_price)
+        trailing_stop_price = self._compute_trailing_stop_price(
+            high_water_mark, self._as_float(trade.get("trailing_stop_distance"))
+        )
+        trailing_take_profit_price = self._compute_trailing_take_profit_price(
+            high_water_mark, entry_price,
+            self._as_float(trade.get("trailing_take_profit_distance")),
+            self._as_float(trade.get("trailing_take_profit_activation_pct")),
+            self.config.trailing_tp_min_profit_buffer_pct,
+        )
+        pnl = (current_price - entry_price) * quantity
+        with db_cursor(self.config.db_trades) as cursor:
+            cursor.execute(
+                """
+                UPDATE trades
+                SET status = 'OPEN', open_timestamp = ?, entry_price = ?, quantity = ?, current_price = ?, pnl = ?,
+                    high_water_mark = ?, trailing_take_profit_price = ?, trailing_stop_price = ?,
+                    position_id = ?, order_reference_id = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    isoformat_utc(utc_now()), entry_price, quantity, current_price, pnl,
+                    high_water_mark, trailing_take_profit_price, trailing_stop_price,
+                    position_id, reference_id, trade["id"],
+                ),
+            )
+        self.logger.info("Trade %s opened on eToro (position %s)", trade["id"], position_id)
 
     def review_stale_pending_trades(self, min_age_days: int = 7) -> None:
         stale_trades = self.get_stale_pending_trades(min_age_days=min_age_days)
