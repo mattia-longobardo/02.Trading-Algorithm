@@ -1,6 +1,9 @@
 import logging
 import sys
+import tempfile
 import unittest
+from datetime import UTC, datetime
+from pathlib import Path
 from types import ModuleType
 from unittest.mock import Mock
 
@@ -8,6 +11,7 @@ dotenv_stub = ModuleType("dotenv")
 dotenv_stub.load_dotenv = lambda: None
 sys.modules.setdefault("dotenv", dotenv_stub)
 
+from core.db import initialize_databases, upsert_instrument_mapping, get_instrument_mapping
 from core.utils import AppConfig
 from clients.etoro_client import EToroClient, EToroAPIError
 
@@ -226,6 +230,162 @@ class EToroOrderTests(unittest.TestCase):
         )
         sent_request_id = session.request.call_args.kwargs["headers"]["x-request-id"]
         self.assertEqual(result["request_id"], sent_request_id)
+
+
+class EToroResolutionTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.market_db = str(Path(self.tmp.name) / "market.sqlite")
+        self.trades_db = str(Path(self.tmp.name) / "trades.sqlite")
+        initialize_databases(self.market_db, self.trades_db)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _client(self):
+        client, session = make_client()
+        client.config.db_market_data = self.market_db
+        return client, session
+
+    def test_resolution_cache_hit_skips_http(self):
+        upsert_instrument_mapping(self.market_db, "AAPL", 101, "STOCK", "Apple", True)
+        client, session = self._client()
+        self.assertEqual(client.instrument_id_for_symbol("AAPL"), 101)
+        session.request.assert_not_called()
+
+    def test_resolution_miss_calls_api_and_caches(self):
+        client, session = self._client()
+        session.request.return_value = make_response(200, {
+            "instrumentId": 100000, "symbol": "BTC", "instrumentType": "Crypto",
+            "displayname": "Bitcoin", "isCurrentlyTradable": True, "isBuyEnabled": True,
+        })
+        self.assertEqual(client.instrument_id_for_symbol("BTC"), 100000)
+        cached = get_instrument_mapping(self.market_db, "BTC")
+        self.assertEqual(cached["instrument_id"], 100000)
+        self.assertEqual(cached["category"], "CRYPTO")
+
+    def test_resolution_unknown_returns_none(self):
+        client, session = self._client()
+        session.request.return_value = make_response(404, {})
+        self.assertIsNone(client.instrument_id_for_symbol("NOPE"))
+
+
+class EToroBarsTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.market_db = str(Path(self.tmp.name) / "market.sqlite")
+        initialize_databases(self.market_db, str(Path(self.tmp.name) / "t.sqlite"))
+        upsert_instrument_mapping(self.market_db, "AAPL", 101, "STOCK", "Apple", True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _client(self):
+        client, session = make_client()
+        client.config.db_market_data = self.market_db
+        return client, session
+
+    def _candles_response(self):
+        return make_response(200, {"candles": [{"instrumentId": 101, "candles": [
+            {"fromDate": "2026-01-01T00:00:00Z", "open": 1, "high": 2, "low": 0.5, "close": 1.5, "volume": 10},
+            {"fromDate": "2026-06-01T00:00:00Z", "open": 2, "high": 3, "low": 1.5, "close": 2.5, "volume": 20},
+        ]}]})
+
+    def test_get_bars_filters_by_start(self):
+        client, session = self._client()
+        session.request.return_value = self._candles_response()
+        start = datetime(2026, 3, 1, tzinfo=UTC)
+        bars = client.get_bars(symbol="AAPL", category="STOCK", start=start)
+        self.assertEqual(len(bars), 1)
+        self.assertEqual(bars[0]["close"], 2.5)
+        self.assertEqual(bars[0]["symbol"], "AAPL")
+
+    def test_get_bars_unknown_symbol_returns_empty(self):
+        client, session = self._client()
+        session.request.return_value = make_response(404, {})
+        bars = client.get_bars(symbol="NOPE", category="STOCK", start=datetime(2026, 1, 1, tzinfo=UTC))
+        self.assertEqual(bars, [])
+
+    def test_get_multi_bars_keys_every_requested_symbol(self):
+        client, session = self._client()
+        session.request.return_value = self._candles_response()
+        out = client.get_multi_bars(["AAPL"], "STOCK", datetime(2025, 1, 1, tzinfo=UTC))
+        self.assertIn("AAPL", out)
+        self.assertEqual(len(out["AAPL"]), 2)
+
+
+class EToroPriceTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.market_db = str(Path(self.tmp.name) / "market.sqlite")
+        initialize_databases(self.market_db, str(Path(self.tmp.name) / "t.sqlite"))
+        upsert_instrument_mapping(self.market_db, "AAPL", 101, "STOCK", "Apple", True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _client(self):
+        client, session = make_client()
+        client.config.db_market_data = self.market_db
+        return client, session
+
+    def _rate(self):
+        return make_response(200, {"rates": [{"instrumentID": 101, "ask": 10.5, "bid": 10.4, "lastExecution": 10.45}]})
+
+    def test_get_latest_price_uses_last_execution(self):
+        client, session = self._client()
+        session.request.return_value = self._rate()
+        self.assertEqual(client.get_latest_price("AAPL", "STOCK"), 10.45)
+
+    def test_get_latest_quote_maps_bid_ask(self):
+        client, session = self._client()
+        session.request.return_value = self._rate()
+        quote = client.get_latest_quote("AAPL", "STOCK")
+        self.assertEqual(quote["bid_price"], 10.4)
+        self.assertEqual(quote["ask_price"], 10.5)
+        self.assertIsNone(quote["bid_size"])
+        self.assertIsNone(quote["ask_size"])
+
+    def test_get_latest_price_unknown_symbol_raises(self):
+        client, session = self._client()
+        session.request.return_value = make_response(404, {})
+        with self.assertRaises(EToroAPIError):
+            client.get_latest_price("NOPE", "STOCK")
+
+
+class EToroPositionLookupTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.market_db = str(Path(self.tmp.name) / "market.sqlite")
+        initialize_databases(self.market_db, str(Path(self.tmp.name) / "t.sqlite"))
+        upsert_instrument_mapping(self.market_db, "AAPL", 101, "STOCK", "Apple", True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _client(self):
+        client, session = make_client()
+        client.config.db_market_data = self.market_db
+        return client, session
+
+    def _portfolio(self, instrument_id):
+        return make_response(200, {"clientPortfolio": {"credit": 100.0, "orders": [], "positions": [
+            {"positionID": "p1", "instrumentID": instrument_id, "units": 2.0, "openRate": 50.0,
+             "amount": 100.0, "isBuy": True, "leverage": 1, "stopLossRate": 45.0, "takeProfitRate": 60.0},
+        ]}})
+
+    def test_get_open_position_match(self):
+        client, session = self._client()
+        session.request.return_value = self._portfolio(101)
+        pos = client.get_open_position("AAPL")
+        self.assertIsNotNone(pos)
+        self.assertEqual(pos["position_id"], "p1")
+        self.assertEqual(pos["symbol"], "AAPL")
+
+    def test_get_open_position_no_match(self):
+        client, session = self._client()
+        session.request.return_value = self._portfolio(999)
+        self.assertIsNone(client.get_open_position("AAPL"))
 
 
 if __name__ == "__main__":
