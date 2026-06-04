@@ -24,7 +24,7 @@ from services.trade_manager import TradeManager
 
 def make_config(trades_db, market_db):
     return AppConfig(
-        openai_api_key="k", alpaca_api_key="", alpaca_secret_key="", alpaca_base_url="x",
+        openai_api_key="k", 
         etoro_api_key="a", etoro_user_key="b", etoro_account_type="demo",
         db_trades=trades_db, db_market_data=market_db,
         crypto_entry_max_chase_bps=40, crypto_pending_cancel_minutes=12,

@@ -23,9 +23,9 @@ from services.data_manager import DataManager
 def make_config(market_db_path: str, trades_db_path: str) -> AppConfig:
     return AppConfig(
         openai_api_key="test-openai-key",
-        alpaca_api_key="test-alpaca-key",
-        alpaca_secret_key="test-alpaca-secret",
-        alpaca_base_url="https://paper-api.alpaca.markets",
+        
+        
+        
         db_market_data=market_db_path,
         db_trades=trades_db_path,
     )
@@ -38,7 +38,7 @@ class DataManagerStorageTests(unittest.TestCase):
         self.trades_db_path = str(Path(self.temp_dir.name) / "trades.sqlite3")
         self.config = make_config(self.market_db_path, self.trades_db_path)
         self.alpaca_client = Mock()
-        self.manager = DataManager(self.config, logging.getLogger("test"), self.alpaca_client)
+        self.manager = DataManager(self.config, logging.getLogger("test"), {"etoro": self.alpaca_client})
 
     def tearDown(self) -> None:
         try:

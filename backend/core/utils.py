@@ -19,9 +19,8 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 UNIVERSE_FILE = BASE_DIR / "data/universe.json"
 
 
-PROVIDER_ALPACA = "alpaca"
 PROVIDER_ETORO = "etoro"
-ALL_PROVIDERS: tuple[str, ...] = (PROVIDER_ALPACA, PROVIDER_ETORO)
+ALL_PROVIDERS: tuple[str, ...] = (PROVIDER_ETORO,)
 
 
 # Subset of AppConfig fields that operators can override at runtime through
@@ -40,7 +39,6 @@ SETTINGS_OVERRIDABLE_KEYS: frozenset[str] = frozenset(
         "crypto_entry_max_chase_bps",
         "crypto_pending_reprice_minutes",
         "crypto_pending_cancel_minutes",
-        "alpaca_max_notional_per_order",
         "etoro_min_trade_amount",
         "etoro_default_leverage",
         "trailing_tp_min_profit_buffer_pct",
@@ -65,9 +63,6 @@ class AppConfig:
     """Application configuration loaded from environment variables."""
 
     openai_api_key: str
-    alpaca_api_key: str
-    alpaca_secret_key: str
-    alpaca_base_url: str
     openai_model_heavy: str = "gpt-5.4"
     openai_model_mid: str = "gpt-5.4-mini"
     openai_model_light: str = "gpt-5.4-nano"
@@ -82,10 +77,6 @@ class AppConfig:
     crypto_entry_max_chase_bps: int = 40
     crypto_pending_reprice_minutes: int = 2
     crypto_pending_cancel_minutes: int = 12
-    # Alpaca caps single-order notional at $200k (error 40310000). When the
-    # per-trade allocation exceeds this, we shrink the order to the cap so
-    # the broker accepts it instead of rejecting the trade outright.
-    alpaca_max_notional_per_order: float = 200_000.0
     # Minimum profit cushion (in percent of entry_price) that the trailing
     # take profit must guarantee. The bot rejects GPT signals whose
     # `activation_pct − distance/entry × 100` falls below this buffer and
@@ -124,16 +115,8 @@ class AppConfig:
     etoro_min_trade_amount: float = 50.0
 
     @property
-    def paper(self) -> bool:
-        return "paper" in self.alpaca_base_url.lower() or "sandbox" in self.alpaca_base_url.lower()
-
-    @property
     def debug_logging(self) -> bool:
         return self.log_profile.upper() == "DEBUG" or self.log_level.upper() == "DEBUG"
-
-    @property
-    def alpaca_enabled(self) -> bool:
-        return bool(self.alpaca_api_key and self.alpaca_secret_key)
 
     @property
     def demo(self) -> bool:
@@ -146,12 +129,7 @@ class AppConfig:
     def active_providers(self) -> tuple[str, ...]:
         """Return the providers configured with credentials, in stable order."""
 
-        active: list[str] = []
-        if self.alpaca_enabled:
-            active.append(PROVIDER_ALPACA)
-        if self.etoro_enabled:
-            active.append(PROVIDER_ETORO)
-        return tuple(active)
+        return (PROVIDER_ETORO,) if self.etoro_enabled else ()
 
     def provider_account_currency(self, provider: str) -> str:
         return self.account_currency
@@ -184,9 +162,6 @@ def load_config() -> AppConfig:
     load_dotenv()
     config = AppConfig(
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
-        alpaca_api_key=os.getenv("ALPACA_API_KEY", "").strip(),
-        alpaca_secret_key=os.getenv("ALPACA_SECRET_KEY", "").strip(),
-        alpaca_base_url=os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets"),
         openai_model_heavy=os.getenv("OPENAI_MODEL_HEAVY", "gpt-5.4"),
         openai_model_mid=os.getenv("OPENAI_MODEL_MID", "gpt-5.4-mini"),
         openai_model_light=os.getenv("OPENAI_MODEL_LIGHT", "gpt-5.4-nano"),
@@ -201,7 +176,6 @@ def load_config() -> AppConfig:
         crypto_entry_max_chase_bps=max(0, int(os.getenv("CRYPTO_ENTRY_MAX_CHASE_BPS", "40"))),
         crypto_pending_reprice_minutes=max(1, int(os.getenv("CRYPTO_PENDING_REPRICE_MINUTES", "2"))),
         crypto_pending_cancel_minutes=max(1, int(os.getenv("CRYPTO_PENDING_CANCEL_MINUTES", "12"))),
-        alpaca_max_notional_per_order=max(0.0, float(os.getenv("ALPACA_MAX_NOTIONAL_PER_ORDER", "200000"))),
         trailing_tp_min_profit_buffer_pct=max(0.0, float(os.getenv("TRAILING_TP_MIN_PROFIT_BUFFER_PCT", "0.5"))),
         strategy_horizon_days_min=int(os.getenv("STRATEGY_HORIZON_DAYS_MIN", "90")),
         strategy_horizon_days_max=int(os.getenv("STRATEGY_HORIZON_DAYS_MAX", "120")),
@@ -227,13 +201,8 @@ def load_config() -> AppConfig:
         session_cookie_secure=os.getenv("SESSION_COOKIE_SECURE", "false").strip().lower()
         in {"1", "true", "yes", "on"},
         session_cookie_samesite=os.getenv("SESSION_COOKIE_SAMESITE", "lax").strip().lower() or "lax",
-        # ``ALPACA_ACCOUNT_CURRENCY`` is the new, explicit name. ``ACCOUNT_CURRENCY``
-        # is kept as a fallback so older ``.env`` files keep working.
-        account_currency=(
-            os.getenv("ALPACA_ACCOUNT_CURRENCY")
-            or os.getenv("ACCOUNT_CURRENCY")
-            or "USD"
-        ).strip().upper(),
+        # eToro balances and PnL are USD-only.
+        account_currency="USD",
         etoro_api_key=os.getenv("ETORO_API_KEY", "").strip(),
         etoro_user_key=os.getenv("ETORO_USER_KEY", "").strip(),
         etoro_account_type=os.getenv("ETORO_ACCOUNT_TYPE", "demo").strip().lower() or "demo",
@@ -481,7 +450,6 @@ ProviderUniverse = dict[str, dict[str, list[str]]]
 
 def _empty_universe() -> ProviderUniverse:
     return {
-        PROVIDER_ALPACA: {"STOCK": [], "CRYPTO": []},
         PROVIDER_ETORO: {"STOCK": [], "CRYPTO": []},
     }
 
@@ -512,11 +480,11 @@ def _normalize_universe_payload(raw: Any) -> ProviderUniverse:
                 universe.setdefault(provider, {})[cat] = cleaned
         return universe
 
-    # Legacy flat format → assume Alpaca.
+    # Legacy flat format → assume eToro.
     for category in ("STOCK", "CRYPTO"):
         symbols = raw.get(category)
         if isinstance(symbols, list):
-            universe[PROVIDER_ALPACA][category] = [
+            universe[PROVIDER_ETORO][category] = [
                 str(s).upper().strip() for s in symbols if str(s).strip()
             ]
     return universe

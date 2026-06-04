@@ -16,7 +16,6 @@ from typing import Any, Mapping
 from clients.gpt_client import GPTClient
 from core.utils import (
     ALL_PROVIDERS,
-    PROVIDER_ALPACA,
     PROVIDER_ETORO,
     AppConfig,
     ProviderUniverse,
@@ -51,28 +50,15 @@ class UniverseManager:
         self,
         config: AppConfig,
         logger: logging.Logger,
-        broker_clients: Mapping[str, Any] | Any | None = None,
+        broker_clients: Mapping[str, Any] | None = None,
         gpt_client: GPTClient | None = None,
-        *,
-        alpaca_client: Any | None = None,
     ) -> None:
         self.config = config
         self.logger = logger.getChild("universe")
-        if isinstance(broker_clients, Mapping):
-            self._brokers: dict[str, Any] = dict(broker_clients)
-        elif broker_clients is not None:
-            self._brokers = {PROVIDER_ALPACA: broker_clients}
-        else:
-            self._brokers = {}
-        if alpaca_client is not None:
-            self._brokers[PROVIDER_ALPACA] = alpaca_client
+        self._brokers: dict[str, Any] = dict(broker_clients) if isinstance(broker_clients, Mapping) else {}
         if gpt_client is None:
             raise TypeError("UniverseManager requires a gpt_client")
         self.gpt_client = gpt_client
-
-    @property
-    def alpaca_client(self) -> Any | None:
-        return self._brokers.get(PROVIDER_ALPACA)
 
     def broker(self, provider: str) -> Any | None:
         return self._brokers.get(provider)
@@ -557,43 +543,6 @@ class UniverseManager:
                 break
         return completed_selection[:required_count]
 
-    # -- Alpaca path ------------------------------------------------------
-
-    def _get_alpaca_stock_candidate_payload(self) -> list[dict[str, Any]]:
-        broker = self.alpaca_client
-        if broker is None:
-            return []
-        assets = broker.list_assets("US_EQUITY")
-        payload = [
-            self._asset_snapshot(asset)
-            for asset in assets
-            if getattr(asset, "tradable", False)
-            and getattr(asset, "status", "").lower() == "active"
-            and not self._looks_like_etf(asset)
-            and not self._looks_like_non_common_stock(asset)
-            and not self._looks_like_shell_company(asset)
-        ]
-        payload = self._dedupe_payload_by_symbol(payload)
-        payload.sort(key=lambda asset: str(asset["symbol"]))
-        return payload
-
-    def _get_alpaca_crypto_candidate_payload(self) -> list[dict[str, Any]]:
-        broker = self.alpaca_client
-        if broker is None:
-            return []
-        assets = broker.list_assets("CRYPTO")
-        quote_suffix = f"/{self.config.account_currency}"
-        payload = [
-            self._asset_snapshot(asset)
-            for asset in assets
-            if getattr(asset, "tradable", False)
-            and getattr(asset, "status", "").lower() == "active"
-            and str(getattr(asset, "symbol", "")).upper().endswith(quote_suffix)
-        ]
-        payload = self._dedupe_payload_by_symbol(payload)
-        payload.sort(key=lambda asset: str(asset["symbol"]))
-        return payload
-
     def _select_category_universe(
         self,
         provider: str,
@@ -653,52 +602,6 @@ class UniverseManager:
         if len(completed_selection) >= required_count:
             return completed_selection
         return self._top_up_selection(provider, category, completed_selection, prefiltered_payload, required_count)
-
-    def _select_alpaca_universe(self, current_universe: ProviderUniverse) -> dict[str, list[str]]:
-        broker = self.alpaca_client
-        if broker is None:
-            return {}
-        try:
-            base_stock_payload = self._get_alpaca_stock_candidate_payload()
-            base_crypto_payload = self._get_alpaca_crypto_candidate_payload()
-            full_stock_payload = self._enrich_payload_with_market_metrics(
-                PROVIDER_ALPACA,
-                "STOCK",
-                base_stock_payload,
-                universe_for_provider(current_universe, PROVIDER_ALPACA).get("STOCK", []),
-            )
-            full_crypto_payload = self._enrich_payload_with_market_metrics(
-                PROVIDER_ALPACA,
-                "CRYPTO",
-                base_crypto_payload,
-                universe_for_provider(current_universe, PROVIDER_ALPACA).get("CRYPTO", []),
-            )
-            self._write_candidate_lists(full_stock_payload, full_crypto_payload)
-
-            stocks = self._select_category_universe(
-                PROVIDER_ALPACA,
-                category="STOCK",
-                payload=full_stock_payload,
-                required_count=self.config.weekly_universe_stocks,
-                batch_size=self.STOCK_BATCH_SIZE,
-                preferred_symbols=universe_for_provider(current_universe, PROVIDER_ALPACA).get("STOCK", []),
-            )
-            crypto = self._select_category_universe(
-                PROVIDER_ALPACA,
-                category="CRYPTO",
-                payload=full_crypto_payload,
-                required_count=self.config.weekly_universe_crypto,
-                batch_size=self.CRYPTO_BATCH_SIZE,
-                preferred_symbols=universe_for_provider(current_universe, PROVIDER_ALPACA).get("CRYPTO", []),
-            )
-        except Exception:
-            self.logger.exception("Trading universe selection failed for Alpaca; keeping the previous valid universe")
-            return {
-                "STOCK": list(universe_for_provider(current_universe, PROVIDER_ALPACA).get("STOCK", [])),
-                "CRYPTO": list(universe_for_provider(current_universe, PROVIDER_ALPACA).get("CRYPTO", [])),
-            }
-
-        return {"STOCK": stocks, "CRYPTO": crypto}
 
     def _write_candidate_lists(
         self,
@@ -780,11 +683,6 @@ class UniverseManager:
     def select_trading_universe(self) -> ProviderUniverse:
         current_universe = self.get_current_universe()
         result: ProviderUniverse = {provider: {} for provider in ALL_PROVIDERS}
-
-        if self.alpaca_client is not None:
-            result[PROVIDER_ALPACA] = self._select_alpaca_universe(current_universe)
-        else:
-            result[PROVIDER_ALPACA] = {"STOCK": [], "CRYPTO": []}
 
         if self.broker(PROVIDER_ETORO) is not None:
             result[PROVIDER_ETORO] = self._select_etoro_universe(current_universe)

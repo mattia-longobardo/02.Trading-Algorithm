@@ -136,16 +136,8 @@ def manual_close_or_cancel(
         raise TradeValidationError("Trade not found")
     status = str(before.get("status") or "").upper()
     if status == "PENDING":
-        order_id = before.get("alpaca_order_id")
-        if order_id:
-            try:
-                trade_manager._cancel_broker_order(before, str(order_id))
-            except Exception:
-                trade_manager.logger.exception(
-                    "Manual cancel: broker rejected cancel of order %s for trade %s",
-                    order_id,
-                    trade_id,
-                )
+        # Emulated-limit pending trades hold no resting broker order, so a
+        # manual cancel is a pure record state change.
         trade_manager._cancel_pending_trade_record(before, "MANUAL_CANCEL")
     elif status == "OPEN":
         trigger_price = (
