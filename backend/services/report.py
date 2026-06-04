@@ -14,7 +14,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from core.utils import AppConfig, utc_now
+from core.utils import AppConfig, utc_now, write_json_file
 from services.trade_manager import TradeManager
 
 
@@ -33,6 +33,8 @@ class ReportGenerator:
         stamp = utc_now().strftime("%Y%m%d_%H%M%S")
         pdf_path = report_dir / f"weekly_report_{stamp}.pdf"
         self._render_pdf_report(report, pdf_path, title="Weekly Trading Report")
+        json_path = report_dir / f"weekly_report_{stamp}.json"
+        write_json_file(json_path, report)
         self.logger.info("Generated weekly report at %s", pdf_path)
         return report
 
@@ -91,6 +93,8 @@ class ReportGenerator:
         slug = label.lower().replace(" ", "_")
         pdf_path = report_dir / f"{report_type}_report_{slug}_{stamp}.pdf"
         self._render_pdf_report(report, pdf_path, title=f"{label} Trading Report", is_period=True)
+        json_path = report_dir / f"{report_type}_report_{slug}_{stamp}.json"
+        write_json_file(json_path, report)
         self.logger.info("Generated %s report (%s) at %s", report_type, label, pdf_path)
         return report
 
