@@ -21,7 +21,7 @@ UNIVERSE_FILE = BASE_DIR / "data/universe.json"
 
 PROVIDER_ALPACA = "alpaca"
 PROVIDER_ETORO = "etoro"
-ALL_PROVIDERS: tuple[str, ...] = (PROVIDER_ALPACA,)
+ALL_PROVIDERS: tuple[str, ...] = (PROVIDER_ALPACA, PROVIDER_ETORO)
 
 
 # Subset of AppConfig fields that operators can override at runtime through
@@ -482,6 +482,7 @@ ProviderUniverse = dict[str, dict[str, list[str]]]
 def _empty_universe() -> ProviderUniverse:
     return {
         PROVIDER_ALPACA: {"STOCK": [], "CRYPTO": []},
+        PROVIDER_ETORO: {"STOCK": [], "CRYPTO": []},
     }
 
 
