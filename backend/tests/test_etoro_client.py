@@ -388,5 +388,59 @@ class EToroPositionLookupTests(unittest.TestCase):
         self.assertIsNone(client.get_open_position("AAPL"))
 
 
+class EToroListAssetsTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.market_db = str(Path(self.tmp.name) / "market.sqlite")
+        initialize_databases(self.market_db, str(Path(self.tmp.name) / "t.sqlite"))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _client(self):
+        client, session = make_client()
+        client.config.db_market_data = self.market_db
+        return client, session
+
+    def _types(self):
+        return make_response(200, {"instrumentTypes": [
+            {"instrumentTypeID": 5, "instrumentTypeDescription": "Stocks"},
+            {"instrumentTypeID": 10, "instrumentTypeDescription": "Crypto"},
+            {"instrumentTypeID": 6, "instrumentTypeDescription": "ETF"},
+        ]})
+
+    def test_list_assets_stock_filters_and_seeds_cache(self):
+        client, session = self._client()
+        session.request.side_effect = [
+            self._types(),
+            make_response(200, {"instrumentDisplayDatas": [
+                {"instrumentID": 101, "instrumentDisplayName": "Apple", "symbolFull": "AAPL", "isInternalInstrument": False},
+                {"instrumentID": 999, "instrumentDisplayName": "Internal", "symbolFull": "INT", "isInternalInstrument": True},
+            ]}),
+        ]
+        assets = client.list_assets("US_EQUITY")
+        self.assertEqual(len(assets), 1)
+        self.assertEqual(assets[0].symbol, "AAPL")
+        self.assertTrue(assets[0].tradable)
+        params = session.request.call_args_list[1].kwargs["params"]
+        self.assertEqual(params["instrumentTypeIds"], "5")
+        cached = get_instrument_mapping(self.market_db, "AAPL")
+        self.assertEqual(cached["instrument_id"], 101)
+        self.assertEqual(cached["category"], "STOCK")
+
+    def test_list_assets_crypto_uses_crypto_type(self):
+        client, session = self._client()
+        session.request.side_effect = [
+            self._types(),
+            make_response(200, {"instrumentDisplayDatas": [
+                {"instrumentID": 100000, "instrumentDisplayName": "Bitcoin", "symbolFull": "BTC", "isInternalInstrument": False},
+            ]}),
+        ]
+        assets = client.list_assets("CRYPTO")
+        self.assertEqual(assets[0].symbol, "BTC")
+        params = session.request.call_args_list[1].kwargs["params"]
+        self.assertEqual(params["instrumentTypeIds"], "10")
+
+
 if __name__ == "__main__":
     unittest.main()
