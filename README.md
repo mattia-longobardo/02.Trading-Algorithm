@@ -2,14 +2,14 @@
 
 Monorepository del progetto trading. Contiene due servizi orchestrati da un unico `docker-compose.yml`:
 
-- [`backend/`](backend/) — bot Python (Alpaca + OpenAI), scheduler APScheduler, app database SQLite e API HTTP FastAPI. Vedi [backend/README.md](backend/README.md) per i dettagli del trading bot.
+- [`backend/`](backend/) — bot Python (eToro + OpenAI), scheduler APScheduler, app database SQLite e API HTTP FastAPI. Vedi [backend/README.md](backend/README.md) per i dettagli del trading bot.
 - [`frontend/`](frontend/) — applicazione Next.js 15 (App Router + TypeScript + Tailwind v4 + shadcn/ui) con autenticazione, dashboard, console editabile, gestione report, prompt modifier e settings. Vedi [frontend/README.md](frontend/README.md).
 
 ## Layout
 
 ```
 .
-├── backend/           # Python (Alpaca, OpenAI, scheduler) + Dockerfile + .env.example + tests/ + data/
+├── backend/           # Python (eToro, OpenAI, scheduler) + Dockerfile + .env.example + tests/ + data/
 ├── frontend/          # Next.js (App Router) + shadcn/ui + Recharts + TanStack Query
 ├── docker-compose.yml # backend ⇄ frontend su rete privata, frontend esposto via Traefik
 └── README.md
@@ -21,7 +21,7 @@ Monorepository del progetto trading. Contiene due servizi orchestrati da un unic
 
    ```bash
    cp backend/.env.example backend/.env
-   # Compila OpenAI / Alpaca, e impostazioni aziendali
+   # Compila OpenAI / eToro, e impostazioni aziendali
    # ADMIN_USERNAME e ADMIN_PASSWORD sono usati SOLO al primo avvio per
    # creare l'utente admin iniziale; cambia la password subito dopo dalla UI.
    ```
@@ -68,7 +68,7 @@ Monorepository del progetto trading. Contiene due servizi orchestrati da un unic
   richiesta verso `BACKEND_INTERNAL_URL=http://backend:8000`.
 - Il browser dell'utente parla **solo** col frontend: stesso origin, una
   sola cookie domain, niente CORS da configurare.
-- I segreti (chiavi OpenAI/Alpaca, hash password, sessioni) vivono solo
+- I segreti (chiavi OpenAI/eToro, hash password, sessioni) vivono solo
   nel backend e non transitano mai via il browser.
 
 ## Autenticazione
@@ -114,7 +114,7 @@ Backend (Python 3.14):
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env  # poi compila OpenAI/Alpaca + ADMIN_*
+cp .env.example .env  # poi compila OpenAI/eToro + ADMIN_*
 python main.py
 ```
 

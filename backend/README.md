@@ -1,18 +1,18 @@
 # Trading Algorithm
 
-Sistema di trading algoritmico in Python per paper trading su Alpaca, con analisi GPT via OpenAI `gpt-5.4`, persistenza SQLite, scheduler UTC e report settimanali.
+Sistema di trading algoritmico in Python per trading su eToro (Demo o Real), con analisi GPT via OpenAI `gpt-5.4`, persistenza SQLite, scheduler UTC e report settimanali.
 
 ## Componenti
 
 - `main.py`: entry point che inizializza DB, client e scheduler
 - `api/api_server.py`: API HTTP manuali e streaming dei log
-- `clients/alpaca_client.py`: wrapper Alpaca per account, ordini, posizioni e market data
+- `clients/etoro_client.py`: wrapper eToro per account, ordini, posizioni e market data
 - `clients/gpt_client.py`: integrazione OpenAI Responses API con web search obbligatoria
 - `core/utils.py`: config, retry, serializzazione e utility condivise
 - `core/logger.py`: log console + file con rotazione
 - `core/db.py`: schema e helper SQLite
 - `services/scheduler.py`: job APScheduler con lock file per evitare esecuzioni parallele
-- `services/trade_manager.py`: sincronizzazione Alpaca, decisioni GPT in entrata e lifecycle script-managed dei trade
+- `services/trade_manager.py`: sincronizzazione eToro, decisioni GPT in entrata e lifecycle script-managed dei trade
 - `services/universe_manager.py`: selezione dell'universo attivo stock/crypto
 - `services/data_manager.py`: download incrementale daily OHLCV su SQLite
 - `services/report.py`: report JSON e PDF settimanale
@@ -25,11 +25,11 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Compila `.env` con le tue chiavi OpenAI e Alpaca. Per default il sistema usa Alpaca Paper Trading.
-La valuta di riferimento del bot e` configurabile con `CURRENCY` ed e` usata in modo coerente sia per stock sia per crypto. Per Alpaca crypto in pratica conviene usare `USD`.
+Compila `.env` con le tue chiavi OpenAI ed eToro. Per default il sistema usa l'account Demo eToro (ETORO_ACCOUNT_TYPE=demo).
+La valuta di riferimento del bot e` configurabile con `CURRENCY` ed e` usata in modo coerente sia per stock sia per crypto. eToro riporta i saldi in USD; le crypto usano ticker nativi (es. BTC).
 Il profilo di rischio utente e` configurabile con `RISK_TOLERANCE` da `1` a `10`: valori bassi rendono la selezione e i trade piu` conservativi, valori alti permettono setup piu` aggressivi.
 L'orizzonte strategico e` configurabile con `STRATEGY_HORIZON_DAYS_MIN` e `STRATEGY_HORIZON_DAYS_MAX`. Di default il bot ragiona come position trader su circa 90-120 giorni, quindi non e` ottimizzato per il daily trading.
-Per gli ingressi crypto `OPEN now` sono disponibili anche `CRYPTO_ENTRY_LIMIT_COLLAR_BPS`, `CRYPTO_ENTRY_MAX_CHASE_BPS`, `CRYPTO_PENDING_REPRICE_MINUTES` e `CRYPTO_PENDING_CANCEL_MINUTES`, usati per inviare limit `IOC` marketable vicino alla best ask senza inseguire troppo il prezzo.
+Gli ingressi sono limit emulati lato bot: `CRYPTO_ENTRY_MAX_CHASE_BPS` definisce la tolleranza sopra il target entro cui scatta il market open quando l'ask lo tocca, e `CRYPTO_PENDING_CANCEL_MINUTES` il tempo massimo di attesa prima di annullare un pending non riempito.
 Il logging supporta due profili: `LOG_PROFILE=PRODUCTION` per log sintetici e orientati agli eventi principali, oppure `LOG_PROFILE=DEBUG` per mantenere il dettaglio completo durante troubleshooting.
 I report vengono salvati in `REPORT_DIR`, che di default punta a `data/reports` cosi` resta scrivibile e persistente anche in Docker. Ogni generazione produce un file `.json` e un file `.pdf` formattato in modo professionale.
 
@@ -116,7 +116,7 @@ Chiavi valide: `new_signal`, `batch_signals`, `pending_review`,
 - `GET /api/settings` — restituisce overlay attuale + flag `restart_required`
 - `PATCH /api/settings` (admin) — body `{ key: value, ... }`
 
-I segreti (`OPENAI_API_KEY`, `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`) non
+I segreti (`OPENAI_API_KEY`, `ETORO_API_KEY`, `ETORO_USER_KEY`) non
 sono mai esposti via API: si modificano solo via `.env`.
 
 ### Audit log (admin)
@@ -163,7 +163,7 @@ dalle costanti `INSTRUCTIONS_*` di `clients/gpt_client.py`.
 
 ## Variabili d'ambiente nuove
 
-Oltre alle storiche (chiavi OpenAI/Alpaca, parametri trading), `.env`
+Oltre alle storiche (chiavi OpenAI/eToro, parametri trading), `.env`
 ora supporta:
 
 - `DB_APP` — path al DB applicativo (default `data/app.sqlite`)
@@ -177,7 +177,7 @@ ora supporta:
 
 ## Job schedulati
 
-- Ogni minuto: sync stato ordini/posizioni Alpaca, refresh dei pending crypto ancora `new` e gestione script-managed di TP, TTP, SL e TSL
+- Ogni minuto: sync stato ordini/posizioni eToro, valutazione dei pending (limit emulato lato bot) e gestione script-managed di TP, TTP, SL e TSL
 - Ogni giorno `12:00 UTC`: revisione GPT dei trade `PENDING` piu` vecchi di 7 giorni; se il setup non vale piu` la pena viene annullato e chiuso
 - 6 volte al giorno (3 per Milano, 3 per New York): analisi batch dell'universo corrente + apertura eventuali nuovi ordini ordinati per `trade_score`
   - **Milano** (orari CET=UTC+1): `07:30 UTC` (30 min prima apertura 08:00 UTC), `12:15 UTC` (meta` giornata), `16:00 UTC` (30 min prima chiusura 16:30 UTC)
@@ -196,20 +196,20 @@ ora supporta:
 - Un solo trade attivo (`PENDING` o `OPEN`) per simbolo/coppia
 - TP, trailing TP, SL e trailing stop sono gestiti internamente dal bot e salvati nel DB trade
 - ETF esclusi nella selezione dell'universo
-- Retry automatico su OpenAI e Alpaca con backoff esponenziale
+- Retry automatico su OpenAI ed eToro con backoff esponenziale
 - Tutte le decisioni GPT richiedono web search
-- La selezione settimanale dell'universo usa tutti i candidati Alpaca, applica un prefilter deterministico con metriche locali di mercato, genera dossier JSON paralleli per i candidati migliori con web search obbligatoria e poi consolida il risultato in una selezione finale
+- La selezione settimanale dell'universo usa tutti i candidati eToro, applica un prefilter deterministico con metriche locali di mercato, genera dossier JSON paralleli per i candidati migliori con web search obbligatoria e poi consolida il risultato in una selezione finale
 - L'analisi GPT dei segnali e` eseguita in batch per categoria, riducendo il numero di chiamate rispetto all'analisi simbolo per simbolo
 
 ## Logica ordini
 
-- Alpaca viene usato solo per inviare l'ordine di ingresso e per chiudere la posizione a mercato
+- eToro viene usato solo per inviare l'ordine di ingresso e per chiudere la posizione a mercato
 - Lo stato del trade (`PENDING`, `OPEN`, `CLOSED`, `CANCELLED`) viene mantenuto nello SQLite `trades`
 - `CANCELLED` indica un ordine di ingresso mai eseguito e poi annullato/scaduto/rifiutato o cancellato dopo review GPT
 - `CLOSED` indica invece un trade realmente aperto che e` poi stato chiuso
 - Il bot salva e aggiorna `target_entry_price`, `entry_price`, `quantity`, `take_profit`, `trailing_take_profit_distance`, `trailing_take_profit_activation_pct`, `stop_loss`, `trailing_stop_distance`, `high_water_mark`, `trailing_take_profit_price`, `trailing_stop_price`, `exit_order_id` e timestamp rilevanti
-- Per le crypto il `target_entry_price` resta il livello GPT, mentre `entry_price` rappresenta il limit price effettivamente inviato ad Alpaca; gli ingressi usano un limit `IOC` marketable basato sulla quote live e i pending troppo lontani dal target vengono cancellati o reinviati automaticamente
+- Gli ingressi sono limit emulati lato bot: alla creazione il trade resta `PENDING` con `target_entry_price` (livello GPT) e nessun ordine sul broker; a ogni tick il bot legge la quote live e, quando l'ask tocca il target entro la tolleranza `ENTRY_MAX_CHASE_BPS`, invia un market open su eToro (per importo USD, leva 1) con stop-loss e take-profit fissi come rete di sicurezza; i pending non riempiti entro `CRYPTO_PENDING_CANCEL_MINUTES` vengono annullati (solo stato DB)
 - Quando un ordine di ingresso viene fillato, il trade passa a `OPEN`
-- Ogni minuto il bot controlla prezzo corrente, trailing take profit, take profit, stop loss e trailing stop; se una regola scatta invia una chiusura a mercato via Alpaca e chiude il trade appena il fill viene confermato
+- Ogni minuto il bot controlla prezzo corrente, trailing take profit, take profit, stop loss e trailing stop; se una regola scatta invia una chiusura a mercato via eToro e chiude il trade appena il fill viene confermato
 - Il trailing take profit si arma quando il prezzo supera `entry_price * (1 + trailing_take_profit_activation_pct / 100)` (entrambi i campi `trailing_take_profit_distance` e `trailing_take_profit_activation_pct` sono scelti da GPT e devono essere entrambi positivi oppure entrambi `null`); una volta armato, segue il `high_water_mark` alla distanza specificata, indipendentemente dal raggiungimento del `take_profit`
 - Due volte al giorno, durante i cicli GPT di valutazione segnali, il bot rivaluta `trailing_take_profit_distance` e `trailing_take_profit_activation_pct` dei trade aperti e li aggiorna se necessario, tipicamente abbassando la soglia di attivazione e/o stringendo la distanza man mano che il profitto cresce
