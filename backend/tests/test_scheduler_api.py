@@ -119,9 +119,9 @@ from services.scheduler import TradingScheduler
 def make_config() -> AppConfig:
     return AppConfig(
         openai_api_key="test-openai-key",
-        alpaca_api_key="test-alpaca-key",
-        alpaca_secret_key="test-alpaca-secret",
-        alpaca_base_url="https://paper-api.alpaca.markets",
+        
+        
+        
         lock_file="/tmp/test-trading.lock",
     )
 

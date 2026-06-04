@@ -42,7 +42,7 @@ from clients.gpt_client import get_default_prompts
 from core import app_db, auth as auth_lib, fx, prompt_store
 from core.utils import (
     ALL_PROVIDERS,
-    PROVIDER_ALPACA,
+    PROVIDER_ETORO,
     SETTINGS_OVERRIDABLE_KEYS,
     SETTINGS_RESTART_REQUIRED_KEYS,
     AppConfig,
@@ -926,8 +926,8 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
         # Mask secrets explicitly so the UI never has to know real values.
         for secret_key in (
             "openai_api_key",
-            "alpaca_api_key",
-            "alpaca_secret_key",
+            "etoro_api_key",
+            "etoro_user_key",
         ):
             values[secret_key] = "********" if getattr(config, secret_key, "") else ""
         # Expose the account currency label read-only so the settings tab can
@@ -1068,7 +1068,7 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
         admin: auth_lib.AuthenticatedUser = Depends(require_admin),
     ) -> dict[str, Any]:
         live_brokers = _resolve_brokers()
-        provider = (payload.provider or PROVIDER_ALPACA).lower()
+        provider = (payload.provider or PROVIDER_ETORO).lower()
         try:
             result = universe_add_symbol(
                 config,
@@ -1127,7 +1127,7 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
             result = universe_remove_symbol(
                 config,
                 api_logger,
-                provider=PROVIDER_ALPACA,
+                provider=PROVIDER_ETORO,
                 category=category,
                 symbol=symbol,
             )

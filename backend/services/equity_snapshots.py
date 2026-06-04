@@ -20,7 +20,7 @@ from typing import Any, Mapping
 from core import fx
 from core.app_db import app_cursor, app_fetch_all, app_fetch_one
 from core.utils import (
-    PROVIDER_ALPACA,
+    PROVIDER_ETORO,
     AppConfig,
     isoformat_utc,
     parse_datetime,
@@ -32,7 +32,7 @@ def record_snapshot(
     config: AppConfig,
     broker_client: Any,
     logger: logging.Logger,
-    provider: str = PROVIDER_ALPACA,
+    provider: str = PROVIDER_ETORO,
 ) -> dict[str, Any] | None:
     """Persist the current account equity (in broker-native currency).
 
@@ -151,7 +151,7 @@ def list_snapshots(
                 hour=floored // 60, minute=floored % 60, second=0, microsecond=0
             )
         key = bucket_dt.strftime("%Y-%m-%dT%H:%M:00+00:00")
-        prov = str(row.get("provider") or PROVIDER_ALPACA)
+        prov = str(row.get("provider") or PROVIDER_ETORO)
         buckets[(key, prov)] = {
             "t": key,
             "equity": float(row["equity"]),

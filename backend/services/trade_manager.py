@@ -16,7 +16,7 @@ from typing import Any, Mapping
 from clients.gpt_client import GPTClient
 from core.db import db_cursor, fetch_all, fetch_one
 from core.utils import (
-    PROVIDER_ALPACA,
+    PROVIDER_ETORO,
     AppConfig,
     isoformat_utc,
     parse_datetime,
@@ -32,34 +32,19 @@ class TradeManager:
         self,
         config: AppConfig,
         logger: logging.Logger,
-        broker_clients: Mapping[str, Any] | Any | None = None,
+        broker_clients: Mapping[str, Any] | None = None,
         data_manager: DataManager | None = None,
         gpt_client: GPTClient | None = None,
-        *,
-        alpaca_client: Any | None = None,
     ) -> None:
         self.config = config
         self.logger = logger.getChild("trade_manager")
-        # Accept either the new ``broker_clients`` mapping or the legacy
-        # single-broker ``alpaca_client`` keyword (still used by tests).
-        if isinstance(broker_clients, Mapping):
-            self._brokers: dict[str, Any] = dict(broker_clients)
-        elif broker_clients is not None:
-            self._brokers = {PROVIDER_ALPACA: broker_clients}
-        else:
-            self._brokers = {}
-        if alpaca_client is not None:
-            self._brokers[PROVIDER_ALPACA] = alpaca_client
+        self._brokers: dict[str, Any] = dict(broker_clients) if isinstance(broker_clients, Mapping) else {}
         if data_manager is None:
             raise TypeError("TradeManager requires a data_manager")
         if gpt_client is None:
             raise TypeError("TradeManager requires a gpt_client")
         self.data_manager = data_manager
         self.gpt_client = gpt_client
-
-    @property
-    def alpaca_client(self) -> Any | None:
-        return self._brokers.get(PROVIDER_ALPACA)
 
     @property
     def brokers(self) -> dict[str, Any]:
@@ -69,7 +54,7 @@ class TradeManager:
         return self._brokers.get(provider)
 
     def _trade_provider(self, trade: dict[str, Any]) -> str:
-        return str(trade.get("provider") or PROVIDER_ALPACA).lower()
+        return str(trade.get("provider") or PROVIDER_ETORO).lower()
 
     def _trade_broker(self, trade: dict[str, Any]) -> Any | None:
         return self.broker(self._trade_provider(trade))
@@ -95,9 +80,9 @@ class TradeManager:
         category: str,
         position: Any | None = None,
         fallback: float | None = None,
-        provider: str = PROVIDER_ALPACA,
+        provider: str = PROVIDER_ETORO,
     ) -> float:
-        broker = self.broker(provider) or self.alpaca_client
+        broker = self.broker(provider)
         try:
             if broker is None:
                 raise RuntimeError(f"No broker registered for provider {provider}")
@@ -266,7 +251,7 @@ class TradeManager:
             )
         return int(row["count"]) if row else 0
 
-    def compute_allocated_capital(self, provider: str = PROVIDER_ALPACA) -> float:
+    def compute_allocated_capital(self, provider: str = PROVIDER_ETORO) -> float:
         broker = self.broker(provider)
         if broker is None:
             return 0.0
@@ -316,7 +301,7 @@ class TradeManager:
         signal: dict[str, Any],
         instrument_id: int,
         allocated_capital: float,
-        provider: str = PROVIDER_ALPACA,
+        provider: str = PROVIDER_ETORO,
     ) -> None:
         trailing_take_profit_distance = self._as_float(signal.get("trailing_take_profit_distance"))
         trailing_take_profit_activation_pct = self._as_float(signal.get("trailing_take_profit_activation_pct"))
@@ -427,7 +412,7 @@ class TradeManager:
             return False
         return True
 
-    def _available_trade_slots(self, category: str, provider: str = PROVIDER_ALPACA) -> int:
+    def _available_trade_slots(self, category: str, provider: str = PROVIDER_ETORO) -> int:
         if category == "STOCK":
             max_trades = int(self.config.max_open_trades_stock)
         else:
@@ -438,7 +423,7 @@ class TradeManager:
         self,
         category: str,
         symbols: list[str],
-        provider: str = PROVIDER_ALPACA,
+        provider: str = PROVIDER_ETORO,
     ) -> list[dict[str, Any]]:
         broker = self.broker(provider)
         payloads: list[dict[str, Any]] = []
@@ -477,7 +462,7 @@ class TradeManager:
         category: str,
         symbol: str,
         signal: dict[str, Any],
-        provider: str = PROVIDER_ALPACA,
+        provider: str = PROVIDER_ETORO,
     ) -> bool:
         if self.get_symbol_trades(symbol, provider=provider):
             self.logger.debug("Skipping %s because an active trade already exists for the symbol", symbol)
@@ -515,7 +500,7 @@ class TradeManager:
         self._save_new_trade(category, symbol, signal, instrument_id, allocated_capital, provider=provider)
         return True
 
-    def maybe_open_trade(self, category: str, symbol: str, provider: str = PROVIDER_ALPACA) -> None:
+    def maybe_open_trade(self, category: str, symbol: str, provider: str = PROVIDER_ETORO) -> None:
         broker = self.broker(provider)
         if broker is None:
             return
@@ -975,10 +960,6 @@ class TradeManager:
             except Exception:
                 self.logger.exception("Failed to sync trade %s", trade["id"])
 
-    # Legacy alias retained for any external caller still using the
-    # Alpaca-flavoured method name.
-    sync_alpaca_state = sync_broker_state
-
     def _evaluate_provider_category(
         self,
         provider: str,
@@ -1048,7 +1029,7 @@ class TradeManager:
             if not isinstance(categories, dict):
                 # Legacy flat dict — assume Alpaca.
                 if isinstance(categories, list):
-                    self._evaluate_provider_category(PROVIDER_ALPACA, str(provider).upper(), list(categories))
+                    self._evaluate_provider_category(PROVIDER_ETORO, str(provider).upper(), list(categories))
                 continue
             if self.broker(provider) is None:
                 continue
@@ -1069,7 +1050,7 @@ class TradeManager:
             if not isinstance(categories, dict):
                 if isinstance(categories, list):
                     for sym in categories:
-                        monitored[sym] = {"category": str(provider).upper(), "provider": PROVIDER_ALPACA}
+                        monitored[sym] = {"category": str(provider).upper(), "provider": PROVIDER_ETORO}
                 continue
             for category, symbols in categories.items():
                 cat = str(category).upper()
@@ -1078,7 +1059,7 @@ class TradeManager:
         for trade in self.get_open_or_pending_trades():
             monitored[trade["symbol"]] = {
                 "category": str(trade["category"]),
-                "provider": str(trade.get("provider") or PROVIDER_ALPACA),
+                "provider": str(trade.get("provider") or PROVIDER_ETORO),
             }
         return monitored
 

@@ -19,9 +19,9 @@ from clients.etoro_client import EToroClient, EToroAPIError
 def make_config(account_type="demo"):
     return AppConfig(
         openai_api_key="k",
-        alpaca_api_key="",
-        alpaca_secret_key="",
-        alpaca_base_url="x",
+        
+        
+        
         etoro_api_key="app-key",
         etoro_user_key="user-key",
         etoro_account_type=account_type,

@@ -21,7 +21,7 @@ class EquitySnapshotProviderTests(unittest.TestCase):
         self.app_db = str(Path(self.tmp.name) / "app.sqlite")
         initialize_app_database(self.app_db)
         self.config = AppConfig(
-            openai_api_key="k", alpaca_api_key="", alpaca_secret_key="", alpaca_base_url="x",
+            openai_api_key="k", 
             etoro_api_key="a", etoro_user_key="b", etoro_account_type="demo", db_app=self.app_db,
         )
 

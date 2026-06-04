@@ -17,7 +17,6 @@ from typing import Any, Mapping
 
 from core.utils import (
     ALL_PROVIDERS,
-    PROVIDER_ALPACA,
     PROVIDER_ETORO,
     AppConfig,
     read_universe_file,
@@ -26,7 +25,6 @@ from core.utils import (
 
 
 VALID_CATEGORIES_BY_PROVIDER: dict[str, tuple[str, ...]] = {
-    PROVIDER_ALPACA: ("STOCK", "CRYPTO"),
     PROVIDER_ETORO: ("STOCK", "CRYPTO"),
 }
 
@@ -36,7 +34,7 @@ class UniverseValidationError(ValueError):
 
 
 def _normalize_provider(provider: str | None) -> str:
-    label = (provider or "").strip().lower() or PROVIDER_ALPACA
+    label = (provider or "").strip().lower() or PROVIDER_ETORO
     if label not in ALL_PROVIDERS:
         raise UniverseValidationError(
             f"Provider must be one of {', '.join(ALL_PROVIDERS)}"
@@ -59,19 +57,9 @@ def _normalize_symbol(symbol: str, provider: str, category: str, config: AppConf
     if not raw:
         raise UniverseValidationError("Symbol is required")
     if category == "CRYPTO":
-        if provider == PROVIDER_ETORO:
-            # eToro uses native crypto tickers (e.g. BTC), no quote suffix.
-            if "/" in raw or " " in raw:
-                raise UniverseValidationError("eToro crypto symbol must be a plain ticker (e.g. BTC)")
-            return raw
-        # Alpaca pair format BASE/QUOTE.
-        if "/" not in raw:
-            if len(raw) > 3:
-                raw = f"{raw[:-3]}/{raw[-3:]}"
-            else:
-                raise UniverseValidationError(
-                    "Crypto symbol must use BASE/QUOTE format (e.g. BTC/USD)"
-                )
+        # eToro uses native crypto tickers (e.g. BTC), no quote suffix.
+        if "/" in raw or " " in raw:
+            raise UniverseValidationError("eToro crypto symbol must be a plain ticker (e.g. BTC)")
         return raw
     if "/" in raw or " " in raw:
         raise UniverseValidationError("Stock symbol cannot contain '/' or spaces")
@@ -108,49 +96,15 @@ def _validate_symbol_with_broker(
             f"{provider} returned a non-positive price for {symbol}"
         )
 
-    if provider == PROVIDER_ETORO:
-        try:
-            asset = broker.resolve_instrument(symbol)
-        except Exception:
-            logger.exception("eToro instrument resolution failed for %s; trusting price quote", symbol)
-            return
-        if asset is None:
-            raise UniverseValidationError(f"{symbol} is not an eToro instrument")
-        if not asset.get("tradable", True):
-            raise UniverseValidationError(f"{symbol} is listed on eToro but not currently tradable")
-        return
-
     try:
-        if category == "STOCK":
-            assets = broker.list_assets("US_EQUITY")
-            wanted = symbol.upper()
-            for asset in assets:
-                ticker = str(getattr(asset, "symbol", "") or "").upper()
-                if ticker == wanted:
-                    if not bool(getattr(asset, "tradable", True)):
-                        raise UniverseValidationError(
-                            f"{symbol} is listed but not currently tradable"
-                        )
-                    return
-            raise UniverseValidationError(
-                f"{symbol} is not in the Alpaca US_EQUITY catalogue"
-            )
-        # Alpaca CRYPTO
-        assets = broker.list_assets("CRYPTO")
-        wanted = symbol.upper()
-        for asset in assets:
-            ticker = str(getattr(asset, "symbol", "") or "").upper()
-            if ticker == wanted:
-                return
-        raise UniverseValidationError(
-            f"{symbol} is not in the Alpaca CRYPTO catalogue"
-        )
-    except UniverseValidationError:
-        raise
+        asset = broker.resolve_instrument(symbol)
     except Exception:
-        logger.exception(
-            "Asset catalogue check for %s/%s failed; trusting price quote", provider, symbol
-        )
+        logger.exception("eToro instrument resolution failed for %s; trusting price quote", symbol)
+        return
+    if asset is None:
+        raise UniverseValidationError(f"{symbol} is not an eToro instrument")
+    if not asset.get("tradable", True):
+        raise UniverseValidationError(f"{symbol} is listed on eToro but not currently tradable")
 
 
 def get_universe_with_metadata(

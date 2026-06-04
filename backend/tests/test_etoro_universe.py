@@ -50,7 +50,7 @@ class EtoroUniverseSelectionTests(unittest.TestCase):
     def setUp(self):
         from services.universe_manager import UniverseManager
         self.config = AppConfig(
-            openai_api_key="k", alpaca_api_key="", alpaca_secret_key="", alpaca_base_url="x",
+            openai_api_key="k", 
             etoro_api_key="a", etoro_user_key="b", etoro_account_type="demo",
             weekly_universe_stocks=1, weekly_universe_crypto=1,
         )
@@ -80,7 +80,7 @@ class EtoroUniverseAdminTests(unittest.TestCase):
         from services import universe_admin
         self.universe_admin = universe_admin
         self.config = AppConfig(
-            openai_api_key="k", alpaca_api_key="", alpaca_secret_key="", alpaca_base_url="x",
+            openai_api_key="k", 
             etoro_api_key="a", etoro_user_key="b",
         )
 

@@ -42,9 +42,9 @@ class ReportGeneratorTests(unittest.TestCase):
             }
             config = AppConfig(
                 openai_api_key="test-openai-key",
-                alpaca_api_key="test-alpaca-key",
-                alpaca_secret_key="test-alpaca-secret",
-                alpaca_base_url="https://paper-api.alpaca.markets",
+                
+                
+                
                 report_dir=str(report_dir),
             )
 

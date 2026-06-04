@@ -18,9 +18,9 @@ class EtoroConfigTests(unittest.TestCase):
     def test_demo_property_defaults_true(self):
         config = AppConfig(
             openai_api_key="k",
-            alpaca_api_key="",
-            alpaca_secret_key="",
-            alpaca_base_url="https://paper-api.alpaca.markets",
+            
+            
+            
             etoro_api_key="app-key",
             etoro_user_key="user-key",
             etoro_account_type="demo",
@@ -32,9 +32,9 @@ class EtoroConfigTests(unittest.TestCase):
     def test_real_account_type(self):
         config = AppConfig(
             openai_api_key="k",
-            alpaca_api_key="",
-            alpaca_secret_key="",
-            alpaca_base_url="x",
+            
+            
+            
             etoro_api_key="a",
             etoro_user_key="b",
             etoro_account_type="real",
