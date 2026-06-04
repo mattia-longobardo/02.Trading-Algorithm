@@ -75,5 +75,26 @@ class EtoroUniverseSelectionTests(unittest.TestCase):
         self.assertEqual(result["CRYPTO"], ["BTC"])
 
 
+class EtoroUniverseAdminTests(unittest.TestCase):
+    def setUp(self):
+        from services import universe_admin
+        self.universe_admin = universe_admin
+        self.config = AppConfig(
+            openai_api_key="k", alpaca_api_key="", alpaca_secret_key="", alpaca_base_url="x",
+            etoro_api_key="a", etoro_user_key="b",
+        )
+
+    def test_etoro_crypto_symbol_keeps_native_form(self):
+        sym = self.universe_admin._normalize_symbol("btc", "etoro", "CRYPTO", self.config)
+        self.assertEqual(sym, "BTC")
+
+    def test_etoro_category_accepts_stock_crypto(self):
+        self.assertEqual(self.universe_admin._normalize_category("etoro", "crypto"), "CRYPTO")
+        self.assertEqual(self.universe_admin._normalize_category("etoro", "stock"), "STOCK")
+
+    def test_etoro_provider_accepted(self):
+        self.assertEqual(self.universe_admin._normalize_provider("etoro"), "etoro")
+
+
 if __name__ == "__main__":
     unittest.main()
