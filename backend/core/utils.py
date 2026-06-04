@@ -20,6 +20,7 @@ UNIVERSE_FILE = BASE_DIR / "data/universe.json"
 
 
 PROVIDER_ALPACA = "alpaca"
+PROVIDER_ETORO = "etoro"
 ALL_PROVIDERS: tuple[str, ...] = (PROVIDER_ALPACA,)
 
 
@@ -40,6 +41,8 @@ SETTINGS_OVERRIDABLE_KEYS: frozenset[str] = frozenset(
         "crypto_pending_reprice_minutes",
         "crypto_pending_cancel_minutes",
         "alpaca_max_notional_per_order",
+        "etoro_min_trade_amount",
+        "etoro_default_leverage",
         "trailing_tp_min_profit_buffer_pct",
         "log_level",
         "log_profile",
@@ -110,6 +113,15 @@ class AppConfig:
     session_cookie_secure: bool = False
     session_cookie_samesite: str = "lax"
     account_currency: str = "USD"
+    # --- eToro broker -------------------------------------------------------
+    etoro_api_key: str = ""
+    etoro_user_key: str = ""
+    # "demo" (default, eToro paper account) or "real".
+    etoro_account_type: str = "demo"
+    etoro_default_leverage: int = 1
+    # eToro enforces a per-position minimum investment (USD). Orders below
+    # this are shrunk up to the minimum or skipped by the trade layer.
+    etoro_min_trade_amount: float = 50.0
 
     @property
     def paper(self) -> bool:
@@ -123,12 +135,22 @@ class AppConfig:
     def alpaca_enabled(self) -> bool:
         return bool(self.alpaca_api_key and self.alpaca_secret_key)
 
+    @property
+    def demo(self) -> bool:
+        return self.etoro_account_type.strip().lower() != "real"
+
+    @property
+    def etoro_enabled(self) -> bool:
+        return bool(self.etoro_api_key and self.etoro_user_key)
+
     def active_providers(self) -> tuple[str, ...]:
         """Return the providers configured with credentials, in stable order."""
 
         active: list[str] = []
         if self.alpaca_enabled:
             active.append(PROVIDER_ALPACA)
+        if self.etoro_enabled:
+            active.append(PROVIDER_ETORO)
         return tuple(active)
 
     def provider_account_currency(self, provider: str) -> str:
@@ -212,6 +234,11 @@ def load_config() -> AppConfig:
             or os.getenv("ACCOUNT_CURRENCY")
             or "USD"
         ).strip().upper(),
+        etoro_api_key=os.getenv("ETORO_API_KEY", "").strip(),
+        etoro_user_key=os.getenv("ETORO_USER_KEY", "").strip(),
+        etoro_account_type=os.getenv("ETORO_ACCOUNT_TYPE", "demo").strip().lower() or "demo",
+        etoro_default_leverage=max(1, int(os.getenv("ETORO_DEFAULT_LEVERAGE", "1"))),
+        etoro_min_trade_amount=max(0.0, float(os.getenv("ETORO_MIN_TRADE_AMOUNT", "50"))),
     )
     config.log_file = resolve_runtime_path(config.log_file)
     config.universe_log_file = resolve_runtime_path(config.universe_log_file)
