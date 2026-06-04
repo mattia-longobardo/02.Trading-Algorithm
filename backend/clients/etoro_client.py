@@ -46,7 +46,7 @@ def _is_transient_etoro_error(exc: BaseException) -> bool:
 
 
 class EToroAsset:
-    """Minimal Alpaca-asset-compatible view of an eToro instrument."""
+    """Minimal asset view (attribute-compatible with the universe scanner)."""
 
     __slots__ = ("symbol", "name", "status", "tradable", "fractionable", "instrument_id")
 

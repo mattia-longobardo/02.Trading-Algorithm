@@ -1027,7 +1027,7 @@ class TradeManager:
 
         for provider, categories in universe.items():
             if not isinstance(categories, dict):
-                # Legacy flat dict — assume Alpaca.
+                # Legacy flat dict — assume eToro.
                 if isinstance(categories, list):
                     self._evaluate_provider_category(PROVIDER_ETORO, str(provider).upper(), list(categories))
                 continue

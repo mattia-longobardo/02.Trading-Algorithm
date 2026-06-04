@@ -114,7 +114,7 @@ def get_universe_with_metadata(
     """Read the saved universe and decorate each symbol with a live price.
 
     Returned shape:
-    ``{"alpaca": {"STOCK": [entry, ...], "CRYPTO": [...]}}``
+    ``{"etoro": {"STOCK": [entry, ...], "CRYPTO": [...]}}``
     """
 
     universe = read_universe_file()

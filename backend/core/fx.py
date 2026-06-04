@@ -1,7 +1,7 @@
 """Lightweight FX conversion with multiple free providers and negative caching.
 
-Alpaca paper trading reports balances and prices in USD even when the
-operator wants to think in EUR (or any other currency). This module
+eToro reports balances and prices in USD even when the operator wants
+to think in EUR (or any other currency). This module
 converts amounts at API-response time so the storage stays in the
 broker's native currency while the UI sees the user's preferred one.
 

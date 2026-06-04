@@ -1116,7 +1116,7 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
         return result
 
     # Legacy two-segment route (no explicit provider): kept for backwards
-    # compatibility with older frontends; defaults to Alpaca.
+    # compatibility with older frontends; defaults to eToro.
     @app.delete("/api/universe/symbols/{category}/{symbol:path}")
     def delete_universe_symbol_legacy(
         category: str,
