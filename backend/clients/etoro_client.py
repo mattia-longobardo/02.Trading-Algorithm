@@ -45,6 +45,20 @@ def _is_transient_etoro_error(exc: BaseException) -> bool:
     return True
 
 
+class EToroAsset:
+    """Minimal Alpaca-asset-compatible view of an eToro instrument."""
+
+    __slots__ = ("symbol", "name", "status", "tradable", "fractionable", "instrument_id")
+
+    def __init__(self, symbol: str, name: str, status: str, tradable: bool, fractionable: bool, instrument_id: int) -> None:
+        self.symbol = symbol
+        self.name = name
+        self.status = status
+        self.tradable = tradable
+        self.fractionable = fractionable
+        self.instrument_id = instrument_id
+
+
 class EToroClient:
     """Thin wrapper around eToro's REST API with auth, retries and rate limiting."""
 
@@ -289,6 +303,48 @@ class EToroClient:
             asset["tradable"],
         )
         return asset["instrument_id"]
+
+    _ASSET_CLASS_HINTS = {
+        "US_EQUITY": ("stock",),
+        "STOCK": ("stock",),
+        "CRYPTO": ("crypto",),
+    }
+
+    def _instrument_type_ids(self, hints: tuple[str, ...]) -> list[int]:
+        payload = self._request("GET", "/api/v1/market-data/instrument-types")
+        out: list[int] = []
+        for entry in payload.get("instrumentTypes") or []:
+            desc = str(entry.get("instrumentTypeDescription") or "").lower()
+            if any(hint in desc for hint in hints) and entry.get("instrumentTypeID") is not None:
+                out.append(int(entry["instrumentTypeID"]))
+        return out
+
+    def list_assets(self, asset_class: str) -> list[EToroAsset]:
+        hints = self._ASSET_CLASS_HINTS.get(str(asset_class).upper(), (str(asset_class).lower(),))
+        category = "CRYPTO" if "crypto" in hints else "STOCK"
+        type_ids = self._instrument_type_ids(hints)
+        if not type_ids:
+            return []
+        payload = self._request(
+            "GET",
+            "/api/v1/market-data/instruments",
+            params={"instrumentTypeIds": ",".join(str(i) for i in type_ids)},
+        )
+        assets: list[EToroAsset] = []
+        for row in payload.get("instrumentDisplayDatas") or []:
+            if row.get("isInternalInstrument"):
+                continue
+            symbol = str(row.get("symbolFull") or "").upper().strip()
+            if not symbol or row.get("instrumentID") is None:
+                continue
+            instrument_id = int(row["instrumentID"])
+            name = str(row.get("instrumentDisplayName") or "")
+            assets.append(EToroAsset(symbol, name, "active", True, True, instrument_id))
+            try:
+                upsert_instrument_mapping(self.config.db_market_data, symbol, instrument_id, category, name, True)
+            except Exception:
+                self.logger.debug("Failed to cache instrument mapping for %s", symbol)
+        return assets
 
     # --- account & portfolio ------------------------------------------------
 
