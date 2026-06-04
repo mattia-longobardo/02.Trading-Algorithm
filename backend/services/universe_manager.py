@@ -17,6 +17,7 @@ from clients.gpt_client import GPTClient
 from core.utils import (
     ALL_PROVIDERS,
     PROVIDER_ALPACA,
+    PROVIDER_ETORO,
     AppConfig,
     ProviderUniverse,
     read_universe_file,
@@ -593,8 +594,9 @@ class UniverseManager:
         payload.sort(key=lambda asset: str(asset["symbol"]))
         return payload
 
-    def _select_alpaca_category_universe(
+    def _select_category_universe(
         self,
+        provider: str,
         category: str,
         payload: list[dict[str, Any]],
         required_count: int,
@@ -617,14 +619,14 @@ class UniverseManager:
 
         dossier_candidates = self._build_dossier_candidates(category, prefiltered_payload, required_count)
         dossiers = self._generate_parallel_symbol_dossiers(
-            provider=PROVIDER_ALPACA,
+            provider=provider,
             category=category,
             candidates=dossier_candidates,
             required_count=required_count,
             preferred_symbols=preferred_symbols,
         )
         if not dossiers:
-            return self._top_up_selection(PROVIDER_ALPACA, category, [], prefiltered_payload, required_count)
+            return self._top_up_selection(provider, category, [], prefiltered_payload, required_count)
 
         dossier_symbols = [self._normalize_symbol(dossier.get("symbol")) for dossier in dossiers]
         successful_dossier_payload = self._filter_payload_by_symbols(dossier_candidates, dossier_symbols)
@@ -635,10 +637,10 @@ class UniverseManager:
                 dossiers=dossiers,
                 required_count=min(required_count, len(dossiers)),
                 current_universe=preferred_symbols,
-                provider=PROVIDER_ALPACA,
+                provider=provider,
             )
             selected_symbols = self._sanitize_selection(
-                PROVIDER_ALPACA,
+                provider,
                 category,
                 final_result.get("symbols", []),
                 {self._normalize_symbol(dossier.get("symbol")) for dossier in dossiers},
@@ -647,10 +649,10 @@ class UniverseManager:
             self.logger.exception("GPT dossier-based final universe selection failed for %s; using deterministic fallback", category)
             selected_symbols = []
 
-        completed_selection = self._top_up_selection(PROVIDER_ALPACA, category, selected_symbols, successful_dossier_payload, required_count)
+        completed_selection = self._top_up_selection(provider, category, selected_symbols, successful_dossier_payload, required_count)
         if len(completed_selection) >= required_count:
             return completed_selection
-        return self._top_up_selection(PROVIDER_ALPACA, category, completed_selection, prefiltered_payload, required_count)
+        return self._top_up_selection(provider, category, completed_selection, prefiltered_payload, required_count)
 
     def _select_alpaca_universe(self, current_universe: ProviderUniverse) -> dict[str, list[str]]:
         broker = self.alpaca_client
@@ -671,16 +673,18 @@ class UniverseManager:
                 base_crypto_payload,
                 universe_for_provider(current_universe, PROVIDER_ALPACA).get("CRYPTO", []),
             )
-            self._write_alpaca_candidate_lists(full_stock_payload, full_crypto_payload)
+            self._write_candidate_lists(full_stock_payload, full_crypto_payload)
 
-            stocks = self._select_alpaca_category_universe(
+            stocks = self._select_category_universe(
+                PROVIDER_ALPACA,
                 category="STOCK",
                 payload=full_stock_payload,
                 required_count=self.config.weekly_universe_stocks,
                 batch_size=self.STOCK_BATCH_SIZE,
                 preferred_symbols=universe_for_provider(current_universe, PROVIDER_ALPACA).get("STOCK", []),
             )
-            crypto = self._select_alpaca_category_universe(
+            crypto = self._select_category_universe(
+                PROVIDER_ALPACA,
                 category="CRYPTO",
                 payload=full_crypto_payload,
                 required_count=self.config.weekly_universe_crypto,
@@ -696,7 +700,7 @@ class UniverseManager:
 
         return {"STOCK": stocks, "CRYPTO": crypto}
 
-    def _write_alpaca_candidate_lists(
+    def _write_candidate_lists(
         self,
         stock_payload: list[dict[str, Any]],
         crypto_payload: list[dict[str, Any]],
@@ -705,6 +709,71 @@ class UniverseManager:
             self.config.universe_log_file,
             {"STOCK": stock_payload, "CRYPTO": crypto_payload},
         )
+
+    # -- eToro path -------------------------------------------------------
+
+    def _get_etoro_stock_candidate_payload(self) -> list[dict[str, Any]]:
+        broker = self.broker(PROVIDER_ETORO)
+        if broker is None:
+            return []
+        assets = broker.list_assets("STOCK")
+        payload = [
+            self._asset_snapshot(asset)
+            for asset in assets
+            if getattr(asset, "tradable", False)
+            and not self._looks_like_etf(asset)
+            and not self._looks_like_non_common_stock(asset)
+            and not self._looks_like_shell_company(asset)
+        ]
+        payload = self._dedupe_payload_by_symbol(payload)
+        payload.sort(key=lambda asset: str(asset["symbol"]))
+        return payload
+
+    def _get_etoro_crypto_candidate_payload(self) -> list[dict[str, Any]]:
+        broker = self.broker(PROVIDER_ETORO)
+        if broker is None:
+            return []
+        assets = broker.list_assets("CRYPTO")
+        payload = [
+            self._asset_snapshot(asset)
+            for asset in assets
+            if getattr(asset, "tradable", False)
+        ]
+        payload = self._dedupe_payload_by_symbol(payload)
+        payload.sort(key=lambda asset: str(asset["symbol"]))
+        return payload
+
+    def _select_etoro_universe(self, current_universe: ProviderUniverse) -> dict[str, list[str]]:
+        broker = self.broker(PROVIDER_ETORO)
+        if broker is None:
+            return {}
+        preferred = universe_for_provider(current_universe, PROVIDER_ETORO)
+        try:
+            base_stock_payload = self._get_etoro_stock_candidate_payload()
+            base_crypto_payload = self._get_etoro_crypto_candidate_payload()
+            full_stock_payload = self._enrich_payload_with_market_metrics(
+                PROVIDER_ETORO, "STOCK", base_stock_payload, preferred.get("STOCK", [])
+            )
+            full_crypto_payload = self._enrich_payload_with_market_metrics(
+                PROVIDER_ETORO, "CRYPTO", base_crypto_payload, preferred.get("CRYPTO", [])
+            )
+            self._write_candidate_lists(full_stock_payload, full_crypto_payload)
+
+            stocks = self._select_category_universe(
+                PROVIDER_ETORO, "STOCK", full_stock_payload,
+                self.config.weekly_universe_stocks, self.STOCK_BATCH_SIZE, preferred.get("STOCK", []),
+            )
+            crypto = self._select_category_universe(
+                PROVIDER_ETORO, "CRYPTO", full_crypto_payload,
+                self.config.weekly_universe_crypto, self.CRYPTO_BATCH_SIZE, preferred.get("CRYPTO", []),
+            )
+        except Exception:
+            self.logger.exception("Trading universe selection failed for eToro; keeping the previous valid universe")
+            return {
+                "STOCK": list(preferred.get("STOCK", [])),
+                "CRYPTO": list(preferred.get("CRYPTO", [])),
+            }
+        return {"STOCK": stocks, "CRYPTO": crypto}
 
     # -- public entry points ---------------------------------------------
 
@@ -716,6 +785,11 @@ class UniverseManager:
             result[PROVIDER_ALPACA] = self._select_alpaca_universe(current_universe)
         else:
             result[PROVIDER_ALPACA] = {"STOCK": [], "CRYPTO": []}
+
+        if self.broker(PROVIDER_ETORO) is not None:
+            result[PROVIDER_ETORO] = self._select_etoro_universe(current_universe)
+        else:
+            result[PROVIDER_ETORO] = {"STOCK": [], "CRYPTO": []}
 
         write_universe_file(result)
         self.logger.info("Selected trading universe: %s", result)
