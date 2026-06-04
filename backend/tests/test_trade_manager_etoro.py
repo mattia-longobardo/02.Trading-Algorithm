@@ -96,9 +96,11 @@ class EtoroPendingTests(EtoroLifecycleBase):
         self.broker.get_latest_quote.return_value = {"ask_price": 100.0, "bid_price": 99.9}
         self.broker.open_market_position.return_value = {
             "order_id": "o1", "reference_id": "r1", "request_id": "req1", "position_id": "p1", "raw": {}}
-        self.broker.get_open_position.return_value = {
+        position = {
             "position_id": "p1", "instrument_id": 101, "units": 2.0, "open_rate": 100.0,
             "amount": 200.0, "is_buy": True}
+        # No position before the fill; the position appears after open_market_position.
+        self.broker.get_open_position.side_effect = [None, position]
         self.broker.get_latest_price.return_value = 101.0
         self.manager.sync_pending_trade(trade)
         self.broker.open_market_position.assert_called_once()
