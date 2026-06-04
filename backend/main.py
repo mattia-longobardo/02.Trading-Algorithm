@@ -7,7 +7,6 @@ import threading
 from typing import Any
 
 from api.api_server import create_api_server
-from clients.alpaca_client import AlpacaClient
 from clients.etoro_client import EToroClient
 from clients.gpt_client import GPTClient, get_default_prompts
 from core.app_db import (
@@ -19,7 +18,6 @@ from core.app_db import (
 from core.db import initialize_databases
 from core.logger import setup_logging
 from core.utils import (
-    PROVIDER_ALPACA,
     PROVIDER_ETORO,
     apply_settings_overlay,
     load_config,
@@ -87,12 +85,6 @@ def main() -> None:
     # ``GET /api/providers`` and hides surfaces accordingly.
     # ------------------------------------------------------------------
     brokers: dict[str, Any] = {}
-    if config.alpaca_enabled:
-        brokers[PROVIDER_ALPACA] = AlpacaClient(config, logger)
-        logger.info("Alpaca client enabled")
-    else:
-        logger.info("Alpaca credentials missing; module disabled")
-
     if config.etoro_enabled:
         brokers[PROVIDER_ETORO] = EToroClient(config, logger)
         logger.info("eToro client enabled (%s account)", "demo" if config.demo else "real")
