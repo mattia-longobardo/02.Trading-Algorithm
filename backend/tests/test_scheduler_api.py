@@ -74,6 +74,7 @@ sys.modules.setdefault("clients.alpaca_client", alpaca_client_stub)
 
 gpt_client_stub = ModuleType("clients.gpt_client")
 gpt_client_stub.GPTClient = object
+gpt_client_stub.get_default_prompts = lambda: {}
 sys.modules.setdefault("clients.gpt_client", gpt_client_stub)
 
 dotenv_stub = ModuleType("dotenv")
@@ -153,7 +154,7 @@ class TradingSchedulerManualApiTests(unittest.TestCase):
 
         payload = self.scheduler.run_manual_generate_new_orders()
 
-        self.trade_manager.sync_alpaca_state.assert_called_once()
+        self.trade_manager.sync_broker_state.assert_called_once()
         self.universe_manager.select_trading_universe.assert_called_once()
         self.trade_manager.data_manager.update_symbols.assert_called_once_with({"AAPL": "STOCK"})
         self.trade_manager.evaluate_cycle.assert_called_once_with({"STOCK": ["AAPL"], "CRYPTO": []})
@@ -172,7 +173,7 @@ class TradingSchedulerManualApiTests(unittest.TestCase):
 
         self.scheduler.job_evaluate_signals()
 
-        self.trade_manager.sync_alpaca_state.assert_called_once()
+        self.trade_manager.sync_broker_state.assert_called_once()
         self.trade_manager.data_manager.update_symbols.assert_called_once_with({"AAPL": "STOCK"})
         self.trade_manager.refresh_open_trade_protections.assert_called_once()
         self.trade_manager.evaluate_cycle.assert_called_once_with({"STOCK": ["AAPL"], "CRYPTO": []})
@@ -249,7 +250,7 @@ class TradingApiServerTests(unittest.TestCase):
         scheduler = Mock(spec=TradingScheduler)
         scheduler.config = config
         scheduler.trade_manager = Mock()
-        scheduler.trade_manager.alpaca_client = Mock()
+        scheduler.trade_manager.brokers = {}
         scheduler.run_manual_refresh_universe.return_value = {"STOCK": ["AAPL"], "CRYPTO": []}
         scheduler.run_manual_generate_new_orders.return_value = {"new_orders": [], "new_orders_count": 0}
         scheduler.run_manual_weekly_report.return_value = {"pnl_total": 42.0}
