@@ -28,7 +28,7 @@ PROMPT_KEY_UNIVERSE_FINAL = "universe_final"
 PROMPT_KEY_UNIVERSE_FINAL_FROM_DOSSIERS = "universe_final_from_dossiers"
 
 
-def _alpaca_prompt_keys() -> tuple[str, ...]:
+def _prompt_keys() -> tuple[str, ...]:
     return (
         PROMPT_KEY_NEW_SIGNAL,
         PROMPT_KEY_BATCH_SIGNALS,
@@ -284,7 +284,7 @@ INSTRUCTIONS_NEW_SIGNAL = (
     "trade_score must be a 0-100 score balancing expected profitability against risk after considering the user risk tolerance. "
     "Base the decision primarily on medium-term trend structure, macro or fundamental catalysts, business or ecosystem strength, and multi-week or multi-month risk/reward. "
     "The script manages take-profit, trailing-take-profit, stop-loss, and trailing-stop logic internally after entry; "
-    "Alpaca is used only to place the entry order and to close the position at market when a rule triggers. "
+    "eToro is used only to place the entry order and to close the position at market when a rule triggers. "
     "When the trailing take profit is provided, it arms once price reaches entry_price * (1 + trailing_take_profit_activation_pct / 100) and then trails the high-water mark by the specified distance, locking in profit even if the hard take_profit level is never reached."
 )
 
@@ -353,7 +353,7 @@ INSTRUCTIONS_UNIVERSE_DOSSIER = (
     "Use recent news, catalysts, sentiment, and business or ecosystem quality from web search. "
     "When the provided market metrics conflict with the web narrative, acknowledge that tension in the reasoning. "
     "Keep the summary concise and practical. "
-    "Use selection_rules.currency as the reference currency, and for crypto keep Alpaca pair format like BTC/<currency>. "
+    "Use selection_rules.currency as the reference currency, and for crypto use eToro native tickers like BTC (no quote-currency suffix). "
     "Return only JSON matching the schema."
 )
 
@@ -362,7 +362,7 @@ INSTRUCTIONS_UNIVERSE_SHORTLIST = (
     "The asset class is in selection_rules.category, the batch index in selection_rules.batch_number out of selection_rules.batch_count, and the target shortlist size in selection_rules.shortlist_size. "
     "Do mandatory web search before choosing. Exclude ETFs and avoid illiquid names. "
     "Avoid warrants, rights, units, preferred shares, shell companies, and other non-common-stock instruments. "
-    "Use only the provided Alpaca candidate list for this batch. "
+    "Use only the provided candidate list for this batch. "
     "When local market metrics are provided for a candidate, treat them as hard context and use them alongside web search. "
     "This strategy is medium-long term position trading, not daily trading. "
     "Favor assets suitable for holding selection_rules.target_holding_period_days, and potentially 3-4 months if the thesis remains intact. "
@@ -375,7 +375,7 @@ INSTRUCTIONS_UNIVERSE_SHORTLIST = (
     "For crypto, prefer established assets with solid market capitalization, active ecosystem participation, and durable narratives rather than short-lived hype. "
     "Focus on positive momentum, strong fundamentals, and downside control appropriate for the selected risk profile. "
     "Use selection_rules.currency as the reference currency. "
-    "For crypto, return only symbols quoted in that currency and keep Alpaca pair format like BTC/<currency>. "
+    "For crypto, use eToro native tickers like BTC (no quote-currency suffix). "
     "Return up to selection_rules.shortlist_size symbols from this batch as the best intermediate shortlist for the final universe decision. "
     "Return only JSON matching the schema."
 )
@@ -391,7 +391,7 @@ INSTRUCTIONS_UNIVERSE_FINAL = (
     "Choose the strongest multi-month opportunities while balancing upside, liquidity, quality, and downside control according to that risk preference. "
     "Prefer candidates with stronger average dollar volume, constructive 20d/60d/120d trend, and better resilience relative to recent highs unless current news materially weakens the thesis. "
     "Use selection_rules.currency as the reference currency. "
-    "For crypto, return only Alpaca pair symbols quoted in that currency. "
+    "For crypto, return only eToro native tickers like BTC (no quote-currency suffix). "
     "Return only JSON matching the schema."
 )
 
@@ -404,7 +404,7 @@ INSTRUCTIONS_UNIVERSE_FINAL_FROM_DOSSIERS = (
     "Honor selection_rules.risk_tolerance on a 1-10 scale where 10 means maximum risk appetite. "
     "Prefer some diversification across themes or narratives when multiple candidates are similarly strong, rather than concentrating too heavily in near-duplicates. "
     "It is acceptable to keep some continuity with selection_rules.current_universe when dossier quality is still competitive, but do not keep a weaker name purely for continuity. "
-    "Use selection_rules.currency as the reference currency, and for crypto return only Alpaca pair symbols quoted in that currency. "
+    "Use selection_rules.currency as the reference currency, and for crypto return only eToro native tickers like BTC (no quote-currency suffix). "
     "Return only JSON matching the schema."
 )
 
@@ -485,7 +485,7 @@ class GPTClient:
         category: str,
         candles: list[dict[str, Any]],
         existing_trades: list[dict[str, Any]],
-        provider: str = "alpaca",
+        provider: str = "etoro",
     ) -> dict[str, Any]:
         return {
             "constraints": {
@@ -523,7 +523,7 @@ class GPTClient:
         category: str,
         candles: list[dict[str, Any]],
         existing_trades: list[dict[str, Any]],
-        provider: str = "alpaca",
+        provider: str = "etoro",
     ) -> dict[str, Any]:
         payload = self.build_symbol_payload(symbol, category, candles, existing_trades, provider=provider)
         prompt_key = _resolve_provider_prompt_key(PROMPT_KEY_NEW_SIGNAL, provider)
@@ -540,7 +540,7 @@ class GPTClient:
         symbol_payloads: list[dict[str, Any]],
         existing_trades: list[dict[str, Any]],
         max_new_trades: int,
-        provider: str = "alpaca",
+        provider: str = "etoro",
     ) -> dict[str, Any]:
         payload = {
             "constraints": {
@@ -573,7 +573,7 @@ class GPTClient:
         category: str,
         candidate: dict[str, Any],
         peer_context: dict[str, Any],
-        provider: str = "alpaca",
+        provider: str = "etoro",
     ) -> dict[str, Any]:
         payload = {
             "selection_rules": {
@@ -609,7 +609,7 @@ class GPTClient:
         shortlist_size: int,
         batch_number: int,
         batch_count: int,
-        provider: str = "alpaca",
+        provider: str = "etoro",
     ) -> dict[str, Any]:
         payload = {
             "selection_rules": {
@@ -649,7 +649,7 @@ class GPTClient:
         category: str,
         shortlisted_candidates: list[dict[str, Any]],
         required_count: int,
-        provider: str = "alpaca",
+        provider: str = "etoro",
     ) -> dict[str, Any]:
         payload = {
             "selection_rules": {
@@ -680,7 +680,7 @@ class GPTClient:
         dossiers: list[dict[str, Any]],
         required_count: int,
         current_universe: list[str] | None = None,
-        provider: str = "alpaca",
+        provider: str = "etoro",
     ) -> dict[str, Any]:
         payload = {
             "selection_rules": {
@@ -714,7 +714,7 @@ class GPTClient:
         self,
         trade: dict[str, Any],
         candles: list[dict[str, Any]],
-        provider: str = "alpaca",
+        provider: str = "etoro",
     ) -> dict[str, Any]:
         payload = {
             "constraints": {
@@ -745,7 +745,7 @@ class GPTClient:
         self,
         trade: dict[str, Any],
         candles: list[dict[str, Any]],
-        provider: str = "alpaca",
+        provider: str = "etoro",
     ) -> dict[str, Any]:
         payload = {
             "constraints": {

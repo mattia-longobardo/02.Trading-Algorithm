@@ -226,7 +226,7 @@ def seed_admin_user_if_missing(
     return app_fetch_one(db_path, "SELECT * FROM users WHERE username = ?", (username,))
 
 
-ALPACA_PROMPT_KEYS: tuple[str, ...] = (
+PROMPT_KEYS: tuple[str, ...] = (
     "new_signal",
     "batch_signals",
     "pending_review",
@@ -236,8 +236,6 @@ ALPACA_PROMPT_KEYS: tuple[str, ...] = (
     "universe_final",
     "universe_final_from_dossiers",
 )
-
-PROMPT_KEYS: tuple[str, ...] = ALPACA_PROMPT_KEYS
 
 
 def seed_initial_prompt_versions(db_path: str, defaults: dict[str, str]) -> None:
