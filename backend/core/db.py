@@ -62,6 +62,9 @@ CREATE TABLE IF NOT EXISTS trades (
     exit_order_id TEXT,
     exit_client_order_id TEXT,
     exit_requested_at TEXT,
+    instrument_id INTEGER,
+    position_id TEXT,
+    order_reference_id TEXT,
     reasoning TEXT,
     confidence REAL,
     provider TEXT NOT NULL DEFAULT 'alpaca',
@@ -91,6 +94,9 @@ TRADE_OPTIONAL_COLUMNS: dict[str, str] = {
     "trade_score": "REAL",
     "provider": "TEXT NOT NULL DEFAULT 'alpaca'",
     "account_currency": "TEXT NOT NULL DEFAULT 'USD'",
+    "instrument_id": "INTEGER",
+    "position_id": "TEXT",
+    "order_reference_id": "TEXT",
 }
 
 SYMBOL_TABLE_PREFIX = "ohlcv_"
