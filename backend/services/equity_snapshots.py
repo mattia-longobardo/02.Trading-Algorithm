@@ -73,7 +73,7 @@ def record_snapshots_all(
     """Snapshot every active provider in one call. Used by the scheduler."""
 
     out: dict[str, dict[str, Any] | None] = {}
-    for provider in (PROVIDER_ALPACA,):
+    for provider in config.active_providers():
         broker = brokers.get(provider)
         if broker is None:
             continue
