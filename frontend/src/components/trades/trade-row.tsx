@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatCurrency, formatDateTime, formatNumber } from "@/lib/format";
@@ -43,7 +44,12 @@ export function TradeRow({ trade: t, onEdit, onClose }: TradeRowProps) {
     <tr className="bg-(--color-panel)/40 transition-colors hover:bg-(--color-hover)/60 [&>td]:border-y [&>td]:border-(--color-line)">
       {/* Sticky first column: symbol */}
       <td className="sticky left-0 z-10 bg-(--color-panel) px-2 py-2 font-medium">
-        {t.symbol}
+        <Link
+          href={`/symbol/${encodeURIComponent(t.symbol)}`}
+          className="hover:underline"
+        >
+          {t.symbol}
+        </Link>
       </td>
       <td className="px-2 py-2 text-(--color-muted)">#{t.id}</td>
       <td className="px-2 py-2">

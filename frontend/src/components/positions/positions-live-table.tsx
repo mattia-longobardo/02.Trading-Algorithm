@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { TrendingDown } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import { formatNumber, formatPercent } from "@/lib/format";
@@ -43,7 +44,12 @@ function PositionRow({ pos }: { pos: LivePosition }) {
       {/* Simbolo — sticky */}
       <td className="sticky left-0 z-10 bg-(--color-panel) px-2 py-2 font-medium">
         <span className="inline-flex items-center gap-1">
-          {pos.symbol}
+          <Link
+            href={`/symbol/${encodeURIComponent(pos.symbol)}`}
+            className="hover:underline"
+          >
+            {pos.symbol}
+          </Link>
           <DirectionHint isBuy={pos.is_buy} />
         </span>
       </td>
