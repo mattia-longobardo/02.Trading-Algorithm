@@ -8,7 +8,7 @@ dotenv_stub = ModuleType("dotenv")
 dotenv_stub.load_dotenv = lambda: None
 sys.modules.setdefault("dotenv", dotenv_stub)
 
-from core.utils import AppConfig, PROVIDER_ETORO, load_config
+from core.utils import AppConfig, DEFAULT_UNIVERSE_STOCK_EXCHANGES, PROVIDER_ETORO, load_config
 
 
 class EtoroConfigTests(unittest.TestCase):
@@ -85,6 +85,19 @@ class EtoroConfigTests(unittest.TestCase):
             config = load_config()
         self.assertIn("NASDAQ", config.universe_stock_exchanges)
         self.assertEqual(config.universe_stock_shortlist, 300)
+
+    def test_load_config_universe_exchanges_blank_falls_back(self):
+        env = {"OPENAI_API_KEY": "o", "UNIVERSE_STOCK_EXCHANGES": "  ,  "}
+        with patch.dict(os.environ, env, clear=True):
+            config = load_config()
+        self.assertEqual(config.universe_stock_exchanges, DEFAULT_UNIVERSE_STOCK_EXCHANGES)
+
+    def test_load_config_shortlist_floor_clamp(self):
+        env = {"OPENAI_API_KEY": "o", "UNIVERSE_STOCK_SHORTLIST": "3", "UNIVERSE_CRYPTO_SHORTLIST": "0"}
+        with patch.dict(os.environ, env, clear=True):
+            config = load_config()
+        self.assertEqual(config.universe_stock_shortlist, 10)
+        self.assertEqual(config.universe_crypto_shortlist, 10)
 
 
 if __name__ == "__main__":
