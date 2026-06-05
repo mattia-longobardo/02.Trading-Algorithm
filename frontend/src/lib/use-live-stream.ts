@@ -93,7 +93,9 @@ export function useLiveStream(): { snapshot: LiveSnapshot | null; status: LiveSt
         closeSource();
         setStatus("stale");
       } else {
-        // Tab became visible — reconnect immediately.
+        // Tab became visible — cancel any pending backoff timer first so it
+        // can't later tear down the fresh connection we're about to open.
+        clearTimer();
         attemptRef.current = 0;
         connect();
       }

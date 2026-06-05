@@ -3,30 +3,11 @@
 import { cn } from "@/lib/cn";
 import type { LiveStatus } from "@/lib/types";
 
-const CONFIG: Record<
-  LiveStatus,
-  { label: string; dotClass: string; textClass: string }
-> = {
-  live: {
-    label: "● Live",
-    dotClass: "text-(--color-accent)",
-    textClass: "text-(--color-accent)",
-  },
-  stale: {
-    label: "● In ritardo",
-    dotClass: "text-(--color-muted)",
-    textClass: "text-(--color-muted)",
-  },
-  reconnecting: {
-    label: "● Riconnessione…",
-    dotClass: "text-(--color-warning)",
-    textClass: "text-(--color-warning)",
-  },
-  connecting: {
-    label: "● Connessione…",
-    dotClass: "text-(--color-muted)",
-    textClass: "text-(--color-muted)",
-  },
+const CONFIG: Record<LiveStatus, { label: string; textClass: string }> = {
+  live: { label: "● Live", textClass: "text-(--color-accent)" },
+  stale: { label: "● In ritardo", textClass: "text-(--color-muted)" },
+  reconnecting: { label: "● Riconnessione…", textClass: "text-(--color-warning)" },
+  connecting: { label: "● Connessione…", textClass: "text-(--color-muted)" },
 };
 
 interface LiveBadgeProps {

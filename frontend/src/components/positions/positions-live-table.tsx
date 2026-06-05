@@ -1,3 +1,5 @@
+"use client";
+
 import { TrendingDown } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import { formatNumber, formatPercent } from "@/lib/format";
@@ -102,7 +104,7 @@ export function PositionsLiveTable({ positions }: { positions: LivePosition[] })
               <th
                 key={h}
                 className={`px-2 py-2 text-xs font-medium text-(--color-muted) ${
-                  h === "Simbolo" ? "sticky left-0 z-10 bg-(--color-panel)/60 text-left" : "text-right"
+                  h === "Simbolo" ? "sticky left-0 z-10 bg-(--color-panel) text-left" : "text-right"
                 }`}
               >
                 {h}
