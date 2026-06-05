@@ -5,6 +5,7 @@ import { afterEach } from "vitest";
 // jsdom does not implement window.matchMedia; next-themes calls it on mount.
 Object.defineProperty(window, "matchMedia", {
   writable: true,
+  configurable: true,
   value: (query: string) => ({
     matches: false,
     media: query,
