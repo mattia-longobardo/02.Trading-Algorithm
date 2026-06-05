@@ -180,3 +180,29 @@ export interface AuditEntry {
   after_json: string | null;
   created_at: string;
 }
+
+export interface LivePosition {
+  id: number;
+  symbol: string;
+  category: TradeCategory;
+  units: number;
+  entry_price: number;
+  current_price: number | null;
+  unrealized_pnl: number | null;
+  unrealized_pnl_pct: number | null;
+  take_profit: number | null;
+  stop_loss: number | null;
+  position_id: string | null;
+  instrument_id: number | null;
+  is_buy: boolean;
+}
+
+export interface LiveSnapshot {
+  ts: string;
+  currency: string;
+  equity: number | null;
+  cash: number | null;
+  positions: LivePosition[];
+}
+
+export type LiveStatus = "connecting" | "live" | "stale" | "reconnecting";
