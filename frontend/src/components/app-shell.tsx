@@ -8,9 +8,8 @@ import { useAuth } from "@/lib/auth";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "@/lib/cn";
-import { NAV, visibleNavFor } from "@/components/layout/nav-items";
+import { visibleNavFor } from "@/components/layout/nav-items";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
-
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
