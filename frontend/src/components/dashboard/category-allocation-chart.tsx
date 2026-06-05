@@ -1,9 +1,10 @@
+"use client";
+
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/format";
 import type { AllocationCategory } from "@/lib/types";
-
-const PIE_COLORS = ["#22c55e", "#38bdf8", "#a78bfa", "#f59e0b", "#f43f5e", "#facc15", "#34d399"];
+import { useChartTheme } from "@/components/charts/use-chart-theme";
 
 // ---------------------------------------------------------------------------
 // AllocationLegend
@@ -11,9 +12,11 @@ const PIE_COLORS = ["#22c55e", "#38bdf8", "#a78bfa", "#f59e0b", "#f43f5e", "#fac
 function AllocationLegend({
   items,
   currency,
+  pieColors,
 }: {
   items: AllocationCategory[];
   currency: string;
+  pieColors: string[];
 }) {
   if (items.length === 0) return null;
   const total = items.reduce((sum, c) => sum + c.value, 0);
@@ -25,7 +28,7 @@ function AllocationLegend({
           <li key={item.category} className="flex items-center gap-2 truncate">
             <span
               className="inline-block size-2.5 shrink-0 rounded-full"
-              style={{ background: PIE_COLORS[idx % PIE_COLORS.length] }}
+              style={{ background: pieColors[idx % pieColors.length] }}
             />
             <span className="truncate text-(--color-text)">{item.category}</span>
             <span className="tnum ml-auto tabular-nums text-(--color-muted)">
@@ -51,6 +54,8 @@ export function CategoryAllocationChart({
   byCategory,
   currency,
 }: CategoryAllocationChartProps) {
+  const theme = useChartTheme();
+
   return (
     <Card>
       <CardHeader>
@@ -86,7 +91,7 @@ export function CategoryAllocationChart({
                     <text
                       x={x}
                       y={y}
-                      fill="#0f172a"
+                      fill={theme.text}
                       textAnchor="middle"
                       dominantBaseline="central"
                       fontSize={12}
@@ -98,18 +103,18 @@ export function CategoryAllocationChart({
                 }}
               >
                 {byCategory.map((_, idx) => (
-                  <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
+                  <Cell key={idx} fill={theme.pie[idx % theme.pie.length]} />
                 ))}
               </Pie>
               <Tooltip
                 contentStyle={{
-                  background: "#0f172a",
-                  border: "1px solid #1f2937",
+                  background: theme.tooltipBg,
+                  border: `1px solid ${theme.tooltipBorder}`,
                   borderRadius: 8,
-                  color: "#e2e8f0",
+                  color: theme.text,
                 }}
-                labelStyle={{ color: "#94a3b8" }}
-                itemStyle={{ color: "#e2e8f0" }}
+                labelStyle={{ color: theme.axis }}
+                itemStyle={{ color: theme.text }}
                 formatter={(v: number, _name, item) => {
                   const total = byCategory.reduce((sum, c) => sum + c.value, 0);
                   const pct = total > 0 ? (v / total) * 100 : 0;
@@ -122,7 +127,7 @@ export function CategoryAllocationChart({
             </PieChart>
           </ResponsiveContainer>
         </div>
-        <AllocationLegend items={byCategory} currency={currency} />
+        <AllocationLegend items={byCategory} currency={currency} pieColors={theme.pie} />
       </CardContent>
     </Card>
   );

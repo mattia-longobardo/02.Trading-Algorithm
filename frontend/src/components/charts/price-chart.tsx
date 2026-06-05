@@ -8,6 +8,7 @@ import {
   type IChartApi,
 } from "lightweight-charts";
 import type { Candle } from "@/lib/types";
+import { useChartTheme, type ChartTheme } from "./use-chart-theme";
 
 interface PriceLine {
   price: number;
@@ -21,41 +22,31 @@ interface PriceChartProps {
   height?: number;
 }
 
-function resolvePriceLineColor(line: PriceLine): string {
+function resolvePriceLineColor(line: PriceLine, theme: ChartTheme): string {
   if (line.color) return line.color;
   const t = (line.title ?? "").toLowerCase();
-  if (t.includes("tp") || t.includes("take profit")) return "#22d37f";
-  if (t.includes("sl") || t.includes("stop loss")) return "#f06868";
-  return "#7b8ea0"; // neutral for entry / unknown
+  if (t.includes("tp") || t.includes("take profit")) return theme.up;
+  if (t.includes("sl") || t.includes("stop loss")) return theme.down;
+  return theme.info; // entry / unknown
 }
 
 export function PriceChart({ candles, priceLines, height = 360 }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const theme = useChartTheme();
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const container = containerRef.current;
     if (!container) return;
 
-    // Read CSS tokens if available, fall back to dark hex defaults.
-    const cs = getComputedStyle(document.documentElement);
-    const token = (name: string, fallback: string) => {
-      const v = cs.getPropertyValue(name).trim();
-      return v || fallback;
-    };
-
-    const bg = token("--color-background", "#121722");
-    const textColor = token("--color-foreground", "#dfe6ee");
-    const gridColor = token("--color-border", "#1f2632");
-
     const chart: IChartApi = createChart(container, {
       layout: {
-        background: { type: ColorType.Solid, color: bg },
-        textColor,
+        background: { type: ColorType.Solid, color: theme.tooltipBg },
+        textColor: theme.text,
       },
       grid: {
-        vertLines: { color: gridColor },
-        horzLines: { color: gridColor },
+        vertLines: { color: theme.grid },
+        horzLines: { color: theme.grid },
       },
       width: container.clientWidth,
       height,
@@ -66,12 +57,12 @@ export function PriceChart({ candles, priceLines, height = 360 }: PriceChartProp
     });
 
     const series = chart.addCandlestickSeries({
-      upColor: "#22d37f",
-      downColor: "#f06868",
-      borderUpColor: "#22d37f",
-      borderDownColor: "#f06868",
-      wickUpColor: "#22d37f",
-      wickDownColor: "#f06868",
+      upColor: theme.up,
+      downColor: theme.down,
+      borderUpColor: theme.up,
+      borderDownColor: theme.down,
+      wickUpColor: theme.up,
+      wickDownColor: theme.down,
     });
 
     // Convert ISO timestamps to UNIX seconds, de-dupe (keep last), sort asc.
@@ -87,7 +78,7 @@ export function PriceChart({ candles, priceLines, height = 360 }: PriceChartProp
     for (const pl of priceLines ?? []) {
       series.createPriceLine({
         price: pl.price,
-        color: resolvePriceLineColor(pl),
+        color: resolvePriceLineColor(pl, theme),
         title: pl.title ?? "",
         lineWidth: 1,
         lineStyle: 2, // dashed
@@ -111,7 +102,7 @@ export function PriceChart({ candles, priceLines, height = 360 }: PriceChartProp
       ro.disconnect();
       chart.remove();
     };
-  }, [candles, priceLines, height]);
+  }, [candles, priceLines, height, theme]);
 
   return <div ref={containerRef} style={{ height }} className="w-full" />;
 }

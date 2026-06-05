@@ -30,6 +30,7 @@ import type {
   PnlBySymbolRow,
   ReturnsBin,
 } from "@/lib/types";
+import { useChartTheme } from "@/components/charts/use-chart-theme";
 
 // Query keys the dashboard reads. We refresh them as a group on a single
 // wall-clock-aligned tick (see ``useDashboardAutoRefresh`` below).
@@ -78,6 +79,7 @@ function useDashboardAutoRefresh(): Date | null {
 }
 
 export default function DashboardPage() {
+  const theme = useChartTheme();
   const [timeframe, setTimeframe] = useState<Timeframe>("3M");
   const lastAutoRefresh = useDashboardAutoRefresh();
   const { status: liveStatus } = useLiveStream();
@@ -194,22 +196,29 @@ export default function DashboardPage() {
           <CardContent className="h-72">
             <ResponsiveContainer>
               <LineChart data={equity.data?.points ?? []}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-                <XAxis dataKey="t" stroke="#94a3b8" fontSize={12} tickMargin={8} />
+                <CartesianGrid strokeDasharray="3 3" stroke={theme.grid} />
+                <XAxis dataKey="t" stroke={theme.grid} tick={{ fill: theme.axis, fontSize: 11 }} tickMargin={8} />
                 <YAxis
-                  stroke="#94a3b8"
-                  fontSize={12}
+                  stroke={theme.grid}
+                  tick={{ fill: theme.axis, fontSize: 11 }}
                   tickFormatter={(v) => formatCurrency(v, currency)}
                   width={80}
                 />
                 <Tooltip
-                  contentStyle={{ background: "#0f172a", border: "1px solid #1f2937" }}
+                  contentStyle={{
+                    background: theme.tooltipBg,
+                    border: `1px solid ${theme.tooltipBorder}`,
+                    borderRadius: 8,
+                    color: theme.text,
+                  }}
+                  labelStyle={{ color: theme.axis }}
+                  itemStyle={{ color: theme.text }}
                   formatter={(v: number) => formatCurrency(v, currency)}
                 />
                 <Line
                   type="monotone"
                   dataKey="equity"
-                  stroke="#22c55e"
+                  stroke={theme.up}
                   strokeWidth={2}
                   dot={false}
                 />
