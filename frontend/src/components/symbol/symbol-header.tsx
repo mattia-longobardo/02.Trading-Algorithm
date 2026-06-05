@@ -49,7 +49,7 @@ export function SymbolHeader({ symbol, category, livePosition, openTrade }: Symb
           {hasPnl && (
             <span className={`tnum ${pnlClass(pnlValue)}`}>
               {pnlValue > 0 ? "+" : ""}
-              {formatCurrency(pnlValue, openTrade?.account_currency ?? livePosition ? "EUR" : "EUR")}
+              {formatCurrency(pnlValue, openTrade?.account_currency ?? "EUR")}
               {unrealizedPct !== null && (
                 <span className="ml-1 text-xs opacity-80">
                   ({unrealizedPct > 0 ? "+" : ""}
