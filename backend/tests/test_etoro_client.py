@@ -464,6 +464,68 @@ class EToroDiscoverTests(unittest.TestCase):
         client.list_exchanges()
         self.assertEqual(session.request.call_count, 1)
 
+    def _types_resp(self):
+        return make_response(200, {"instrumentTypes": [
+            {"instrumentTypeID": 5, "instrumentTypeDescription": "Stocks"},
+            {"instrumentTypeID": 10, "instrumentTypeDescription": "Crypto"},
+            {"instrumentTypeID": 6, "instrumentTypeDescription": "ETF"},
+        ]})
+
+    def test_discover_instruments_normalizes_and_filters_internal(self):
+        client, session = make_client()
+        session.request.side_effect = [
+            self._types_resp(),
+            make_response(200, {"page": 1, "pageSize": 200, "totalItems": 2, "items": [
+                {"instrumentId": 101, "displayname": "Apple", "symbol": "AAPL",
+                 "instrumentTypeID": 5, "instrumentType": "Stocks", "exchangeID": 4,
+                 "isCurrentlyTradable": True, "isBuyEnabled": True, "isDelisted": False,
+                 "currentRate": 200.0, "popularityUniques": 5000,
+                 "dailyPriceChange": 1.0, "weeklyPriceChange": 2.0,
+                 "monthlyPriceChange": 3.0, "threeMonthPriceChange": 4.0,
+                 "sixMonthPriceChange": 5.0},
+                {"instrumentId": 999, "displayname": "Hidden", "symbol": "HID",
+                 "isInternalInstrument": True},
+            ]}),
+        ]
+        rows = client.discover_instruments("STOCK")
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["symbol"], "AAPL")
+        self.assertEqual(row["instrument_id"], 101)
+        self.assertEqual(row["exchange_id"], 4)
+        self.assertTrue(row["tradable"])
+        self.assertEqual(row["popularity"], 5000)
+        self.assertEqual(row["current_rate"], 200.0)
+        self.assertEqual(row["price_change_3m"], 4.0)
+        discover_kwargs = session.request.call_args_list[1].kwargs
+        self.assertEqual(discover_kwargs["params"]["sort"], "-popularityUniques")
+        self.assertEqual(discover_kwargs["params"]["instrumentTypeID"], 5)
+
+    def test_discover_instruments_derives_tradable_false(self):
+        client, session = make_client()
+        session.request.side_effect = [
+            self._types_resp(),
+            make_response(200, {"page": 1, "pageSize": 200, "totalItems": 1, "items": [
+                {"instrumentId": 7, "displayname": "X", "symbol": "X",
+                 "isCurrentlyTradable": True, "isBuyEnabled": False},
+            ]}),
+        ]
+        rows = client.discover_instruments("STOCK")
+        self.assertFalse(rows[0]["tradable"])
+
+    def test_discover_instruments_stops_on_short_page(self):
+        client, session = make_client()
+        session.request.side_effect = [
+            self._types_resp(),
+            make_response(200, {"page": 1, "pageSize": 200, "totalItems": 1, "items": [
+                {"instrumentId": 1, "displayname": "A", "symbol": "A",
+                 "isCurrentlyTradable": True},
+            ]}),
+        ]
+        rows = client.discover_instruments("STOCK")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(session.request.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
