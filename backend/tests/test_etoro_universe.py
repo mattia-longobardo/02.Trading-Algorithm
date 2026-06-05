@@ -140,6 +140,23 @@ class CheapPrefilterHelperTests(unittest.TestCase):
         broker.list_exchanges.side_effect = Exception("boom")
         self.assertIsNone(manager._resolve_exchange_whitelist(broker))
 
+    def test_resolve_exchange_whitelist_none_when_no_match(self):
+        manager, broker = self._manager()
+        broker.list_exchanges.return_value = {99: "Tokyo Stock Exchange"}
+        self.assertIsNone(manager._resolve_exchange_whitelist(broker))
+
+    def test_resolve_exchange_whitelist_skips_broker_when_no_patterns(self):
+        manager, broker = self._manager()
+        manager.config.universe_stock_exchanges = ()
+        self.assertIsNone(manager._resolve_exchange_whitelist(broker))
+        broker.list_exchanges.assert_not_called()
+
+    def test_cheap_score_penalizes_daily_spike(self):
+        manager, _ = self._manager()
+        calm = manager._cheap_prefilter_score({"popularity": 1000, "price_change_1d": 0.0})
+        spiky = manager._cheap_prefilter_score({"popularity": 1000, "price_change_1d": 50.0})
+        self.assertGreater(calm, spiky)
+
 
 if __name__ == "__main__":
     unittest.main()

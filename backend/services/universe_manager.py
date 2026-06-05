@@ -320,7 +320,13 @@ class UniverseManager:
             text = str(description).upper()
             if any(pattern in text for pattern in upper_patterns):
                 wanted.add(int(exchange_id))
-        return wanted or None
+        if not wanted:
+            self.logger.warning(
+                "No eToro exchanges matched the configured whitelist %s; skipping exchange filtering",
+                patterns,
+            )
+            return None
+        return wanted
 
     def _passes_liquidity_prefilter(self, category: str, asset: dict[str, Any]) -> bool:
         bar_count = int(asset.get("bar_count") or 0)
