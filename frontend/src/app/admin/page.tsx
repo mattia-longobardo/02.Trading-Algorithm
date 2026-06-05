@@ -27,7 +27,7 @@ export default function AdminPage() {
           <TabsTrigger value="users">Utenti</TabsTrigger>
         </TabsList>
         <TabsContent value="env">
-          <EnvForm adminOnly={isAdmin} />
+          <EnvForm isAdmin={isAdmin} />
         </TabsContent>
         <TabsContent value="etoro">
           <BrokerPanel />

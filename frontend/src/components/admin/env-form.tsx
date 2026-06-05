@@ -37,10 +37,10 @@ export const SETTING_FIELDS: Array<{
 ];
 
 interface EnvFormProps {
-  adminOnly: boolean;
+  isAdmin: boolean;
 }
 
-export function EnvForm({ adminOnly }: EnvFormProps) {
+export function EnvForm({ isAdmin }: EnvFormProps) {
   const qc = useQueryClient();
   const settings = useQuery({
     queryKey: ["settings"],
@@ -109,7 +109,7 @@ export function EnvForm({ adminOnly }: EnvFormProps) {
                   className="h-9 w-full rounded-lg border border-(--color-line) bg-(--color-panel)/50 px-3 text-sm text-(--color-text) focus:outline-none focus:ring-2 focus:ring-(--color-accent)"
                   value={draft[f.key] ?? ""}
                   onChange={(e) => setDraft((p) => ({ ...p, [f.key]: e.target.value }))}
-                  disabled={!adminOnly}
+                  disabled={!isAdmin}
                 >
                   {(f.options ?? []).map((o) => (
                     <option key={o} value={o}>
@@ -121,7 +121,7 @@ export function EnvForm({ adminOnly }: EnvFormProps) {
                 <Input
                   value={draft[f.key] ?? ""}
                   onChange={(e) => setDraft((p) => ({ ...p, [f.key]: e.target.value }))}
-                  disabled={!adminOnly}
+                  disabled={!isAdmin}
                   inputMode={f.kind === "number" ? "decimal" : "text"}
                 />
               )}
@@ -134,7 +134,7 @@ export function EnvForm({ adminOnly }: EnvFormProps) {
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
       {success && <StatusBanner kind="success">{success}</StatusBanner>}
 
-      {adminOnly && (
+      {isAdmin && (
         <div className="flex justify-end">
           <Button
             onClick={() => {
@@ -148,7 +148,7 @@ export function EnvForm({ adminOnly }: EnvFormProps) {
           </Button>
         </div>
       )}
-      {!adminOnly && (
+      {!isAdmin && (
         <p className="text-xs text-(--color-muted)">
           Solo gli amministratori possono modificare queste impostazioni.
         </p>
