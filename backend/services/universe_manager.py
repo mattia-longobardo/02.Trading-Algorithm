@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timedelta
 from statistics import fmean, pstdev
@@ -46,6 +47,8 @@ class UniverseManager:
     CRYPTO_MIN_AVG_DOLLAR_VOLUME_20D = 1_000_000.0
     MAX_DOSSIER_WORKERS = 6
 
+    _DATED_FUTURE_RE = re.compile(r"\.[A-Z]{3}\d{2}$")
+
     def __init__(
         self,
         config: AppConfig,
@@ -78,6 +81,17 @@ class UniverseManager:
     def _normalize_symbol(symbol: Any) -> str:
         return str(symbol or "").upper().strip()
 
+    @classmethod
+    def _is_dated_future(cls, symbol: Any) -> bool:
+        text = str(symbol or "").upper().strip()
+        return bool(cls._DATED_FUTURE_RE.search(text))
+
+    @staticmethod
+    def _asset_name(asset: object) -> str:
+        if isinstance(asset, dict):
+            return str(asset.get("name") or "").lower()
+        return str(getattr(asset, "name", "") or "").lower()
+
     @staticmethod
     def _dedupe_payload_by_symbol(payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seen: set[str] = set()
@@ -92,7 +106,7 @@ class UniverseManager:
 
     @staticmethod
     def _looks_like_etf(asset: object) -> bool:
-        name = str(getattr(asset, "name", "")).lower()
+        name = UniverseManager._asset_name(asset)
         return any(
             token in name
             for token in (
@@ -103,7 +117,7 @@ class UniverseManager:
 
     @staticmethod
     def _looks_like_non_common_stock(asset: object) -> bool:
-        name = str(getattr(asset, "name", "")).lower()
+        name = UniverseManager._asset_name(asset)
         return any(
             token in name
             for token in (
@@ -114,7 +128,7 @@ class UniverseManager:
 
     @staticmethod
     def _looks_like_shell_company(asset: object) -> bool:
-        name = str(getattr(asset, "name", "")).lower()
+        name = UniverseManager._asset_name(asset)
         return any(
             token in name
             for token in (
@@ -273,6 +287,40 @@ class UniverseManager:
             liquidity_score + trend_score + proximity_score + history_score + continuity_bonus + fractionable_bonus - volatility_penalty,
             4,
         )
+
+    def _cheap_prefilter_score(self, asset: dict[str, Any]) -> float:
+        popularity = max(self._safe_float(asset.get("popularity")) or 0.0, 0.0)
+        pop_score = math.log10(popularity + 1.0) * 12.0
+        m1w = self._safe_float(asset.get("price_change_1w")) or 0.0
+        m1m = self._safe_float(asset.get("price_change_1m")) or 0.0
+        m3m = self._safe_float(asset.get("price_change_3m")) or 0.0
+        m6m = self._safe_float(asset.get("price_change_6m")) or 0.0
+        momentum = (
+            (max(m1w, -15.0) * 0.15)
+            + (max(m1m, -25.0) * 0.35)
+            + (max(m3m, -40.0) * 0.30)
+            + (max(m6m, -60.0) * 0.20)
+        )
+        daily = abs(self._safe_float(asset.get("price_change_1d")) or 0.0)
+        spike_penalty = max(daily - 15.0, 0.0) * 0.20
+        return round(pop_score + momentum - spike_penalty, 4)
+
+    def _resolve_exchange_whitelist(self, broker: Any) -> set[int] | None:
+        patterns = tuple(self.config.universe_stock_exchanges or ())
+        if not patterns:
+            return None
+        try:
+            exchanges = broker.list_exchanges()
+        except Exception:
+            self.logger.warning("Failed to fetch eToro exchanges; skipping exchange whitelist", exc_info=True)
+            return None
+        upper_patterns = [p.upper() for p in patterns]
+        wanted: set[int] = set()
+        for exchange_id, description in (exchanges or {}).items():
+            text = str(description).upper()
+            if any(pattern in text for pattern in upper_patterns):
+                wanted.add(int(exchange_id))
+        return wanted or None
 
     def _passes_liquidity_prefilter(self, category: str, asset: dict[str, Any]) -> bool:
         bar_count = int(asset.get("bar_count") or 0)

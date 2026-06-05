@@ -96,5 +96,50 @@ class EtoroUniverseAdminTests(unittest.TestCase):
         self.assertEqual(self.universe_admin._normalize_provider("etoro"), "etoro")
 
 
+class CheapPrefilterHelperTests(unittest.TestCase):
+    def _manager(self):
+        from services.universe_manager import UniverseManager
+        config = AppConfig(
+            openai_api_key="k", etoro_api_key="a", etoro_user_key="b",
+            etoro_account_type="demo", weekly_universe_stocks=2, weekly_universe_crypto=2,
+        )
+        gpt = Mock()
+        broker = Mock()
+        return UniverseManager(config, logging.getLogger("t"), {PE: broker}, gpt), broker
+
+    def test_is_dated_future(self):
+        from services.universe_manager import UniverseManager
+        for sym in ("BTC.MAY26", "BTC.JUN26", "ETH.DEC25"):
+            self.assertTrue(UniverseManager._is_dated_future(sym), sym)
+        for sym in ("ETH.SPOT", "HYPE", "JTO", "BTC", "BTC.X"):
+            self.assertFalse(UniverseManager._is_dated_future(sym), sym)
+
+    def test_asset_name_handles_dict_and_object(self):
+        from services.universe_manager import UniverseManager
+        self.assertEqual(UniverseManager._asset_name({"name": "Apple ETF"}), "apple etf")
+        obj = Mock()
+        obj.name = "Apple Inc"
+        self.assertEqual(UniverseManager._asset_name(obj), "apple inc")
+
+    def test_cheap_score_rewards_popularity(self):
+        manager, _ = self._manager()
+        high = manager._cheap_prefilter_score({"popularity": 100000, "price_change_3m": 10.0})
+        low = manager._cheap_prefilter_score({"popularity": 10, "price_change_3m": 10.0})
+        self.assertGreater(high, low)
+
+    def test_resolve_exchange_whitelist_matches_patterns(self):
+        manager, broker = self._manager()
+        broker.list_exchanges.return_value = {
+            4: "NASDAQ", 5: "NYSE", 80: "Borsa Italiana", 99: "Tokyo Stock Exchange",
+        }
+        wanted = manager._resolve_exchange_whitelist(broker)
+        self.assertEqual(wanted, {4, 5, 80})
+
+    def test_resolve_exchange_whitelist_none_on_error(self):
+        manager, broker = self._manager()
+        broker.list_exchanges.side_effect = Exception("boom")
+        self.assertIsNone(manager._resolve_exchange_whitelist(broker))
+
+
 if __name__ == "__main__":
     unittest.main()
