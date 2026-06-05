@@ -47,7 +47,6 @@ export interface Trade {
   order_reference_id: string | null;
   reasoning: string | null;
   confidence: number | null;
-  provider: string;
   account_currency: string;
   created_at: string;
   updated_at: string;
