@@ -66,6 +66,13 @@ def main() -> None:
     if overlay:
         apply_settings_overlay(config, overlay)
         logger.info("Applied %s setting override(s) from app.sqlite", len(overlay))
+        # Logging was configured from .env at line above, before the app DB
+        # (and its settings overlay) was available. Re-apply it now that the
+        # overlay may have changed log_level/log_profile, so the operator's
+        # choice actually takes effect on this boot. setup_logging is safe to
+        # call again — it reuses the existing handlers and only re-applies the
+        # level/filters.
+        setup_logging(config)
 
     # Index any report files that already exist on disk, then auto-place
     # any historical reports that pre-date the year/month folder feature.
