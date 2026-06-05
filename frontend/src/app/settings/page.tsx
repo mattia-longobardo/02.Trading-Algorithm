@@ -215,23 +215,6 @@ function EnvTab({ adminOnly }: { adminOnly: boolean }) {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Segreti eToro (sola lettura)</CardTitle>
-          <span className="text-xs text-(--color-muted)">
-            Modificali solo via .env per sicurezza.
-          </span>
-        </CardHeader>
-        <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {ETORO_SECRET_FIELDS.map((s) => (
-            <div key={s.key} className="space-y-1">
-              <label className="text-xs uppercase text-(--color-muted)">{s.label}</label>
-              <Input value={(settings.data?.values[s.key] as string) ?? ""} readOnly />
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-
       {error && <StatusBanner kind="error">{error}</StatusBanner>}
       {success && <StatusBanner kind="success">{success}</StatusBanner>}
 

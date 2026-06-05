@@ -24,6 +24,10 @@ type Category = "STOCK" | "CRYPTO";
 
 const CATEGORIES: Category[] = ["STOCK", "CRYPTO"];
 
+// The backend keys the universe dict by broker; with the eToro-only backend
+// there is exactly one key. Named here so the literal isn't scattered around.
+const ETORO_PROVIDER = "etoro";
+
 interface UniverseEntry {
   symbol: string;
   category: Category;
@@ -48,8 +52,8 @@ export default function UniversePage() {
     refetchInterval: 60_000,
   });
 
-  // The backend always returns universe keyed under "etoro"
-  const etoroEntries = universe.data?.universe?.["etoro"] ?? ({} as Record<Category, UniverseEntry[]>);
+  const etoroEntries =
+    universe.data?.universe?.[ETORO_PROVIDER] ?? ({} as Record<Category, UniverseEntry[]>);
 
   return (
     <section className="space-y-6">
@@ -104,7 +108,7 @@ function AddSymbolCard({ onAdded }: { onAdded: () => void }) {
         symbol: string;
         added: boolean;
         already_present: boolean;
-      }>(`/api/universe/symbols`, { provider: "etoro", category, symbol }),
+      }>(`/api/universe/symbols`, { provider: ETORO_PROVIDER, category, symbol }),
     onSuccess: (data) => {
       const label = `Universe · ${data.category.toLowerCase()}`;
       if (data.already_present) {
