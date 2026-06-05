@@ -1,18 +1,6 @@
 "use client";
 
-import {
-  Activity,
-  ClipboardList,
-  FileText,
-  Globe,
-  LineChart,
-  LogOut,
-  Menu,
-  Settings,
-  Sparkles,
-  Terminal,
-  X,
-} from "lucide-react";
+import { LogOut, Menu, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -20,24 +8,9 @@ import { useAuth } from "@/lib/auth";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "@/lib/cn";
+import { NAV, visibleNavFor } from "@/components/layout/nav-items";
+import { ThemeToggle } from "@/components/layout/theme-toggle";
 
-interface NavItem {
-  href: string;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  adminOnly?: boolean;
-}
-
-const NAV: NavItem[] = [
-  { href: "/", label: "Dashboard", icon: LineChart },
-  { href: "/orders", label: "Ordini", icon: ClipboardList },
-  { href: "/console", label: "Console", icon: Terminal },
-  { href: "/universe", label: "Universe", icon: Globe },
-  { href: "/reports", label: "Report", icon: FileText },
-  { href: "/prompts", label: "Prompt", icon: Sparkles, adminOnly: true },
-  { href: "/logs", label: "Log", icon: Activity },
-  { href: "/settings", label: "Impostazioni", icon: Settings },
-];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -74,7 +47,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return null;
   }
 
-  const items = NAV.filter((item) => !item.adminOnly || user.role === "admin");
+  const items = visibleNavFor(user.role);
 
   const sidebarContent = (
     <>
@@ -101,8 +74,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               className={cn(
                 "relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent) focus-visible:ring-offset-2 focus-visible:ring-offset-(--color-bg)",
                 active
-                  ? "bg-slate-800 text-(--color-text) before:absolute before:left-0 before:top-1/2 before:h-5 before:w-0.5 before:-translate-y-1/2 before:rounded-r before:bg-(--color-accent)"
-                  : "text-(--color-muted) hover:bg-slate-800/60 hover:text-(--color-text)"
+                  ? "bg-(--color-panel) text-(--color-text) before:absolute before:left-0 before:top-1/2 before:h-5 before:w-0.5 before:-translate-y-1/2 before:rounded-r before:bg-(--color-accent)"
+                  : "text-(--color-muted) hover:bg-(--color-panel)/60 hover:text-(--color-text)"
               )}
             >
               <Icon className={cn("size-4", active && "text-(--color-accent)")} />
@@ -113,12 +86,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </nav>
 
       <div className="mt-auto space-y-3 pt-6">
-        <div className="rounded-lg border border-(--color-line) bg-slate-950/40 p-3">
+        <div className="rounded-lg border border-(--color-line) bg-(--color-elevated) p-3">
           <div className="flex items-center justify-between gap-2">
             <p className="truncate text-sm font-medium" title={user.display_name}>
               {user.display_name}
             </p>
-            <Badge variant={user.role === "admin" ? "admin" : "user"}>{user.role}</Badge>
+            <div className="flex items-center gap-2">
+              <ThemeToggle className="size-7" />
+              <Badge variant={user.role === "admin" ? "admin" : "user"}>{user.role}</Badge>
+            </div>
           </div>
           <p className="mt-1 truncate text-xs text-(--color-muted)" title={user.username}>
             @{user.username}
@@ -135,7 +111,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen">
       {/* Desktop sidebar: always visible from lg breakpoint up. */}
-      <aside className="hidden w-60 flex-col border-r border-(--color-line) bg-(--color-panel)/70 px-4 py-6 lg:flex">
+      <aside className="hidden w-60 flex-col border-r border-(--color-line) bg-(--color-elevated) px-4 py-6 lg:flex">
         {sidebarContent}
       </aside>
 
@@ -156,7 +132,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               type="button"
               aria-label="Chiudi menu"
               onClick={() => setMobileOpen(false)}
-              className="absolute right-3 top-3 rounded-md p-1.5 text-(--color-muted) transition-colors hover:bg-slate-800 hover:text-(--color-text) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent) focus-visible:ring-offset-2 focus-visible:ring-offset-(--color-panel)"
+              className="absolute right-3 top-3 rounded-md p-1.5 text-(--color-muted) transition-colors hover:bg-(--color-panel) hover:text-(--color-text) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent) focus-visible:ring-offset-2 focus-visible:ring-offset-(--color-panel)"
             >
               <X className="size-4" />
             </button>
@@ -173,7 +149,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             aria-label="Apri menu"
             aria-expanded={mobileOpen}
             onClick={() => setMobileOpen(true)}
-            className="rounded-md p-1.5 text-(--color-text) transition-colors hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent) focus-visible:ring-offset-2 focus-visible:ring-offset-(--color-bg)"
+            className="rounded-md p-1.5 text-(--color-text) transition-colors hover:bg-(--color-panel) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent) focus-visible:ring-offset-2 focus-visible:ring-offset-(--color-bg)"
           >
             <Menu className="size-5" />
           </button>
