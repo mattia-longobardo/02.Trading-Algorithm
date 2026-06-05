@@ -16,13 +16,13 @@
 
 **Test command (source-mounted, no rebuild needed):**
 ```bash
-docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -m unittest tests.<module> -v
+docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -m unittest tests.<module> -v
 ```
-The compose service is named `trading` and does NOT mount source by default, so the `-v "$PWD/backend:/app"` bind is required to test edited code. Run from the worktree root.
+The compose service is named `backend` and does NOT mount source by default, so the `-v "$PWD/backend:/app"` bind is required to test edited code. Run from the worktree root.
 
 **Full test suite:**
 ```bash
-docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -m unittest discover -s tests -v
+docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -m unittest discover -s tests -v
 ```
 
 **Commit cadence:** one commit per task (after its tests pass). End every commit message with:
@@ -85,7 +85,7 @@ Add to `backend/tests/test_etoro_config.py`, inside `class EtoroConfigTests` (af
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -m unittest tests.test_etoro_config -v`
+Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -m unittest tests.test_etoro_config -v`
 Expected: FAIL with `AttributeError: 'AppConfig' object has no attribute 'universe_stock_shortlist'`.
 
 - [ ] **Step 3: Add the module-level default constant**
@@ -130,7 +130,7 @@ In `backend/core/utils.py`, inside `load_config`, after the `risk_tolerance=...`
 
 - [ ] **Step 6: Run test to verify it passes**
 
-Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -m unittest tests.test_etoro_config -v`
+Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -m unittest tests.test_etoro_config -v`
 Expected: PASS (all config tests, including the three new ones).
 
 - [ ] **Step 7: Commit**
@@ -180,7 +180,7 @@ class EToroDiscoverTests(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -m unittest tests.test_etoro_client.EToroDiscoverTests -v`
+Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -m unittest tests.test_etoro_client.EToroDiscoverTests -v`
 Expected: FAIL with `AttributeError: 'EToroClient' object has no attribute 'list_exchanges'`.
 
 - [ ] **Step 3: Add the cache attribute in `__init__`**
@@ -213,7 +213,7 @@ In `backend/clients/etoro_client.py`, add this method to `EToroClient` (place it
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -m unittest tests.test_etoro_client.EToroDiscoverTests -v`
+Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -m unittest tests.test_etoro_client.EToroDiscoverTests -v`
 Expected: PASS for the two `test_list_exchanges_*` tests.
 
 - [ ] **Step 6: Commit**
@@ -305,7 +305,7 @@ Add to `class EToroDiscoverTests` in `backend/tests/test_etoro_client.py`:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -m unittest tests.test_etoro_client.EToroDiscoverTests -v`
+Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -m unittest tests.test_etoro_client.EToroDiscoverTests -v`
 Expected: FAIL with `AttributeError: 'EToroClient' object has no attribute 'discover_instruments'`.
 
 - [ ] **Step 3: Add the pagination constants**
@@ -403,12 +403,12 @@ In `backend/clients/etoro_client.py`, add these methods to `EToroClient` (place 
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -m unittest tests.test_etoro_client.EToroDiscoverTests -v`
+Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -m unittest tests.test_etoro_client.EToroDiscoverTests -v`
 Expected: PASS (all `EToroDiscoverTests`).
 
 - [ ] **Step 6: Run the full client test module (regression)**
 
-Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -m unittest tests.test_etoro_client -v`
+Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -m unittest tests.test_etoro_client -v`
 Expected: PASS (existing `list_assets` and other tests unaffected).
 
 - [ ] **Step 7: Commit**
@@ -480,7 +480,7 @@ class CheapPrefilterHelperTests(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -m unittest tests.test_etoro_universe.CheapPrefilterHelperTests -v`
+Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -m unittest tests.test_etoro_universe.CheapPrefilterHelperTests -v`
 Expected: FAIL with `AttributeError: ... '_is_dated_future'` (and the others).
 
 - [ ] **Step 3: Add `import re`**
@@ -588,12 +588,12 @@ Add the score and exchange-whitelist methods (place them next to `_candidate_pre
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -m unittest tests.test_etoro_universe.CheapPrefilterHelperTests -v`
+Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -m unittest tests.test_etoro_universe.CheapPrefilterHelperTests -v`
 Expected: PASS.
 
 - [ ] **Step 6: Run the full universe module (regression on name helpers)**
 
-Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -m unittest tests.test_etoro_universe -v`
+Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -m unittest tests.test_etoro_universe -v`
 Expected: PASS (existing tests still green after the `_looks_like_*` edits).
 
 - [ ] **Step 7: Commit**
@@ -704,7 +704,7 @@ Add to `class CheapPrefilterHelperTests` in `backend/tests/test_etoro_universe.p
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -m unittest tests.test_etoro_universe.CheapPrefilterHelperTests -v`
+Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -m unittest tests.test_etoro_universe.CheapPrefilterHelperTests -v`
 Expected: FAIL with `AttributeError: ... '_passes_cheap_filter'`.
 
 - [ ] **Step 3: Add the two methods**
@@ -795,7 +795,7 @@ In `backend/services/universe_manager.py`, add these methods to `class UniverseM
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -m unittest tests.test_etoro_universe.CheapPrefilterHelperTests -v`
+Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -m unittest tests.test_etoro_universe.CheapPrefilterHelperTests -v`
 Expected: PASS (all cheap-filter and shortlist tests).
 
 - [ ] **Step 5: Commit**
@@ -888,7 +888,7 @@ class SelectEtoroUniverseWiringTests(unittest.TestCase):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -m unittest tests.test_etoro_universe.SelectEtoroUniverseWiringTests -v`
+Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -m unittest tests.test_etoro_universe.SelectEtoroUniverseWiringTests -v`
 Expected: FAIL — `test_uses_discover_shortlist_when_available` fails because the current code calls `list_assets` (so `assert_not_called` raises), and discover is never used.
 
 - [ ] **Step 3: Rewire `_select_etoro_universe`**
@@ -949,12 +949,12 @@ In `backend/services/universe_manager.py`, replace the body of `_select_etoro_un
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -m unittest tests.test_etoro_universe.SelectEtoroUniverseWiringTests -v`
+Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -m unittest tests.test_etoro_universe.SelectEtoroUniverseWiringTests -v`
 Expected: PASS (discover path used when available; legacy fallback on raise/empty).
 
 - [ ] **Step 5: Run the full universe module (regression)**
 
-Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -m unittest tests.test_etoro_universe -v`
+Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -m unittest tests.test_etoro_universe -v`
 Expected: PASS. NOTE: the pre-existing `EtoroUniverseSelectionTests` set up `broker = Mock()` whose `discover_instruments` returns a `Mock` (truthy, non-iterable). If any of those tests call `_select_etoro_universe` and now fail because `_build_cheap_shortlist` iterates a Mock, fix them by adding `self.broker.discover_instruments.side_effect = Exception("no discover")` in their `setUp` so they exercise the legacy fallback they were written for. Make that edit, re-run, and confirm green.
 
 - [ ] **Step 6: Commit**
@@ -1004,12 +1004,12 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 1: Run the whole backend test suite**
 
-Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -m unittest discover -s tests -v`
+Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -m unittest discover -s tests -v`
 Expected: PASS (no regressions across all modules).
 
 - [ ] **Step 2: Smoke-check imports**
 
-Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app trading python -c "import services.universe_manager, clients.etoro_client, core.utils; print('import ok')"`
+Run: `docker compose run --rm --no-deps -v "$PWD/backend:/app" -w /app backend python -c "import services.universe_manager, clients.etoro_client, core.utils; print('import ok')"`
 Expected: prints `import ok`.
 
 - [ ] **Step 3: Final review**
