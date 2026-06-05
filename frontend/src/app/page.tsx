@@ -9,6 +9,7 @@ import { CategoryAllocationChart } from "@/components/dashboard/category-allocat
 import { PnlBySymbolChart } from "@/components/dashboard/pnl-by-symbol-chart";
 import { ReturnsDistributionChart } from "@/components/dashboard/returns-distribution-chart";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { StatusBanner } from "@/components/ui/status-banner";
 import { LiveBadge } from "@/components/live/live-badge";
 import { useLiveStream } from "@/lib/use-live-stream";
 import {
@@ -182,6 +183,13 @@ export default function DashboardPage() {
         </div>
       </header>
 
+      {/* Metrics error banner — shown when the primary data surface fails */}
+      {metrics.isError && (
+        <StatusBanner kind="error">
+          Impossibile caricare i dati di performance. Riprova o controlla la connessione al backend.
+        </StatusBanner>
+      )}
+
       {/* KPI grid */}
       <KpiStrip metrics={m} loading={metrics.isLoading} />
 
@@ -232,6 +240,7 @@ export default function DashboardPage() {
           byCategory={allocation.data?.by_category ?? []}
           currency={currency}
           loading={allocation.isLoading}
+          error={allocation.isError}
         />
       </div>
 
@@ -241,12 +250,14 @@ export default function DashboardPage() {
           items={pnlBySymbol.data?.items ?? []}
           currency={currency}
           loading={pnlBySymbol.isLoading}
+          error={pnlBySymbol.isError}
         />
 
         {/* Returns histogram */}
         <ReturnsDistributionChart
           bins={distribution.data?.bins ?? []}
           loading={distribution.isLoading}
+          error={distribution.isError}
         />
       </div>
     </section>

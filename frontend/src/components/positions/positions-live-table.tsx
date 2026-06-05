@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { TrendingDown } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatNumber, formatPercent } from "@/lib/format";
 import { pnlClass } from "@/components/trades/trade-row";
 import type { LivePosition } from "@/lib/types";
@@ -90,7 +91,23 @@ function PositionRow({ pos }: { pos: LivePosition }) {
   );
 }
 
-export function PositionsLiveTable({ positions }: { positions: LivePosition[] }) {
+export function PositionsLiveTable({
+  positions,
+  loading,
+}: {
+  positions: LivePosition[];
+  loading?: boolean;
+}) {
+  if (loading) {
+    return (
+      <div className="space-y-2">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-10 w-full rounded-lg" />
+        ))}
+      </div>
+    );
+  }
+
   if (positions.length === 0) {
     return (
       <EmptyState

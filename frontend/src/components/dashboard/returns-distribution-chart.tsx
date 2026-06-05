@@ -12,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatNumber } from "@/lib/format";
 import type { ReturnsBin } from "@/lib/types";
 import { useChartTheme } from "@/components/charts/use-chart-theme";
@@ -19,11 +20,14 @@ import { useChartTheme } from "@/components/charts/use-chart-theme";
 export interface ReturnsDistributionChartProps {
   bins: ReturnsBin[];
   loading?: boolean;
+  error?: boolean;
 }
 
-export function ReturnsDistributionChart({ bins }: ReturnsDistributionChartProps) {
+export function ReturnsDistributionChart({ bins, loading, error }: ReturnsDistributionChartProps) {
   const theme = useChartTheme();
 
+  // useMemo must be called unconditionally (rules of hooks), so we compute
+  // distributionData before any early return and just ignore it when not needed.
   const distributionData = useMemo(() => {
     const fmt = (v: number) =>
       formatNumber(v, { maximumFractionDigits: 1, minimumFractionDigits: 1 });
@@ -36,6 +40,45 @@ export function ReturnsDistributionChart({ bins }: ReturnsDistributionChartProps
       negative: b.hi <= 0,
     }));
   }, [bins]);
+
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Distribuzione dei rendimenti (%)</CardTitle>
+        </CardHeader>
+        <CardContent className="flex h-72 items-center justify-center">
+          <p className="text-sm text-(--color-muted)">Errore nel caricamento</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (loading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Distribuzione dei rendimenti (%)</CardTitle>
+        </CardHeader>
+        <CardContent className="h-72">
+          <Skeleton className="h-full w-full rounded-lg" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (bins.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Distribuzione dei rendimenti (%)</CardTitle>
+        </CardHeader>
+        <CardContent className="flex h-72 items-center justify-center">
+          <p className="text-sm text-(--color-muted)">Nessun dato</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
