@@ -20,7 +20,8 @@ export interface NavItem {
 
 export const NAV: NavItem[] = [
   { href: "/", label: "Dashboard", icon: LineChart },
-  { href: "/orders", label: "Ordini", icon: ClipboardList },
+  { href: "/positions", label: "Posizioni", icon: Activity },
+  { href: "/trades", label: "Trade", icon: ClipboardList },
   { href: "/console", label: "Console", icon: Terminal },
   { href: "/universe", label: "Universe", icon: Globe },
   { href: "/reports", label: "Report", icon: FileText },
