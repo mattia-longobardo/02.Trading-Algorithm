@@ -1283,7 +1283,7 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
             last_heartbeat = utc_now()
             while True:
                 try:
-                    loop = asyncio.get_event_loop()
+                    loop = asyncio.get_running_loop()
                     snapshot = await loop.run_in_executor(None, live_cache.get_snapshot)
                     yield _format_event("snapshot", json.dumps(snapshot))
                 except Exception:
