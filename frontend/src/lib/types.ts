@@ -206,3 +206,5 @@ export interface LiveSnapshot {
 }
 
 export type LiveStatus = "connecting" | "live" | "stale" | "reconnecting";
+
+export interface Candle { t: string; o: number; h: number; l: number; c: number; v: number | null; }
