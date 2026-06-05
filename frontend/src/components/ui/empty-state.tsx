@@ -19,13 +19,13 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-(--color-line) bg-slate-950/30 px-6 py-10 text-center",
+        "flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-(--color-line) bg-(--color-panel)/40 px-6 py-10 text-center",
         className
       )}
       {...props}
     >
       {Icon && (
-        <div className="rounded-full bg-slate-800/60 p-3 text-(--color-muted)">
+        <div className="rounded-full bg-(--color-hover) p-3 text-(--color-muted)">
           <Icon className="size-5" />
         </div>
       )}
