@@ -2,6 +2,7 @@
 
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency } from "@/lib/format";
 import type { AllocationCategory } from "@/lib/types";
 import { useChartTheme } from "@/components/charts/use-chart-theme";
@@ -48,13 +49,55 @@ export interface CategoryAllocationChartProps {
   byCategory: AllocationCategory[];
   currency: string;
   loading?: boolean;
+  error?: boolean;
 }
 
 export function CategoryAllocationChart({
   byCategory,
   currency,
+  loading,
+  error,
 }: CategoryAllocationChartProps) {
   const theme = useChartTheme();
+
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Allocazione aperta per categoria</CardTitle>
+        </CardHeader>
+        <CardContent className="flex h-72 items-center justify-center">
+          <p className="text-sm text-(--color-muted)">Errore nel caricamento</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (loading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Allocazione aperta per categoria</CardTitle>
+        </CardHeader>
+        <CardContent className="flex h-72 flex-col">
+          <Skeleton className="flex-1 rounded-lg" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (byCategory.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Allocazione aperta per categoria</CardTitle>
+        </CardHeader>
+        <CardContent className="flex h-72 items-center justify-center">
+          <p className="text-sm text-(--color-muted)">Nessun dato</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>

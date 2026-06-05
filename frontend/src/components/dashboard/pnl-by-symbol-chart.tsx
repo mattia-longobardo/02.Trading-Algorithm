@@ -2,6 +2,7 @@
 
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency } from "@/lib/format";
 import type { PnlBySymbolRow } from "@/lib/types";
 import { useChartTheme } from "@/components/charts/use-chart-theme";
@@ -10,10 +11,50 @@ export interface PnlBySymbolChartProps {
   items: PnlBySymbolRow[];
   currency: string;
   loading?: boolean;
+  error?: boolean;
 }
 
-export function PnlBySymbolChart({ items, currency }: PnlBySymbolChartProps) {
+export function PnlBySymbolChart({ items, currency, loading, error }: PnlBySymbolChartProps) {
   const theme = useChartTheme();
+
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>PnL per simbolo</CardTitle>
+        </CardHeader>
+        <CardContent className="flex h-72 items-center justify-center">
+          <p className="text-sm text-(--color-muted)">Errore nel caricamento</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (loading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>PnL per simbolo</CardTitle>
+        </CardHeader>
+        <CardContent className="h-72">
+          <Skeleton className="h-full w-full rounded-lg" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (items.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>PnL per simbolo</CardTitle>
+        </CardHeader>
+        <CardContent className="flex h-72 items-center justify-center">
+          <p className="text-sm text-(--color-muted)">Nessun dato</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>

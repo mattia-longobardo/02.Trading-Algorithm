@@ -1,4 +1,5 @@
 import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
 import type { Metrics } from "@/lib/types";
 
@@ -39,7 +40,20 @@ export interface KpiStripProps {
   loading?: boolean;
 }
 
-export function KpiStrip({ metrics: m }: KpiStripProps) {
+export function KpiStrip({ metrics: m, loading }: KpiStripProps) {
+  if (loading) {
+    return (
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-6">
+        {Array.from({ length: 11 }).map((_, i) => (
+          <Card key={i} className="p-4">
+            <Skeleton className="h-3 w-16" />
+            <Skeleton className="mt-2 h-6 w-24" />
+          </Card>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-6">
       <Kpi

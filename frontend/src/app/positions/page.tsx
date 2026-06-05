@@ -29,7 +29,10 @@ export default function PositionsPage() {
         <span className="font-medium text-(--color-text)">Liquidità</span> {cashStr}
       </p>
 
-      <PositionsLiveTable positions={snapshot?.positions ?? []} />
+      <PositionsLiveTable
+        positions={snapshot?.positions ?? []}
+        loading={status === "connecting" && snapshot === null}
+      />
     </section>
   );
 }
