@@ -328,6 +328,86 @@ class UniverseManager:
             return None
         return wanted
 
+    def _passes_cheap_filter(
+        self,
+        category: str,
+        asset: dict[str, Any],
+        exchange_whitelist: set[int] | None,
+    ) -> bool:
+        if not asset.get("tradable") or asset.get("delisted"):
+            return False
+        symbol = self._normalize_symbol(asset.get("symbol"))
+        if not symbol:
+            return False
+        if category == "STOCK":
+            if (
+                self._looks_like_etf(asset)
+                or self._looks_like_non_common_stock(asset)
+                or self._looks_like_shell_company(asset)
+            ):
+                return False
+            if exchange_whitelist is not None:
+                exchange_id = asset.get("exchange_id")
+                if exchange_id is None or int(exchange_id) not in exchange_whitelist:
+                    return False
+            last = self._safe_float(asset.get("current_rate"))
+            if last is not None and last < self.STOCK_MIN_LAST_CLOSE:
+                return False
+            return True
+        # CRYPTO
+        if self._is_dated_future(symbol):
+            return False
+        if "futur" in str(asset.get("instrument_type") or "").lower():
+            return False
+        return True
+
+    def _build_cheap_shortlist(
+        self,
+        broker: Any,
+        category: str,
+        preferred_symbols: list[str],
+        exchange_whitelist: set[int] | None,
+    ) -> list[dict[str, Any]]:
+        candidates = broker.discover_instruments(category)
+        if not candidates:
+            return []
+        candidates = self._dedupe_payload_by_symbol(candidates)
+        preferred_set = {self._normalize_symbol(symbol) for symbol in preferred_symbols}
+        pinned: list[dict[str, Any]] = []
+        pinned_symbols: set[str] = set()
+        pool: list[dict[str, Any]] = []
+        for asset in candidates:
+            symbol = self._normalize_symbol(asset.get("symbol"))
+            if symbol in preferred_set and symbol not in pinned_symbols:
+                pinned_symbols.add(symbol)
+                pinned.append(asset)
+                continue
+            if not self._passes_cheap_filter(category, asset, exchange_whitelist):
+                continue
+            scored = dict(asset)
+            scored["prefilter_score"] = self._cheap_prefilter_score(scored)
+            pool.append(scored)
+        pool.sort(
+            key=lambda asset: (
+                self._safe_float(asset.get("prefilter_score")) or float("-inf"),
+                str(asset.get("symbol", "")),
+            ),
+            reverse=True,
+        )
+        limit = (
+            self.config.universe_stock_shortlist
+            if category == "STOCK"
+            else self.config.universe_crypto_shortlist
+        )
+        shortlist = (pinned + pool)[: max(limit, len(pinned))]
+        self.logger.info(
+            "Universe cheap prefilter for %s reduced %s discovered to %s shortlist before bars",
+            category,
+            len(candidates),
+            len(shortlist),
+        )
+        return shortlist
+
     def _passes_liquidity_prefilter(self, category: str, asset: dict[str, Any]) -> bool:
         bar_count = int(asset.get("bar_count") or 0)
         last_close = self._safe_float(asset.get("last_close"))
