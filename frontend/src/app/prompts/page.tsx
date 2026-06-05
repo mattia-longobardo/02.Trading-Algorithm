@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { History, Save, Undo2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,23 +15,18 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { StatusBanner } from "@/components/ui/status-banner";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
-import { useProviders } from "@/lib/use-providers";
 import {
-  ALPACA_PROMPT_KEYS,
-  PROVIDER_LABELS,
-  type Provider,
+  PROMPT_KEYS,
   type PromptDetail,
   type PromptKey,
   type PromptVersion,
 } from "@/lib/types";
 
 const PROMPT_LABELS: Record<PromptKey, string> = {
-  // Alpaca
   new_signal: "new_signal — single-symbol entry decision",
   batch_signals: "batch_signals — batch entry analysis (6×/day)",
   pending_review: "pending_review — daily review of stale PENDING",
@@ -42,13 +37,8 @@ const PROMPT_LABELS: Record<PromptKey, string> = {
   universe_final_from_dossiers: "universe_final_from_dossiers — final from dossiers",
 };
 
-const KEYS_BY_PROVIDER: Record<Provider, PromptKey[]> = {
-  alpaca: [...ALPACA_PROMPT_KEYS],
-};
-
 export default function PromptsPage() {
   const { user } = useAuth();
-  const providers = useProviders();
 
   if (user?.role !== "admin") {
     return (
@@ -65,22 +55,6 @@ export default function PromptsPage() {
     );
   }
 
-  if (!providers.isLoading && providers.active.length === 0) {
-    return (
-      <section className="space-y-6">
-        <header>
-          <h1 className="text-3xl font-semibold">Prompt</h1>
-          <p className="text-sm text-(--color-muted)">
-            Nessun broker configurato. Imposta le credenziali nel <code>.env</code> del backend per
-            sbloccare i prompt.
-          </p>
-        </header>
-      </section>
-    );
-  }
-
-  const defaultProvider: Provider = providers.active[0] ?? "alpaca";
-
   return (
     <section className="space-y-6">
       <header>
@@ -91,44 +65,24 @@ export default function PromptsPage() {
         </p>
       </header>
 
-      <Tabs defaultValue={defaultProvider}>
-        <TabsList>
-          {providers.active.map((p) => (
-            <TabsTrigger key={p} value={p}>
-              {PROVIDER_LABELS[p]}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-        {providers.active.map((provider) => (
-          <TabsContent key={provider} value={provider}>
-            <PromptsProviderSection provider={provider} />
-          </TabsContent>
-        ))}
-      </Tabs>
+      <PromptsSection />
     </section>
   );
 }
 
-function PromptsProviderSection({ provider }: { provider: Provider }) {
-  const keys = useMemo(() => KEYS_BY_PROVIDER[provider], [provider]);
-  const [activeKey, setActiveKey] = useState<PromptKey>(keys[0]);
+function PromptsSection() {
+  const [activeKey, setActiveKey] = useState<PromptKey>(PROMPT_KEYS[0]);
   const [historyOpen, setHistoryOpen] = useState(false);
-
-  // When the provider tab changes, snap the editor back to the first prompt
-  // of that provider so the right-hand panel stays in sync.
-  useEffect(() => {
-    setActiveKey(keys[0]);
-  }, [keys]);
 
   return (
     <>
       <div className="grid gap-4 lg:grid-cols-[18rem_1fr]">
         <Card>
           <CardHeader>
-            <CardTitle>Prompt — {PROVIDER_LABELS[provider]}</CardTitle>
+            <CardTitle>Prompt</CardTitle>
           </CardHeader>
           <CardContent className="space-y-1">
-            {keys.map((key) => (
+            {PROMPT_KEYS.map((key) => (
               <button
                 key={key}
                 onClick={() => setActiveKey(key)}
