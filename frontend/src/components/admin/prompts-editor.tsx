@@ -74,7 +74,7 @@ function PromptsSection() {
               <button
                 key={key}
                 onClick={() => setActiveKey(key)}
-                className={`block w-full rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                className={`block w-full rounded-lg px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent) ${
                   activeKey === key
                     ? "bg-(--color-hover) text-(--color-text)"
                     : "text-(--color-muted) hover:bg-(--color-hover)/60"

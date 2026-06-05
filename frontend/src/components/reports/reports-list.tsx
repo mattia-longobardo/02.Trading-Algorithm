@@ -55,13 +55,13 @@ export function ReportsList({
       <table className="w-full min-w-[840px] border-separate border-spacing-y-1 text-sm">
         <thead>
           <tr className="text-left text-xs uppercase text-(--color-muted)">
-            <th className="px-2 py-2">Nome</th>
-            <th className="px-2 py-2">Tipo</th>
-            <th className="px-2 py-2">Formato</th>
-            <th className="px-2 py-2 text-right tabular-nums">Dim.</th>
-            <th className="px-2 py-2">Generato</th>
-            <th className="px-2 py-2">Cartella</th>
-            <th className="px-2 py-2"></th>
+            <th scope="col" className="px-2 py-2">Nome</th>
+            <th scope="col" className="px-2 py-2">Tipo</th>
+            <th scope="col" className="px-2 py-2">Formato</th>
+            <th scope="col" className="px-2 py-2 text-right tabular-nums">Dim.</th>
+            <th scope="col" className="px-2 py-2">Generato</th>
+            <th scope="col" className="px-2 py-2">Cartella</th>
+            <th scope="col" className="px-2 py-2"></th>
           </tr>
         </thead>
         <tbody>
@@ -110,7 +110,12 @@ export function ReportsList({
                     href={streamUrl(`/api/reports/${r.id}/file?download=true`)}
                     download={r.filename}
                   >
-                    <Button size="icon" variant="ghost" className="size-8">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="size-8"
+                      aria-label={`Scarica ${r.filename}`}
+                    >
                       <Download className="size-4" />
                     </Button>
                   </a>

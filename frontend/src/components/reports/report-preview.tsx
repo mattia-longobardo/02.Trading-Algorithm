@@ -63,6 +63,7 @@ function ReportPreviewInner({ report }: ReportPreviewInnerProps) {
           <DialogDescription>Anteprima PDF.</DialogDescription>
         </DialogHeader>
         <iframe
+          title={`Anteprima PDF — ${report.filename}`}
           src={streamUrl(`/api/reports/${report.id}/file`)}
           className="h-[70vh] w-full rounded-lg border border-(--color-line) bg-(--color-panel)"
         />

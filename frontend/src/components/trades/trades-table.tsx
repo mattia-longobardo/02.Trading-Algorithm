@@ -29,29 +29,29 @@ export function TradesTable({ items, loading, onEdit, onClose }: TradesTableProp
         <thead>
           <tr className="text-left text-xs uppercase text-(--color-muted)">
             {/* Sticky first column header */}
-            <th className="sticky left-0 z-10 bg-(--color-panel) px-2 py-2">Simbolo</th>
-            <th className="px-2 py-2">ID</th>
-            <th className="px-2 py-2">Stato</th>
-            <th className="px-2 py-2">Cat.</th>
-            <th className="px-2 py-2">Dir.</th>
-            <th className="px-2 py-2 text-right">Entry</th>
-            <th className="px-2 py-2 text-right">Target</th>
-            <th className="px-2 py-2 text-right">Qty</th>
-            <th className="px-2 py-2 text-right">Capitale</th>
-            <th className="px-2 py-2 text-right">TP</th>
-            <th className="px-2 py-2 text-right">TTP dist</th>
-            <th className="px-2 py-2 text-right">TTP arm%</th>
-            <th className="px-2 py-2 text-right">TTP trigger</th>
-            <th className="px-2 py-2 text-right">HWM</th>
-            <th className="px-2 py-2 text-right">SL</th>
-            <th className="px-2 py-2 text-right">TS dist</th>
-            <th className="px-2 py-2 text-right">TS trigger</th>
-            <th className="px-2 py-2 text-right">Prezzo</th>
-            <th className="px-2 py-2 text-right">PnL</th>
-            <th className="px-2 py-2">Motivo</th>
-            <th className="px-2 py-2">Aperto</th>
-            <th className="px-2 py-2">Chiuso</th>
-            <th className="px-2 py-2 text-right"></th>
+            <th scope="col" className="sticky left-0 z-10 bg-(--color-panel) px-2 py-2">Simbolo</th>
+            <th scope="col" className="px-2 py-2">ID</th>
+            <th scope="col" className="px-2 py-2">Stato</th>
+            <th scope="col" className="px-2 py-2">Cat.</th>
+            <th scope="col" className="px-2 py-2">Dir.</th>
+            <th scope="col" className="px-2 py-2 text-right">Entry</th>
+            <th scope="col" className="px-2 py-2 text-right">Target</th>
+            <th scope="col" className="px-2 py-2 text-right">Qty</th>
+            <th scope="col" className="px-2 py-2 text-right">Capitale</th>
+            <th scope="col" className="px-2 py-2 text-right">TP</th>
+            <th scope="col" className="px-2 py-2 text-right">TTP dist</th>
+            <th scope="col" className="px-2 py-2 text-right">TTP arm%</th>
+            <th scope="col" className="px-2 py-2 text-right">TTP trigger</th>
+            <th scope="col" className="px-2 py-2 text-right">HWM</th>
+            <th scope="col" className="px-2 py-2 text-right">SL</th>
+            <th scope="col" className="px-2 py-2 text-right">TS dist</th>
+            <th scope="col" className="px-2 py-2 text-right">TS trigger</th>
+            <th scope="col" className="px-2 py-2 text-right">Prezzo</th>
+            <th scope="col" className="px-2 py-2 text-right">PnL</th>
+            <th scope="col" className="px-2 py-2">Motivo</th>
+            <th scope="col" className="px-2 py-2">Aperto</th>
+            <th scope="col" className="px-2 py-2">Chiuso</th>
+            <th scope="col" className="px-2 py-2 text-right"></th>
           </tr>
         </thead>
         <tbody>
