@@ -122,7 +122,7 @@ function AddSymbolCard({ onAdded }: { onAdded: () => void }) {
     onError: (err) => setError(err instanceof ApiError ? err.message : (err as Error).message),
   });
 
-  const placeholder = category === "CRYPTO" ? "es. BTC/USD" : "es. AAPL";
+  const placeholder = category === "CRYPTO" ? "es. BTC" : "es. AAPL";
 
   return (
     <Card>
