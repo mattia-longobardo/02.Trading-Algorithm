@@ -311,6 +311,9 @@ class EToroClient:
         "CRYPTO": ("crypto",),
     }
 
+    DISCOVER_PAGE_SIZE = 200
+    DISCOVER_MAX_ITEMS = 4000
+
     def list_exchanges(self) -> dict[int, str]:
         """Return ``{exchangeID: exchangeDescription}`` (cached for the run)."""
         if self._exchange_cache is not None:
@@ -360,6 +363,84 @@ class EToroClient:
             except Exception:
                 self.logger.debug("Failed to cache instrument mapping for %s", symbol)
         return assets
+
+    @staticmethod
+    def _discover_float(value: Any) -> float | None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def discover_instruments(self, asset_class: str) -> list[dict[str, Any]]:
+        """Cheap metadata discovery for the universe prefilter.
+
+        Uses ``/api/v1/instruments/discover`` (popularity-sorted, paginated) to
+        return rich per-instrument metadata WITHOUT fetching any price bars.
+        """
+        hints = self._ASSET_CLASS_HINTS.get(str(asset_class).upper(), (str(asset_class).lower(),))
+        category = "CRYPTO" if "crypto" in hints else "STOCK"
+        type_ids = self._instrument_type_ids(hints)
+        if not type_ids:
+            return []
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for type_id in type_ids:
+            collected = 0
+            page = 1
+            while collected < self.DISCOVER_MAX_ITEMS:
+                payload = self._request(
+                    "GET",
+                    "/api/v1/instruments/discover",
+                    params={
+                        "page": page,
+                        "pageSize": self.DISCOVER_PAGE_SIZE,
+                        "sort": "-popularityUniques",
+                        "instrumentTypeID": type_id,
+                        "isDelisted": "false",
+                        "isCurrentlyTradable": "true",
+                    },
+                )
+                items = payload.get("items") or []
+                if not items:
+                    break
+                for row in items:
+                    if row.get("isInternalInstrument") or row.get("isHiddenFromClient"):
+                        continue
+                    symbol = str(row.get("symbol") or "").upper().strip()
+                    if not symbol or symbol in seen or row.get("instrumentId") is None:
+                        continue
+                    seen.add(symbol)
+                    instrument_id = int(row["instrumentId"])
+                    name = str(row.get("displayname") or "")
+                    tradable = bool(row.get("isCurrentlyTradable")) and bool(row.get("isBuyEnabled", True))
+                    out.append({
+                        "symbol": symbol,
+                        "name": name,
+                        "status": "active",
+                        "tradable": tradable,
+                        "fractionable": False,
+                        "instrument_id": instrument_id,
+                        "instrument_type_id": int(row.get("instrumentTypeID") or type_id),
+                        "instrument_type": str(row.get("instrumentType") or ""),
+                        "exchange_id": (int(row["exchangeID"]) if row.get("exchangeID") is not None else None),
+                        "delisted": bool(row.get("isDelisted")),
+                        "current_rate": self._discover_float(row.get("currentRate")),
+                        "popularity": int(row.get("popularityUniques") or 0),
+                        "price_change_1d": self._discover_float(row.get("dailyPriceChange")),
+                        "price_change_1w": self._discover_float(row.get("weeklyPriceChange")),
+                        "price_change_1m": self._discover_float(row.get("monthlyPriceChange")),
+                        "price_change_3m": self._discover_float(row.get("threeMonthPriceChange")),
+                        "price_change_6m": self._discover_float(row.get("sixMonthPriceChange")),
+                    })
+                    collected += 1
+                    try:
+                        upsert_instrument_mapping(self.config.db_market_data, symbol, instrument_id, category, name, tradable)
+                    except Exception:
+                        self.logger.debug("Failed to cache instrument mapping for %s", symbol)
+                if len(items) < self.DISCOVER_PAGE_SIZE:
+                    break
+                page += 1
+        return out
 
     # --- account & portfolio ------------------------------------------------
 
