@@ -9,6 +9,8 @@ import { CategoryAllocationChart } from "@/components/dashboard/category-allocat
 import { PnlBySymbolChart } from "@/components/dashboard/pnl-by-symbol-chart";
 import { ReturnsDistributionChart } from "@/components/dashboard/returns-distribution-chart";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { LiveBadge } from "@/components/live/live-badge";
+import { useLiveStream } from "@/lib/use-live-stream";
 import {
   CartesianGrid,
   Line,
@@ -78,6 +80,7 @@ function useDashboardAutoRefresh(): Date | null {
 export default function DashboardPage() {
   const [timeframe, setTimeframe] = useState<Timeframe>("3M");
   const lastAutoRefresh = useDashboardAutoRefresh();
+  const { status: liveStatus } = useLiveStream();
 
   const metrics = useQuery({
     queryKey: ["metrics", timeframe],
@@ -142,6 +145,7 @@ export default function DashboardPage() {
           )}
         </div>
         <div className="flex items-center gap-3">
+          <LiveBadge status={liveStatus} />
           {fxRate.data && fxRate.data.from !== fxRate.data.to && (
             <div
               className={`rounded-lg border px-3 py-1.5 text-xs ${
