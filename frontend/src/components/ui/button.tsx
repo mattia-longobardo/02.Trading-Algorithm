@@ -13,11 +13,11 @@ const buttonStyles = cva(
         default:
           "bg-(--color-accent) text-slate-950 hover:bg-emerald-400 active:bg-emerald-500",
         secondary:
-          "bg-(--color-panel) text-(--color-text) border border-(--color-line) hover:bg-slate-800 active:bg-slate-700",
+          "bg-(--color-panel) text-(--color-text) border border-(--color-line) hover:bg-(--color-hover) active:bg-(--color-hover)",
         ghost:
-          "bg-transparent text-(--color-text) hover:bg-(--color-panel) active:bg-slate-800",
+          "bg-transparent text-(--color-text) hover:bg-(--color-panel) active:bg-(--color-hover)",
         outline:
-          "bg-transparent text-(--color-text) border border-(--color-line) hover:bg-(--color-panel) active:bg-slate-800",
+          "bg-transparent text-(--color-text) border border-(--color-line) hover:bg-(--color-panel) active:bg-(--color-hover)",
         danger:
           "bg-(--color-danger) text-white hover:bg-rose-600 active:bg-rose-700",
       },
