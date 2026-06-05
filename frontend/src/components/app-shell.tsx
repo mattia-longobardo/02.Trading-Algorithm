@@ -10,11 +10,13 @@ import { Button } from "./ui/button";
 import { cn } from "@/lib/cn";
 import { visibleNavFor } from "@/components/layout/nav-items";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
+import { CommandPalette } from "@/components/command/command-palette";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   // Close the mobile drawer whenever the route changes.
   useEffect(() => {
@@ -91,6 +93,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               {user.display_name}
             </p>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                aria-label="Apri palette comandi"
+                title="Palette comandi (⌘K)"
+                onClick={() => setPaletteOpen(true)}
+                className="grid h-7 place-items-center rounded-md border border-(--color-line) bg-(--color-panel) px-1.5 text-[10px] font-mono font-semibold text-(--color-muted) transition-colors hover:text-(--color-text) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent)"
+              >
+                ⌘K
+              </button>
               <ThemeToggle className="size-7" />
               <Badge variant={user.role === "admin" ? "admin" : "user"}>{user.role}</Badge>
             </div>
@@ -109,6 +120,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen">
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
       {/* Desktop sidebar: always visible from lg breakpoint up. */}
       <aside className="hidden w-60 flex-col border-r border-(--color-line) bg-(--color-elevated) px-4 py-6 lg:flex">
         {sidebarContent}
