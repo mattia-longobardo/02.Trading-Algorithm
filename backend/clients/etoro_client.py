@@ -73,6 +73,7 @@ class EToroClient:
         self.logger = logger.getChild("etoro")
         self.session = session or requests.Session()
         self.rate_limiter = rate_limiter if rate_limiter is not None else RateLimiter(max_calls=60, period=60.0)
+        self._exchange_cache: dict[int, str] | None = None
 
     # --- low-level HTTP -----------------------------------------------------
 
@@ -309,6 +310,20 @@ class EToroClient:
         "STOCK": ("stock",),
         "CRYPTO": ("crypto",),
     }
+
+    def list_exchanges(self) -> dict[int, str]:
+        """Return ``{exchangeID: exchangeDescription}`` (cached for the run)."""
+        if self._exchange_cache is not None:
+            return self._exchange_cache
+        payload = self._request("GET", "/api/v1/market-data/exchanges")
+        out: dict[int, str] = {}
+        for row in payload.get("exchangeInfo") or []:
+            exchange_id = row.get("exchangeID")
+            if exchange_id is None:
+                continue
+            out[int(exchange_id)] = str(row.get("exchangeDescription") or "")
+        self._exchange_cache = out
+        return out
 
     def _instrument_type_ids(self, hints: tuple[str, ...]) -> list[int]:
         payload = self._request("GET", "/api/v1/market-data/instrument-types")

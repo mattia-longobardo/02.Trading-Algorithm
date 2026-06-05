@@ -442,5 +442,28 @@ class EToroListAssetsTests(unittest.TestCase):
         self.assertEqual(params["instrumentTypeIds"], "10")
 
 
+class EToroDiscoverTests(unittest.TestCase):
+    def test_list_exchanges_maps_id_to_description(self):
+        client, session = make_client()
+        session.request.return_value = make_response(200, {"exchangeInfo": [
+            {"exchangeID": 4, "exchangeDescription": "NASDAQ"},
+            {"exchangeID": 5, "exchangeDescription": "NYSE"},
+            {"exchangeID": None, "exchangeDescription": "ignored"},
+        ]})
+        out = client.list_exchanges()
+        self.assertEqual(out[4], "NASDAQ")
+        self.assertEqual(out[5], "NYSE")
+        self.assertNotIn(None, out)
+
+    def test_list_exchanges_is_cached(self):
+        client, session = make_client()
+        session.request.return_value = make_response(200, {"exchangeInfo": [
+            {"exchangeID": 4, "exchangeDescription": "NASDAQ"},
+        ]})
+        client.list_exchanges()
+        client.list_exchanges()
+        self.assertEqual(session.request.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
