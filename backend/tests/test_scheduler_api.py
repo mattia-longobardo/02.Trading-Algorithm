@@ -287,6 +287,43 @@ class TradingApiServerTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200, response.text)
 
+    def test_restart_required_set_on_change_and_cleared_after_restart(self) -> None:
+        """Changing a restart-only setting flags a restart, and a real restart
+        (a fresh app re-snapshotting the overlay) clears the flag — the bug was
+        that the banner stayed on forever because it only checked whether the
+        overlay contained any restart-required key."""
+        from api.api_server import create_app
+        from fastapi.testclient import TestClient
+
+        self._login_admin()
+
+        # Change a restart-only setting (log_level) to a value different from
+        # what this process booted with (the class app booted with no overlay).
+        patched = self._client.patch("/api/settings", json={"log_level": "DEBUG"})
+        self.assertEqual(patched.status_code, 200, patched.text)
+        self.assertTrue(patched.json()["restart_required"])
+
+        # The flag persists across GETs until a restart actually happens.
+        got = self._client.get("/api/settings")
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertTrue(got.json()["restart_required"])
+
+        # Simulate `docker down && docker up`: a fresh app instance against the
+        # same DB re-snapshots the now-updated overlay as its boot baseline.
+        restarted_app = create_app(self._scheduler, logging.getLogger("test"))
+        with TestClient(restarted_app) as restarted:
+            login = restarted.post(
+                "/api/auth/login",
+                json={
+                    "username": self._config.admin_username,
+                    "password": self._config.admin_password,
+                },
+            )
+            self.assertEqual(login.status_code, 200, login.text)
+            got_after = restarted.get("/api/settings")
+            self.assertEqual(got_after.status_code, 200, got_after.text)
+            self.assertFalse(got_after.json()["restart_required"])
+
     def test_health_endpoint_is_public(self) -> None:
         response = self._client.get("/")
         self.assertEqual(response.status_code, 200)
