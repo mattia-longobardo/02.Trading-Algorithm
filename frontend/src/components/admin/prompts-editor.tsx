@@ -206,6 +206,7 @@ function PromptHistory({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
   const versions = useQuery({
     queryKey: ["prompt-versions", promptKey],
     queryFn: () => api.get<{ versions: PromptVersion[] }>(`/api/prompts/${promptKey}/versions`),
@@ -219,6 +220,8 @@ function PromptHistory({
       qc.invalidateQueries({ queryKey: ["prompt-versions", promptKey] });
       onClose();
     },
+    onError: (err) =>
+      setError(err instanceof ApiError ? err.message : (err as Error).message),
   });
 
   return (
@@ -230,6 +233,7 @@ function PromptHistory({
         </DialogDescription>
       </DialogHeader>
       <div className="max-h-[60vh] overflow-y-auto space-y-3">
+        {error && <StatusBanner kind="error">{error}</StatusBanner>}
         {versions.isLoading && <p className="text-sm text-(--color-muted)">Caricamento…</p>}
         {versions.data?.versions.map((v) => (
           <div
