@@ -46,7 +46,10 @@ export default function SymbolPage() {
   // --- trades ---
   const tradesQuery = useQuery<TradesEnvelope>({
     queryKey: ["trades", "symbol", symbol],
-    queryFn: () => api.get<TradesEnvelope>("/api/trades?page=1&page_size=500"),
+    queryFn: () =>
+      api.get<TradesEnvelope>(
+        `/api/trades?symbol=${encodeURIComponent(symbol)}&page=1&page_size=500`,
+      ),
     enabled: !!symbol,
     staleTime: 30_000,
   });
