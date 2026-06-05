@@ -326,6 +326,175 @@ class TradingApiServerTests(unittest.TestCase):
         response = self._client.get("/api/live/stream")
         self.assertEqual(response.status_code, 401)
 
+    def test_candles_endpoint_requires_auth(self) -> None:
+        # No auth cookie — must be rejected with 401.
+        response = self._client.get("/api/candles?symbol=BTC")
+        self.assertEqual(response.status_code, 401)
+
+    def test_candles_with_stubbed_broker_returns_ohlc_shape(self) -> None:
+        """Authenticated request with a stubbed eToro broker returns mapped candle shape."""
+        from unittest.mock import Mock
+
+        fake_bars = [
+            {
+                "symbol": "BTC",
+                "timestamp": "2024-01-01T00:00:00+00:00",
+                "open": 40000.0,
+                "high": 41000.0,
+                "low": 39000.0,
+                "close": 40500.0,
+                "volume": 100.0,
+            },
+            {
+                "symbol": "BTC",
+                "timestamp": "2024-01-02T00:00:00+00:00",
+                "open": 40500.0,
+                "high": 42000.0,
+                "low": 40000.0,
+                "close": 41500.0,
+                "volume": 200.0,
+            },
+        ]
+        broker_stub = Mock()
+        broker_stub.instrument_id_for_symbol.return_value = 12345
+        broker_stub.get_candles_by_instrument.return_value = fake_bars
+
+        # Temporarily wire the stub broker into the scheduler's trade_manager.
+        original_brokers = self._scheduler.trade_manager.brokers
+        self._scheduler.trade_manager.brokers = {"etoro": broker_stub}
+        try:
+            self._login_admin()
+            response = self._client.get("/api/candles?symbol=BTC&count=2")
+            self.assertEqual(response.status_code, 200, response.text)
+            body = response.json()
+            self.assertEqual(body["symbol"], "BTC")
+            self.assertEqual(body["category"], "CRYPTO")
+            self.assertEqual(body["granularity"], "OneDay")
+            candles = body["candles"]
+            self.assertEqual(len(candles), 2)
+            # Verify the mapped compact shape for the first candle.
+            c = candles[0]
+            self.assertIn("t", c)
+            self.assertAlmostEqual(c["o"], 40000.0)
+            self.assertAlmostEqual(c["h"], 41000.0)
+            self.assertAlmostEqual(c["l"], 39000.0)
+            self.assertAlmostEqual(c["c"], 40500.0)
+            self.assertAlmostEqual(c["v"], 100.0)
+            # broker was called with the right args
+            broker_stub.instrument_id_for_symbol.assert_called_once_with("BTC")
+            broker_stub.get_candles_by_instrument.assert_called_once_with(
+                12345, "BTC", count=2, interval="OneDay"
+            )
+        finally:
+            self._scheduler.trade_manager.brokers = original_brokers
+            self._client.cookies.clear()
+
+    def test_candles_returns_503_when_no_broker_configured(self) -> None:
+        """When no eToro broker is registered, the endpoint returns 503."""
+        original_brokers = self._scheduler.trade_manager.brokers
+        self._scheduler.trade_manager.brokers = {}
+        try:
+            self._login_admin()
+            response = self._client.get("/api/candles?symbol=BTC")
+            self.assertEqual(response.status_code, 503)
+            detail = response.json()["detail"]
+            self.assertEqual(detail["error"]["code"], "no_broker_configured")
+        finally:
+            self._scheduler.trade_manager.brokers = original_brokers
+            self._client.cookies.clear()
+
+
+@unittest.skipUnless(_FASTAPI_AVAILABLE, "fastapi not installed in this test env")
+class CandleToDictTests(unittest.TestCase):
+    """Unit tests for the module-level _candle_to_dict helper.
+
+    These are pure-Python tests: no broker, no network, no DB.
+    They run wherever FastAPI is importable (i.e. in Docker).
+    """
+
+    def _fn(self):
+        from api.api_server import _candle_to_dict
+        return _candle_to_dict
+
+    def test_maps_all_standard_bar_fields(self) -> None:
+        fn = self._fn()
+        bar = {
+            "symbol": "ETH",
+            "timestamp": "2024-03-15T00:00:00+00:00",
+            "open": 3000.0,
+            "high": 3100.0,
+            "low": 2900.0,
+            "close": 3050.0,
+            "volume": 500.0,
+        }
+        result = fn(bar)
+        self.assertIn("t", result)
+        self.assertIn("2024-03-15", result["t"])
+        self.assertAlmostEqual(result["o"], 3000.0)
+        self.assertAlmostEqual(result["h"], 3100.0)
+        self.assertAlmostEqual(result["l"], 2900.0)
+        self.assertAlmostEqual(result["c"], 3050.0)
+        self.assertAlmostEqual(result["v"], 500.0)
+
+    def test_volume_none_when_missing(self) -> None:
+        fn = self._fn()
+        bar = {
+            "symbol": "BTC",
+            "timestamp": "2024-01-01T00:00:00+00:00",
+            "open": 40000.0,
+            "high": 41000.0,
+            "low": 39000.0,
+            "close": 40500.0,
+            "volume": None,
+        }
+        result = fn(bar)
+        self.assertIsNone(result["v"])
+
+    def test_zero_volume_treated_as_zero_not_none(self) -> None:
+        fn = self._fn()
+        bar = {
+            "symbol": "BTC",
+            "timestamp": "2024-01-01T00:00:00+00:00",
+            "open": 40000.0,
+            "high": 41000.0,
+            "low": 39000.0,
+            "close": 40500.0,
+            "volume": 0.0,
+        }
+        result = fn(bar)
+        self.assertIsNotNone(result["v"])
+        self.assertAlmostEqual(result["v"], 0.0)
+
+    def test_timestamp_normalised_to_utc_iso(self) -> None:
+        fn = self._fn()
+        bar = {
+            "symbol": "BTC",
+            "timestamp": "2024-06-01T12:00:00+00:00",
+            "open": 1.0,
+            "high": 2.0,
+            "low": 0.5,
+            "close": 1.5,
+            "volume": 10.0,
+        }
+        result = fn(bar)
+        # Must be a non-empty string containing the date
+        self.assertIsInstance(result["t"], str)
+        self.assertIn("2024-06-01", result["t"])
+
+    def test_output_has_exactly_six_keys(self) -> None:
+        fn = self._fn()
+        bar = {
+            "symbol": "X",
+            "timestamp": "2024-01-01T00:00:00+00:00",
+            "open": 1.0,
+            "high": 2.0,
+            "low": 0.5,
+            "close": 1.5,
+            "volume": 5.0,
+        }
+        result = fn(bar)
+        self.assertEqual(set(result.keys()), {"t", "o", "h", "l", "c", "v"})
+
 
 @unittest.skipUnless(_FASTAPI_AVAILABLE, "fastapi not installed in this test env")
 class FormatEventTests(unittest.TestCase):
