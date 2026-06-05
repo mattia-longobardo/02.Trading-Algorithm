@@ -5,7 +5,6 @@ import {
   Globe,
   LineChart,
   Settings,
-  Sparkles,
   Terminal,
 } from "lucide-react";
 import type { ComponentType } from "react";
@@ -25,8 +24,7 @@ export const NAV: NavItem[] = [
   { href: "/ops", label: "Operazioni", icon: Terminal },
   { href: "/universe", label: "Universe", icon: Globe },
   { href: "/reports", label: "Report", icon: FileText },
-  { href: "/prompts", label: "Prompt", icon: Sparkles, adminOnly: true },
-  { href: "/settings", label: "Impostazioni", icon: Settings },
+  { href: "/admin", label: "Amministrazione", icon: Settings },
 ];
 
 export function visibleNavFor(role: UserRole): NavItem[] {
