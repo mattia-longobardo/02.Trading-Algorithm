@@ -2,6 +2,20 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach } from "vitest";
 
+// cmdk uses ResizeObserver internally; jsdom does not implement it.
+if (typeof ResizeObserver === "undefined") {
+  global.ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
+// cmdk calls scrollIntoView on items when navigating; jsdom does not implement it.
+if (!window.HTMLElement.prototype.scrollIntoView) {
+  window.HTMLElement.prototype.scrollIntoView = function () {};
+}
+
 // jsdom does not implement window.matchMedia; next-themes calls it on mount.
 Object.defineProperty(window, "matchMedia", {
   writable: true,
