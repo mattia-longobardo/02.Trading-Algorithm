@@ -526,6 +526,75 @@ class EToroDiscoverTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(session.request.call_count, 2)
 
+    def test_discover_instruments_tradable_false_when_not_currently_tradable(self):
+        client, session = make_client()
+        session.request.side_effect = [
+            self._types_resp(),
+            make_response(200, {"page": 1, "pageSize": 200, "totalItems": 1, "items": [
+                {"instrumentId": 8, "displayname": "Y", "symbol": "Y",
+                 "isCurrentlyTradable": False, "isBuyEnabled": True},
+            ]}),
+        ]
+        rows = client.discover_instruments("STOCK")
+        self.assertFalse(rows[0]["tradable"])
+
+    def test_discover_instruments_skips_hidden_from_client(self):
+        client, session = make_client()
+        session.request.side_effect = [
+            self._types_resp(),
+            make_response(200, {"page": 1, "pageSize": 200, "totalItems": 1, "items": [
+                {"instrumentId": 9, "displayname": "Hidden", "symbol": "HDN",
+                 "isCurrentlyTradable": True, "isHiddenFromClient": True},
+            ]}),
+        ]
+        rows = client.discover_instruments("STOCK")
+        self.assertEqual(rows, [])
+
+    def test_discover_instruments_paginates_multiple_pages(self):
+        client, session = make_client()
+        full_page = [
+            {"instrumentId": i, "displayname": f"S{i}", "symbol": f"S{i}",
+             "isCurrentlyTradable": True}
+            for i in range(client.DISCOVER_PAGE_SIZE)
+        ]
+        second_page = [
+            {"instrumentId": 99001, "displayname": "LAST", "symbol": "LAST",
+             "isCurrentlyTradable": True},
+        ]
+        session.request.side_effect = [
+            self._types_resp(),
+            make_response(200, {"page": 1, "pageSize": client.DISCOVER_PAGE_SIZE,
+                                "totalItems": client.DISCOVER_PAGE_SIZE + 1, "items": full_page}),
+            make_response(200, {"page": 2, "pageSize": client.DISCOVER_PAGE_SIZE,
+                                "totalItems": client.DISCOVER_PAGE_SIZE + 1, "items": second_page}),
+        ]
+        rows = client.discover_instruments("STOCK")
+        self.assertEqual(len(rows), client.DISCOVER_PAGE_SIZE + 1)
+        self.assertIn("LAST", [r["symbol"] for r in rows])
+        # types call + two discover pages
+        self.assertEqual(session.request.call_count, 3)
+        self.assertEqual(session.request.call_args_list[1].kwargs["params"]["page"], 1)
+        self.assertEqual(session.request.call_args_list[2].kwargs["params"]["page"], 2)
+
+    def test_discover_instruments_respects_max_items_cap(self):
+        client, session = make_client()
+        client.DISCOVER_MAX_ITEMS = 2
+        full_page = [
+            {"instrumentId": i, "displayname": f"S{i}", "symbol": f"S{i}",
+             "isCurrentlyTradable": True}
+            for i in range(client.DISCOVER_PAGE_SIZE)
+        ]
+        session.request.side_effect = [
+            self._types_resp(),
+            make_response(200, {"page": 1, "pageSize": client.DISCOVER_PAGE_SIZE,
+                                "totalItems": 9999, "items": full_page}),
+        ]
+        rows = client.discover_instruments("STOCK")
+        # cap stops further pagination; the full first page is processed before
+        # the while condition re-evaluates, so we get the full page not just 2
+        self.assertGreaterEqual(len(rows), 2)
+        self.assertEqual(session.request.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

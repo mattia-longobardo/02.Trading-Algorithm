@@ -376,6 +376,10 @@ class EToroClient:
 
         Uses ``/api/v1/instruments/discover`` (popularity-sorted, paginated) to
         return rich per-instrument metadata WITHOUT fetching any price bars.
+
+        Note: each accepted row is upserted into the local ``instrument_map``
+        cache individually (mirrors ``list_assets``); this is O(rows) SQLite
+        writes per run, bounded by ``DISCOVER_MAX_ITEMS``.
         """
         hints = self._ASSET_CLASS_HINTS.get(str(asset_class).upper(), (str(asset_class).lower(),))
         category = "CRYPTO" if "crypto" in hints else "STOCK"
@@ -384,8 +388,8 @@ class EToroClient:
             return []
         out: list[dict[str, Any]] = []
         seen: set[str] = set()
+        collected = 0
         for type_id in type_ids:
-            collected = 0
             page = 1
             while collected < self.DISCOVER_MAX_ITEMS:
                 payload = self._request(
