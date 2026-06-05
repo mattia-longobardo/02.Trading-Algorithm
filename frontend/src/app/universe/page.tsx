@@ -228,7 +228,7 @@ function UniverseCategoryCard({
                 {items.map((entry) => (
                   <tr
                     key={`${entry.provider}:${entry.category}:${entry.symbol}`}
-                    className="bg-slate-950/40 transition-colors hover:bg-slate-900/60 [&>td]:border-y [&>td]:border-(--color-line)"
+                    className="bg-(--color-panel)/40 transition-colors hover:bg-(--color-hover)/60 [&>td]:border-y [&>td]:border-(--color-line)"
                   >
                     <td className="px-2 py-2 font-medium first:rounded-l-lg">{entry.symbol}</td>
                     <td className="px-2 py-2 text-right">
