@@ -40,6 +40,7 @@ def _make_trade(
     instrument_id: int | None = 42,
     account_currency: str = "USD",
     unrealized_pnl: float | None = None,
+    is_buy: bool = True,
 ) -> dict:
     return {
         "id": id,
@@ -56,11 +57,13 @@ def _make_trade(
         "position_id": position_id,
         "instrument_id": instrument_id,
         "account_currency": account_currency,
+        "is_buy": is_buy,
     }
 
 
-TRADE_A = _make_trade(1, "BTC", entry_price=100.0, current_price=110.0, quantity=2.0, pnl=20.0)
-TRADE_B = _make_trade(2, "ETH", category="CRYPTO", entry_price=50.0, current_price=55.0, quantity=4.0, pnl=20.0)
+# Instrument IDs differ so the rate_map can distinguish them.
+TRADE_A = _make_trade(1, "BTC", entry_price=100.0, current_price=110.0, quantity=2.0, pnl=20.0, instrument_id=1)
+TRADE_B = _make_trade(2, "ETH", category="CRYPTO", entry_price=50.0, current_price=55.0, quantity=4.0, pnl=20.0, instrument_id=2)
 
 
 class FakeMetrics:
@@ -76,36 +79,59 @@ class FakeMetrics:
 
 
 class FakeBroker:
-    """Returns configurable quotes and account values; tracks call counts."""
+    """Returns configurable rates and portfolio; tracks call counts.
+
+    Replaces the old per-symbol ``get_latest_quote`` / ``get_account_equity``
+    / ``get_available_cash`` interface with the new batched API:
+
+    - ``get_rates_by_instruments(ids)`` — returns a rate map keyed by int id.
+    - ``get_portfolio()`` — returns a portfolio dict with ``credit``,
+      ``positions``, and ``orders``.
+    """
 
     def __init__(
         self,
-        quotes: dict | None = None,  # symbol -> {"bid_price": x, "ask_price": y}
-        equity: float = 5000.0,
-        cash: float = 1000.0,
-        raise_on_quote: set | None = None,  # symbols that raise RuntimeError
+        # instrument_id (int) -> {"bid": x, "ask": y, "lastExecution": z}
+        rates: dict | None = None,
+        credit: float = 5000.0,
+        broker_positions: list | None = None,  # raw broker positions
+        orders: list | None = None,
+        raise_on_rates: bool = False,
+        raise_on_portfolio: bool = False,
     ):
-        self._quotes = quotes or {}
-        self._equity = equity
-        self._cash = cash
-        self._raise_on_quote = raise_on_quote or set()
-        self.quote_calls = 0
-        self.equity_calls = 0
-        self.cash_calls = 0
+        self._rates = rates or {}
+        self._credit = credit
+        self._broker_positions = broker_positions or []
+        self._orders = orders or []
+        self._raise_on_rates = raise_on_rates
+        self._raise_on_portfolio = raise_on_portfolio
+        self.rates_calls = 0
+        self.portfolio_calls = 0
 
-    def get_latest_quote(self, symbol: str, category: str) -> dict:
-        self.quote_calls += 1
-        if symbol in self._raise_on_quote:
-            raise RuntimeError(f"Simulated broker error for {symbol}")
-        return self._quotes.get(symbol, {"bid_price": None, "ask_price": None})
+    def get_rates_by_instruments(self, instrument_ids: list[int]) -> dict[int, dict]:
+        self.rates_calls += 1
+        if self._raise_on_rates:
+            raise RuntimeError("Simulated rates error")
+        result = {}
+        for iid in instrument_ids:
+            if iid in self._rates:
+                result[iid] = self._rates[iid]
+        return result
 
-    def get_account_equity(self) -> float:
-        self.equity_calls += 1
-        return self._equity
+    def get_portfolio(self) -> dict:
+        self.portfolio_calls += 1
+        if self._raise_on_portfolio:
+            raise RuntimeError("Simulated portfolio error")
+        return {
+            "credit": self._credit,
+            "positions": list(self._broker_positions),
+            "orders": list(self._orders),
+        }
 
-    def get_available_cash(self) -> float:
-        self.cash_calls += 1
-        return self._cash
+    @property
+    def total_broker_calls(self) -> int:
+        """Total number of broker GET-style calls made."""
+        return self.rates_calls + self.portfolio_calls
 
 
 class FakeClock:
@@ -133,6 +159,22 @@ def _make_config(**overrides) -> AppConfig:
     return cfg
 
 
+def _make_rates_for_trades(*trades: dict, bid_offset: float = 0.0, ask_offset: float = 0.0) -> dict:
+    """Build a rate map for a list of trades (mid price = current_price)."""
+    rates = {}
+    for t in trades:
+        iid = t.get("instrument_id")
+        if iid is None:
+            continue
+        price = float(t.get("current_price") or t.get("entry_price") or 100.0)
+        rates[iid] = {
+            "bid": price + bid_offset,
+            "ask": price + ask_offset,
+            "lastExecution": price,
+        }
+    return rates
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -143,13 +185,18 @@ class LiveSnapshotCacheBasicTests(unittest.TestCase):
 
     def setUp(self):
         self.clock = FakeClock(start=0.0)
+        # BTC: instrument_id=1, mid = (108+112)/2 = 110.0
+        # ETH: instrument_id=2, bid=54, ask=None → use bid=54.0
         self.broker = FakeBroker(
-            quotes={
-                "BTC": {"bid_price": 108.0, "ask_price": 112.0},  # mid = 110.0
-                "ETH": {"bid_price": 54.0, "ask_price": None},    # bid only = 54.0
+            rates={
+                1: {"bid": 108.0, "ask": 112.0, "lastExecution": 110.0},
+                2: {"bid": 54.0, "ask": None, "lastExecution": 54.0},
             },
-            equity=5000.0,
-            cash=1000.0,
+            credit=5000.0,
+            broker_positions=[
+                {"instrumentID": 1, "units": 2.0, "openRate": 100.0},
+                {"instrumentID": 2, "units": 4.0, "openRate": 50.0},
+            ],
         )
         self.metrics = FakeMetrics([TRADE_A, TRADE_B])
         self.config = _make_config(account_currency="USD")
@@ -175,10 +222,17 @@ class LiveSnapshotCacheBasicTests(unittest.TestCase):
         snap = self.cache.get_snapshot()
         self.assertEqual(len(snap["positions"]), 2)
 
-    def test_equity_and_cash_populated(self):
+    def test_equity_populated(self):
         snap = self.cache.get_snapshot()
-        self.assertAlmostEqual(snap["equity"], 5000.0)
-        self.assertAlmostEqual(snap["cash"], 1000.0)
+        # equity = credit(5000) + BTC(2 * bid108=216) + ETH(4 * bid54=216)
+        # = 5000 + 216 + 216 = 5432
+        self.assertIsNotNone(snap["equity"])
+        self.assertAlmostEqual(snap["equity"], 5000.0 + 2.0 * 108.0 + 4.0 * 54.0)
+
+    def test_cash_populated(self):
+        snap = self.cache.get_snapshot()
+        # no pending orders → cash = credit = 5000
+        self.assertAlmostEqual(snap["cash"], 5000.0)
 
     def test_currency_from_trade_account_currency(self):
         snap = self.cache.get_snapshot()
@@ -218,11 +272,91 @@ class LiveSnapshotCacheBasicTests(unittest.TestCase):
         snap = self.cache.get_snapshot()
         pos = snap["positions"][0]
         for field in (
-            "id", "symbol", "category", "units", "entry_price",
+            "id", "symbol", "category", "is_buy", "units", "entry_price",
             "current_price", "unrealized_pnl", "unrealized_pnl_pct",
             "take_profit", "stop_loss", "position_id", "instrument_id",
         ):
             self.assertIn(field, pos, f"Missing field: {field}")
+
+    def test_is_buy_defaults_true(self):
+        snap = self.cache.get_snapshot()
+        btc = next(p for p in snap["positions"] if p["symbol"] == "BTC")
+        self.assertIs(btc["is_buy"], True)
+
+
+class LiveSnapshotCacheBrokerCallBoundTests(unittest.TestCase):
+    """Key rate-limit invariant: at most 2 broker GETs per rebuild."""
+
+    def _make_many_trades(self, n: int) -> list[dict]:
+        """Create n distinct open trades with unique instrument IDs."""
+        trades = []
+        for i in range(n):
+            trades.append(_make_trade(
+                id=i + 1,
+                symbol=f"SYM{i}",
+                instrument_id=i + 100,
+                entry_price=100.0,
+                current_price=105.0,
+                quantity=1.0,
+                pnl=5.0,
+            ))
+        return trades
+
+    def test_at_most_two_broker_calls_for_three_positions(self):
+        """Regardless of position count, rebuild must make ≤ 2 broker GETs."""
+        trades = self._make_many_trades(3)
+        rates = {t["instrument_id"]: {"bid": 105.0, "ask": 106.0, "lastExecution": 105.5}
+                 for t in trades}
+        broker = FakeBroker(rates=rates, credit=10000.0)
+        import logging
+        cache = LiveSnapshotCache(
+            metrics=FakeMetrics(trades),
+            brokers={PROVIDER_ETORO: broker},
+            config=_make_config(),
+            logger=logging.getLogger("test"),
+        )
+        cache.get_snapshot()
+        self.assertLessEqual(
+            broker.total_broker_calls, 2,
+            f"Expected ≤ 2 broker calls for 3 positions but got {broker.total_broker_calls}",
+        )
+
+    def test_at_most_two_broker_calls_for_ten_positions(self):
+        """Scaling to 10 positions still must not exceed 2 broker GETs."""
+        trades = self._make_many_trades(10)
+        rates = {t["instrument_id"]: {"bid": 105.0, "ask": 106.0, "lastExecution": 105.5}
+                 for t in trades}
+        broker = FakeBroker(rates=rates, credit=10000.0)
+        import logging
+        cache = LiveSnapshotCache(
+            metrics=FakeMetrics(trades),
+            brokers={PROVIDER_ETORO: broker},
+            config=_make_config(),
+            logger=logging.getLogger("test"),
+        )
+        cache.get_snapshot()
+        self.assertLessEqual(
+            broker.total_broker_calls, 2,
+            f"Expected ≤ 2 broker calls for 10 positions but got {broker.total_broker_calls}",
+        )
+
+    def test_rates_call_is_exactly_one_per_rebuild(self):
+        trades = self._make_many_trades(5)
+        rates = {t["instrument_id"]: {"bid": 100.0, "ask": 101.0, "lastExecution": 100.5}
+                 for t in trades}
+        broker = FakeBroker(rates=rates, credit=1000.0)
+        import logging
+        cache = LiveSnapshotCache(
+            metrics=FakeMetrics(trades),
+            brokers={PROVIDER_ETORO: broker},
+            config=_make_config(),
+            logger=logging.getLogger("test"),
+        )
+        cache.get_snapshot()
+        self.assertEqual(broker.rates_calls, 1,
+                         "get_rates_by_instruments should be called exactly once per rebuild")
+        self.assertEqual(broker.portfolio_calls, 1,
+                         "get_portfolio should be called exactly once per rebuild")
 
 
 class LiveSnapshotCacheTTLTests(unittest.TestCase):
@@ -231,7 +365,7 @@ class LiveSnapshotCacheTTLTests(unittest.TestCase):
     def setUp(self):
         self.clock = FakeClock(start=0.0)
         self.broker = FakeBroker(
-            quotes={"BTC": {"bid_price": 100.0, "ask_price": 102.0}},
+            rates={1: {"bid": 100.0, "ask": 102.0, "lastExecution": 101.0}},
         )
         self.metrics = FakeMetrics([TRADE_A])
         import logging
@@ -246,26 +380,26 @@ class LiveSnapshotCacheTTLTests(unittest.TestCase):
 
     def test_second_call_within_ttl_does_not_call_broker(self):
         self.cache.get_snapshot()
-        calls_after_first = self.broker.quote_calls
+        calls_after_first = self.broker.total_broker_calls
         self.clock.advance(2.0)  # within 5 s TTL
         self.cache.get_snapshot()
-        self.assertEqual(self.broker.quote_calls, calls_after_first,
+        self.assertEqual(self.broker.total_broker_calls, calls_after_first,
                          "Broker should NOT be called again within TTL")
 
     def test_call_after_ttl_expires_rebuilds(self):
         self.cache.get_snapshot()
-        calls_after_first = self.broker.quote_calls
+        calls_after_first = self.broker.total_broker_calls
         self.clock.advance(6.0)  # past 5 s TTL
         self.cache.get_snapshot()
-        self.assertGreater(self.broker.quote_calls, calls_after_first,
+        self.assertGreater(self.broker.total_broker_calls, calls_after_first,
                            "Broker SHOULD be called again after TTL expires")
 
     def test_force_true_rebuilds_within_ttl(self):
         self.cache.get_snapshot()
-        calls_after_first = self.broker.quote_calls
+        calls_after_first = self.broker.total_broker_calls
         self.clock.advance(1.0)  # well within TTL
         self.cache.get_snapshot(force=True)
-        self.assertGreater(self.broker.quote_calls, calls_after_first,
+        self.assertGreater(self.broker.total_broker_calls, calls_after_first,
                            "force=True should bypass TTL and rebuild")
 
     def test_metrics_list_trades_called_only_once_within_ttl(self):
@@ -289,8 +423,8 @@ class LiveSnapshotCacheFallbackTests(unittest.TestCase):
         import logging
         self.logger = logging.getLogger("test")
 
-    def test_broker_raises_on_quote_still_returns_snapshot(self):
-        broker = FakeBroker(raise_on_quote={"BTC", "ETH"})
+    def test_broker_raises_on_rates_still_returns_snapshot(self):
+        broker = FakeBroker(raise_on_rates=True)
         metrics = FakeMetrics([TRADE_A, TRADE_B])
         cache = LiveSnapshotCache(
             metrics=metrics,
@@ -305,10 +439,10 @@ class LiveSnapshotCacheFallbackTests(unittest.TestCase):
         self.assertIsNotNone(snap)
         self.assertEqual(len(snap["positions"]), 2)
 
-    def test_broker_fallback_uses_stored_current_price(self):
-        """When get_latest_quote raises, position uses trade's current_price."""
-        broker = FakeBroker(raise_on_quote={"BTC"})
-        trade = _make_trade(1, "BTC", entry_price=100.0, current_price=115.0, pnl=30.0, quantity=2.0)
+    def test_rates_failure_falls_back_to_stored_current_price(self):
+        """When get_rates_by_instruments raises, position uses trade's current_price."""
+        broker = FakeBroker(raise_on_rates=True)
+        trade = _make_trade(1, "BTC", instrument_id=1, entry_price=100.0, current_price=115.0, pnl=30.0, quantity=2.0)
         metrics = FakeMetrics([trade])
         cache = LiveSnapshotCache(
             metrics=metrics,
@@ -321,16 +455,17 @@ class LiveSnapshotCacheFallbackTests(unittest.TestCase):
         snap = cache.get_snapshot()
         pos = snap["positions"][0]
         self.assertAlmostEqual(pos["current_price"], 115.0)
-        # unrealized_pnl falls back to stored trade pnl on error
+        # unrealized_pnl falls back to stored unrealized_pnl (= pnl = 30)
         self.assertAlmostEqual(pos["unrealized_pnl"], 30.0)
 
-    def test_mixed_one_symbol_raises_other_succeeds(self):
-        """Only the erroring symbol falls back; the good one gets live price."""
+    def test_missing_instrument_id_in_rate_map_falls_back(self):
+        """If a trade's instrument_id isn't in the rate map, use stored price."""
+        # Rate map only has instrument 99, but TRADE_A has instrument_id=1
         broker = FakeBroker(
-            quotes={"ETH": {"bid_price": 60.0, "ask_price": 62.0}},
-            raise_on_quote={"BTC"},
+            rates={99: {"bid": 999.0, "ask": 1000.0, "lastExecution": 999.5}},
         )
-        metrics = FakeMetrics([TRADE_A, TRADE_B])
+        trade = _make_trade(1, "BTC", instrument_id=1, entry_price=100.0, current_price=115.0, pnl=30.0, quantity=2.0)
+        metrics = FakeMetrics([trade])
         cache = LiveSnapshotCache(
             metrics=metrics,
             brokers={PROVIDER_ETORO: broker},
@@ -340,19 +475,15 @@ class LiveSnapshotCacheFallbackTests(unittest.TestCase):
             monotonic=self.clock,
         )
         snap = cache.get_snapshot()
-        btc = next(p for p in snap["positions"] if p["symbol"] == "BTC")
-        eth = next(p for p in snap["positions"] if p["symbol"] == "ETH")
-        # BTC fell back
-        self.assertAlmostEqual(btc["current_price"], TRADE_A["current_price"])
-        # ETH got live mid price
-        self.assertAlmostEqual(eth["current_price"], 61.0)
+        pos = snap["positions"][0]
+        # Should use stored current_price since id=1 not in rate map
+        self.assertAlmostEqual(pos["current_price"], 115.0)
 
-    def test_equity_failure_returns_none(self):
-        class BrokenEquityBroker(FakeBroker):
-            def get_account_equity(self):
-                raise RuntimeError("equity call failed")
-
-        broker = BrokenEquityBroker()
+    def test_portfolio_failure_returns_none_equity_and_cash(self):
+        broker = FakeBroker(
+            rates={1: {"bid": 110.0, "ask": 112.0, "lastExecution": 111.0}},
+            raise_on_portfolio=True,
+        )
         metrics = FakeMetrics([TRADE_A])
         cache = LiveSnapshotCache(
             metrics=metrics,
@@ -364,13 +495,14 @@ class LiveSnapshotCacheFallbackTests(unittest.TestCase):
         )
         snap = cache.get_snapshot()
         self.assertIsNone(snap["equity"])
+        self.assertIsNone(snap["cash"])
 
-    def test_cash_failure_returns_none(self):
-        class BrokenCashBroker(FakeBroker):
-            def get_available_cash(self):
-                raise RuntimeError("cash call failed")
-
-        broker = BrokenCashBroker()
+    def test_cash_deducts_pending_orders(self):
+        broker = FakeBroker(
+            rates={1: {"bid": 110.0, "ask": 112.0, "lastExecution": 111.0}},
+            credit=5000.0,
+            orders=[{"amount": 200.0}, {"amount": 300.0}],
+        )
         metrics = FakeMetrics([TRADE_A])
         cache = LiveSnapshotCache(
             metrics=metrics,
@@ -381,7 +513,8 @@ class LiveSnapshotCacheFallbackTests(unittest.TestCase):
             monotonic=self.clock,
         )
         snap = cache.get_snapshot()
-        self.assertIsNone(snap["cash"])
+        # cash = 5000 - 200 - 300 = 4500
+        self.assertAlmostEqual(snap["cash"], 4500.0)
 
 
 class LiveSnapshotCacheNoBrokerTests(unittest.TestCase):
@@ -419,6 +552,21 @@ class LiveSnapshotCacheNoBrokerTests(unittest.TestCase):
         # Uses stored current_price
         self.assertAlmostEqual(btc["current_price"], TRADE_A["current_price"])
 
+    def test_no_broker_zero_broker_calls(self):
+        """No broker → no rates or portfolio calls whatsoever."""
+        import logging
+        metrics = FakeMetrics([TRADE_A, TRADE_B])
+        # Use a real FakeBroker but don't register it
+        stray_broker = FakeBroker()
+        cache = LiveSnapshotCache(
+            metrics=metrics,
+            brokers={},  # empty — broker not registered
+            config=_make_config(),
+            logger=logging.getLogger("test"),
+        )
+        cache.get_snapshot()
+        self.assertEqual(stray_broker.total_broker_calls, 0)
+
     def test_no_broker_currency_falls_back_to_config(self):
         import logging
         metrics = FakeMetrics([])
@@ -436,7 +584,7 @@ class LiveSnapshotCacheNoBrokerTests(unittest.TestCase):
 
 
 class LiveSnapshotCacheEdgeCaseTests(unittest.TestCase):
-    """Edge cases: empty trade list, zero-entry price, ask-only quotes."""
+    """Edge cases: empty trade list, zero-entry price, ask-only quotes, shorts."""
 
     def setUp(self):
         import logging
@@ -456,9 +604,25 @@ class LiveSnapshotCacheEdgeCaseTests(unittest.TestCase):
         snap = cache.get_snapshot()
         self.assertEqual(snap["positions"], [])
 
+    def test_empty_positions_no_rates_call(self):
+        """No open trades → get_rates_by_instruments must NOT be called (empty id list)."""
+        broker = FakeBroker()
+        metrics = FakeMetrics([])
+        cache = LiveSnapshotCache(
+            metrics=metrics,
+            brokers={PROVIDER_ETORO: broker},
+            config=_make_config(),
+            logger=self.logger,
+            ttl_seconds=5.0,
+            monotonic=FakeClock(),
+        )
+        cache.get_snapshot()
+        self.assertEqual(broker.rates_calls, 0,
+                         "No open trades → should skip the rates GET entirely")
+
     def test_ask_only_quote_used_when_no_bid(self):
         broker = FakeBroker(
-            quotes={"BTC": {"bid_price": None, "ask_price": 120.0}},
+            rates={1: {"bid": None, "ask": 120.0, "lastExecution": None}},
         )
         metrics = FakeMetrics([TRADE_A])
         cache = LiveSnapshotCache(
@@ -473,9 +637,26 @@ class LiveSnapshotCacheEdgeCaseTests(unittest.TestCase):
         btc = snap["positions"][0]
         self.assertAlmostEqual(btc["current_price"], 120.0)
 
+    def test_last_execution_used_as_fallback_when_no_bid_ask(self):
+        broker = FakeBroker(
+            rates={1: {"bid": None, "ask": None, "lastExecution": 107.5}},
+        )
+        metrics = FakeMetrics([TRADE_A])
+        cache = LiveSnapshotCache(
+            metrics=metrics,
+            brokers={PROVIDER_ETORO: broker},
+            config=_make_config(),
+            logger=self.logger,
+            ttl_seconds=5.0,
+            monotonic=FakeClock(),
+        )
+        snap = cache.get_snapshot()
+        btc = snap["positions"][0]
+        self.assertAlmostEqual(btc["current_price"], 107.5)
+
     def test_unrealized_pnl_pct_is_none_when_entry_price_is_zero(self):
-        trade = _make_trade(1, "BTC", entry_price=0.0, current_price=50.0, quantity=1.0, pnl=0.0)
-        broker = FakeBroker(quotes={"BTC": {"bid_price": 50.0, "ask_price": 50.0}})
+        trade = _make_trade(1, "BTC", instrument_id=1, entry_price=0.0, current_price=50.0, quantity=1.0, pnl=0.0)
+        broker = FakeBroker(rates={1: {"bid": 50.0, "ask": 50.0, "lastExecution": 50.0}})
         metrics = FakeMetrics([trade])
         cache = LiveSnapshotCache(
             metrics=metrics,
@@ -489,9 +670,9 @@ class LiveSnapshotCacheEdgeCaseTests(unittest.TestCase):
         self.assertIsNone(snap["positions"][0]["unrealized_pnl_pct"])
 
     def test_no_quote_both_none_falls_back_to_stored_current_price(self):
-        """Broker returns {bid:None, ask:None} — fall through to trade's stored price."""
-        broker = FakeBroker(quotes={"BTC": {"bid_price": None, "ask_price": None}})
-        trade = _make_trade(1, "BTC", entry_price=100.0, current_price=105.0, quantity=1.0, pnl=5.0)
+        """Rate map has all-None bid/ask/last — fall through to trade's stored price."""
+        broker = FakeBroker(rates={1: {"bid": None, "ask": None, "lastExecution": None}})
+        trade = _make_trade(1, "BTC", instrument_id=1, entry_price=100.0, current_price=105.0, quantity=1.0, pnl=5.0)
         metrics = FakeMetrics([trade])
         cache = LiveSnapshotCache(
             metrics=metrics,
@@ -503,6 +684,60 @@ class LiveSnapshotCacheEdgeCaseTests(unittest.TestCase):
         )
         snap = cache.get_snapshot()
         self.assertAlmostEqual(snap["positions"][0]["current_price"], 105.0)
+
+    def test_short_position_pnl_sign_is_negative_when_price_rises(self):
+        """A short (is_buy=False) trade losing money when price rises above entry."""
+        # Short BTC: entry=100, current=110, qty=2
+        # Expected PnL = (110 - 100) * 2 * -1 = -20
+        trade = _make_trade(
+            1, "BTC", instrument_id=1,
+            entry_price=100.0, current_price=110.0, quantity=2.0, pnl=-20.0,
+            is_buy=False,
+        )
+        broker = FakeBroker(
+            rates={1: {"bid": 109.0, "ask": 111.0, "lastExecution": 110.0}},
+        )
+        metrics = FakeMetrics([trade])
+        cache = LiveSnapshotCache(
+            metrics=metrics,
+            brokers={PROVIDER_ETORO: broker},
+            config=_make_config(),
+            logger=self.logger,
+        )
+        snap = cache.get_snapshot()
+        pos = snap["positions"][0]
+        self.assertIs(pos["is_buy"], False)
+        # mid = (109+111)/2 = 110; PnL = (110-100)*2*-1 = -20
+        self.assertAlmostEqual(pos["unrealized_pnl"], -20.0)
+        # pnl_pct = (110/100 - 1)*100*-1 = -10%
+        self.assertAlmostEqual(pos["unrealized_pnl_pct"], -10.0)
+
+    def test_short_position_pnl_sign_is_positive_when_price_falls(self):
+        """A short (is_buy=False) trade winning when price drops below entry."""
+        # Short BTC: entry=100, live=90, qty=2
+        # Expected PnL = (90 - 100) * 2 * -1 = +20
+        trade = _make_trade(
+            1, "BTC", instrument_id=1,
+            entry_price=100.0, current_price=90.0, quantity=2.0, pnl=20.0,
+            is_buy=False,
+        )
+        broker = FakeBroker(
+            rates={1: {"bid": 89.0, "ask": 91.0, "lastExecution": 90.0}},
+        )
+        metrics = FakeMetrics([trade])
+        cache = LiveSnapshotCache(
+            metrics=metrics,
+            brokers={PROVIDER_ETORO: broker},
+            config=_make_config(),
+            logger=self.logger,
+        )
+        snap = cache.get_snapshot()
+        pos = snap["positions"][0]
+        self.assertIs(pos["is_buy"], False)
+        # mid = (89+91)/2 = 90; PnL = (90-100)*2*-1 = +20
+        self.assertAlmostEqual(pos["unrealized_pnl"], 20.0)
+        # pnl_pct = (90/100 - 1)*100*-1 = +10%
+        self.assertAlmostEqual(pos["unrealized_pnl_pct"], 10.0)
 
 
 if __name__ == "__main__":
