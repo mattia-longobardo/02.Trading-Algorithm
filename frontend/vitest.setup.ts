@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
-import { afterEach } from "vitest";
+import { afterEach, beforeEach } from "vitest";
 
 // jsdom does not implement window.matchMedia; next-themes calls it on mount.
 Object.defineProperty(window, "matchMedia", {
@@ -16,6 +16,14 @@ Object.defineProperty(window, "matchMedia", {
     removeEventListener: () => {},
     dispatchEvent: () => false,
   }),
+});
+
+// next-themes writes the active theme as a class on <html>; React Testing
+// Library's cleanup() unmounts components but never touches documentElement,
+// so the class would leak between tests. Reset it before each test to keep
+// theme-dependent tests order-independent.
+beforeEach(() => {
+  document.documentElement.classList.remove("light", "dark");
 });
 
 afterEach(() => {
