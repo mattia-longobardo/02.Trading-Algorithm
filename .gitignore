@@ -26,3 +26,7 @@ frontend/*.tsbuildinfo
 .vscode
 .idea
 .DS_Store
+
+# AI tooling
+.claude/
+.superpowers/
