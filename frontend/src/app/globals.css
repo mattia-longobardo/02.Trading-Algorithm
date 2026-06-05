@@ -5,6 +5,8 @@
 @theme {
   --color-bg: #0b0e14;
   --color-elevated: #0c1018;
+  --color-field: #0b0f17;
+  --color-hover: #1b2230;
   --color-panel: #121722;
   --color-line: #1f2632;
   --color-text: #dfe6ee;
@@ -21,6 +23,8 @@
 :root.light {
   --color-bg: #f6f7f9;
   --color-elevated: #ffffff;
+  --color-field: #ffffff;
+  --color-hover: #eceef2;
   --color-panel: #ffffff;
   --color-line: #e4e7ec;
   --color-text: #1a1f29;
