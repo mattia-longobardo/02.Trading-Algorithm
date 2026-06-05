@@ -1,7 +1,10 @@
+"use client";
+
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/format";
 import type { PnlBySymbolRow } from "@/lib/types";
+import { useChartTheme } from "@/components/charts/use-chart-theme";
 
 export interface PnlBySymbolChartProps {
   items: PnlBySymbolRow[];
@@ -10,6 +13,8 @@ export interface PnlBySymbolChartProps {
 }
 
 export function PnlBySymbolChart({ items, currency }: PnlBySymbolChartProps) {
+  const theme = useChartTheme();
+
   return (
     <Card>
       <CardHeader>
@@ -18,24 +23,25 @@ export function PnlBySymbolChart({ items, currency }: PnlBySymbolChartProps) {
       <CardContent className="h-72">
         <ResponsiveContainer>
           <BarChart data={items}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-            <XAxis dataKey="symbol" stroke="#94a3b8" fontSize={12} />
+            <CartesianGrid strokeDasharray="3 3" stroke={theme.grid} />
+            <XAxis dataKey="symbol" stroke={theme.grid} tick={{ fill: theme.axis, fontSize: 11 }} />
             <YAxis
-              stroke="#94a3b8"
-              fontSize={12}
+              stroke={theme.grid}
+              tick={{ fill: theme.axis, fontSize: 11 }}
               tickFormatter={(v) => formatCurrency(v, currency)}
               width={80}
             />
             <Tooltip
               contentStyle={{
-                background: "#0f172a",
-                border: "1px solid #1f2937",
+                background: theme.tooltipBg,
+                border: `1px solid ${theme.tooltipBorder}`,
                 borderRadius: 8,
+                color: theme.text,
               }}
-              labelStyle={{ color: "#e2e8f0" }}
-              itemStyle={{ color: "#e2e8f0" }}
+              labelStyle={{ color: theme.text }}
+              itemStyle={{ color: theme.text }}
               formatter={(v: number) => {
-                const color = v < 0 ? "#f43f5e" : v > 0 ? "#22c55e" : "#e2e8f0";
+                const color = v < 0 ? theme.negative : v > 0 ? theme.positive : theme.text;
                 return [
                   <span key="pnl" style={{ color, fontWeight: 600 }}>
                     {formatCurrency(v, currency)}
@@ -46,7 +52,7 @@ export function PnlBySymbolChart({ items, currency }: PnlBySymbolChartProps) {
             />
             <Bar dataKey="pnl_abs" name="PnL">
               {items.map((entry, idx) => (
-                <Cell key={idx} fill={entry.pnl_abs < 0 ? "#f43f5e" : "#22c55e"} />
+                <Cell key={idx} fill={entry.pnl_abs < 0 ? theme.negative : theme.positive} />
               ))}
             </Bar>
           </BarChart>
