@@ -8,12 +8,13 @@ import {
   Sparkles,
   Terminal,
 } from "lucide-react";
+import type { ComponentType } from "react";
 import type { UserRole } from "@/lib/types";
 
 export interface NavItem {
   href: string;
   label: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: ComponentType<{ className?: string }>;
   adminOnly?: boolean;
 }
 

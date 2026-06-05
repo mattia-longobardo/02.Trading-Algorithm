@@ -7,8 +7,9 @@ describe("nav-items", () => {
   });
 
   it("users do not see admin-only items", () => {
+    const adminOnlyCount = NAV.filter((item) => item.adminOnly).length;
     const userNav = visibleNavFor("user");
-    expect(userNav.length).toBeLessThan(NAV.length);
+    expect(userNav).toHaveLength(NAV.length - adminOnlyCount);
     expect(userNav.every((item) => !item.adminOnly)).toBe(true);
   });
 
