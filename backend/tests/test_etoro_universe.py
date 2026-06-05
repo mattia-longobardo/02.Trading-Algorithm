@@ -157,6 +157,85 @@ class CheapPrefilterHelperTests(unittest.TestCase):
         spiky = manager._cheap_prefilter_score({"popularity": 1000, "price_change_1d": 50.0})
         self.assertGreater(calm, spiky)
 
+    def _stock(self, symbol, exch=4, rate=100.0, pop=1000, name="Co", tradable=True, delisted=False):
+        return {
+            "symbol": symbol, "name": name, "tradable": tradable, "delisted": delisted,
+            "exchange_id": exch, "current_rate": rate, "popularity": pop,
+            "instrument_type": "Stocks",
+            "price_change_1d": 0.0, "price_change_1w": 0.0,
+            "price_change_1m": 0.0, "price_change_3m": 0.0, "price_change_6m": 0.0,
+        }
+
+    def _crypto(self, symbol, pop=1000, itype="Crypto", tradable=True):
+        return {
+            "symbol": symbol, "name": symbol, "tradable": tradable, "delisted": False,
+            "exchange_id": None, "current_rate": 1.0, "popularity": pop,
+            "instrument_type": itype,
+            "price_change_1d": 0.0, "price_change_1w": 0.0,
+            "price_change_1m": 0.0, "price_change_3m": 0.0, "price_change_6m": 0.0,
+        }
+
+    def test_passes_cheap_filter_stock_rules(self):
+        manager, _ = self._manager()
+        wl = {4, 5}
+        self.assertTrue(manager._passes_cheap_filter("STOCK", self._stock("AAPL", exch=4), wl))
+        self.assertFalse(manager._passes_cheap_filter("STOCK", self._stock("X", exch=99), wl))
+        self.assertFalse(manager._passes_cheap_filter("STOCK", self._stock("X", rate=1.0), wl))
+        self.assertFalse(manager._passes_cheap_filter("STOCK", self._stock("X", tradable=False), wl))
+        self.assertFalse(manager._passes_cheap_filter("STOCK", self._stock("X", name="Big Index Fund"), wl))
+
+    def test_passes_cheap_filter_crypto_excludes_futures(self):
+        manager, _ = self._manager()
+        self.assertTrue(manager._passes_cheap_filter("CRYPTO", self._crypto("ETH.SPOT"), None))
+        self.assertTrue(manager._passes_cheap_filter("CRYPTO", self._crypto("HYPE"), None))
+        self.assertFalse(manager._passes_cheap_filter("CRYPTO", self._crypto("BTC.MAY26"), None))
+        self.assertFalse(manager._passes_cheap_filter("CRYPTO", self._crypto("X", itype="Crypto Futures"), None))
+
+    def test_build_cheap_shortlist_stock_caps_and_filters(self):
+        manager, broker = self._manager()
+        manager.config.universe_stock_shortlist = 2
+        broker.list_exchanges.return_value = {4: "NASDAQ", 99: "Tokyo"}
+        broker.discover_instruments.return_value = [
+            self._stock("AAA", exch=4, pop=10),
+            self._stock("BBB", exch=4, pop=9000),
+            self._stock("CCC", exch=4, pop=5000),
+            self._stock("TKO", exch=99, pop=99999),
+        ]
+        wl = manager._resolve_exchange_whitelist(broker)
+        shortlist = manager._build_cheap_shortlist(broker, "STOCK", [], wl)
+        symbols = [a["symbol"] for a in shortlist]
+        self.assertEqual(len(shortlist), 2)
+        self.assertEqual(symbols, ["BBB", "CCC"])
+        self.assertNotIn("TKO", symbols)
+
+    def test_build_cheap_shortlist_pins_preferred(self):
+        manager, broker = self._manager()
+        manager.config.universe_stock_shortlist = 2
+        broker.list_exchanges.return_value = {4: "NASDAQ"}
+        broker.discover_instruments.return_value = [
+            self._stock("AAA", exch=4, pop=9000),
+            self._stock("BBB", exch=4, pop=8000),
+            self._stock("KEEP", exch=4, pop=1),
+        ]
+        wl = manager._resolve_exchange_whitelist(broker)
+        shortlist = manager._build_cheap_shortlist(broker, "STOCK", ["KEEP"], wl)
+        symbols = [a["symbol"] for a in shortlist]
+        self.assertIn("KEEP", symbols)
+
+    def test_build_cheap_shortlist_crypto_drops_futures(self):
+        manager, broker = self._manager()
+        manager.config.universe_crypto_shortlist = 10
+        broker.discover_instruments.return_value = [
+            self._crypto("ETH.SPOT", pop=100),
+            self._crypto("BTC.MAY26", pop=99999),
+            self._crypto("HYPE", pop=50),
+        ]
+        shortlist = manager._build_cheap_shortlist(broker, "CRYPTO", [], None)
+        symbols = [a["symbol"] for a in shortlist]
+        self.assertIn("ETH.SPOT", symbols)
+        self.assertIn("HYPE", symbols)
+        self.assertNotIn("BTC.MAY26", symbols)
+
 
 if __name__ == "__main__":
     unittest.main()
