@@ -18,7 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/format";
-import type { Provider, SettingsResponse, UserRow } from "@/lib/types";
+import type { SettingsResponse, UserRow } from "@/lib/types";
 
 const SETTING_FIELDS: Array<{
   key: string;
@@ -29,26 +29,27 @@ const SETTING_FIELDS: Array<{
   restartRequired?: boolean;
 }> = [
   { key: "max_open_trades_stock", label: "Max open trade stock", hint: "Slot massimi attivi su azioni.", kind: "number" },
-  { key: "max_open_trades_crypto", label: "Max open trade crypto", hint: "Slot massimi attivi su crypto Alpaca.", kind: "number" },
+  { key: "max_open_trades_crypto", label: "Max open trade crypto", hint: "Slot massimi attivi su crypto.", kind: "number" },
   { key: "weekly_universe_stocks", label: "Universe stock", hint: "Numero di simboli stock nell'universe settimanale.", kind: "number" },
-  { key: "weekly_universe_crypto", label: "Universe crypto", hint: "Numero di simboli crypto Alpaca nell'universe settimanale.", kind: "number" },
+  { key: "weekly_universe_crypto", label: "Universe crypto", hint: "Numero di simboli crypto nell'universe settimanale.", kind: "number" },
   { key: "currency", label: "Display currency", hint: "Valuta di display nella UI.", kind: "string" },
   { key: "risk_tolerance", label: "Risk tolerance", hint: "1 = conservativo, 10 = aggressivo.", kind: "number" },
   { key: "strategy_horizon_days_min", label: "Horizon min (giorni)", hint: "Minimo orizzonte di holding suggerito al modello.", kind: "number" },
   { key: "strategy_horizon_days_max", label: "Horizon max (giorni)", hint: "Massimo orizzonte di holding suggerito al modello.", kind: "number" },
-  { key: "crypto_entry_limit_collar_bps", label: "Alpaca crypto collar (bps)", hint: "Tolleranza limit IOC marketable Alpaca.", kind: "number" },
-  { key: "crypto_entry_max_chase_bps", label: "Alpaca crypto max chase (bps)", hint: "Quanto inseguire la best ask su Alpaca.", kind: "number" },
-  { key: "crypto_pending_reprice_minutes", label: "Alpaca crypto reprice (min)", hint: "Minuti prima di rinviare il limit pending Alpaca.", kind: "number" },
-  { key: "crypto_pending_cancel_minutes", label: "Alpaca crypto cancel (min)", hint: "Minuti prima di cancellare il pending lontano dal target.", kind: "number" },
-  { key: "alpaca_max_notional_per_order", label: "Alpaca max notional/ordine", hint: "Cap notional per ordine: oltre questo Alpaca rifiuta (40310000). L'ordine viene ridotto a questo valore.", kind: "number" },
+  { key: "crypto_entry_limit_collar_bps", label: "Crypto collar (bps)", hint: "Tolleranza limit IOC marketable per le crypto eToro.", kind: "number" },
+  { key: "crypto_entry_max_chase_bps", label: "Crypto max chase (bps)", hint: "Quanto inseguire la best ask sulle crypto eToro.", kind: "number" },
+  { key: "crypto_pending_reprice_minutes", label: "Crypto reprice (min)", hint: "Minuti prima di rinviare il limit pending.", kind: "number" },
+  { key: "crypto_pending_cancel_minutes", label: "Crypto cancel (min)", hint: "Minuti prima di cancellare il pending lontano dal target.", kind: "number" },
+  { key: "etoro_min_trade_amount", label: "eToro min trade amount", hint: "Importo minimo per ordine eToro.", kind: "number" },
+  { key: "etoro_default_leverage", label: "eToro default leverage", hint: "Leva di default per i trade eToro.", kind: "number" },
   { key: "log_level", label: "Log level", hint: "Livello log applicativo.", kind: "select", options: ["DEBUG", "INFO", "WARNING", "ERROR"], restartRequired: true },
   { key: "log_profile", label: "Log profile", hint: "Verbosity preset.", kind: "select", options: ["DEBUG", "PRODUCTION"], restartRequired: true },
 ];
 
-const ALPACA_SECRET_FIELDS = [
+const ETORO_SECRET_FIELDS = [
   { key: "openai_api_key", label: "OpenAI API key" },
-  { key: "alpaca_api_key", label: "Alpaca API key" },
-  { key: "alpaca_secret_key", label: "Alpaca secret key" },
+  { key: "etoro_api_key", label: "eToro API key" },
+  { key: "etoro_user_key", label: "eToro user key" },
 ];
 
 export default function SettingsPage() {
@@ -63,14 +64,14 @@ export default function SettingsPage() {
       <Tabs defaultValue="env">
         <TabsList>
           <TabsTrigger value="env">Ambiente</TabsTrigger>
-          <TabsTrigger value="alpaca">Alpaca</TabsTrigger>
+          <TabsTrigger value="etoro">eToro</TabsTrigger>
           <TabsTrigger value="users">Account &amp; utenti</TabsTrigger>
         </TabsList>
         <TabsContent value="env">
           <EnvTab adminOnly={user.role === "admin"} />
         </TabsContent>
-        <TabsContent value="alpaca">
-          <BrokerTab provider="alpaca" />
+        <TabsContent value="etoro">
+          <BrokerTab />
         </TabsContent>
         <TabsContent value="users">
           <UsersTab />
@@ -80,21 +81,19 @@ export default function SettingsPage() {
   );
 }
 
-function BrokerTab({ provider }: { provider: Provider }) {
+function BrokerTab() {
   const settings = useQuery({
     queryKey: ["settings"],
     queryFn: () => api.get<SettingsResponse>("/api/settings"),
   });
   const data = settings.data;
-  const active = (data?.active_providers ?? []).includes(provider);
-  const secretFields = ALPACA_SECRET_FIELDS;
-  const label = "Alpaca Markets";
+  const active = (data?.active_providers ?? []).includes("etoro");
 
   return (
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle>{label}</CardTitle>
+          <CardTitle>eToro</CardTitle>
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={active ? "open" : "muted"}>
               {active ? "modulo attivo" : "modulo disattivato"}
@@ -104,11 +103,11 @@ function BrokerTab({ provider }: { provider: Provider }) {
         <CardContent className="space-y-3">
           <p className="text-xs text-(--color-muted)">
             {active
-              ? `Le credenziali ${label} sono configurate. Il bot opera su questo broker e la dashboard ne aggrega i valori.`
-              : `Le credenziali ${label} non sono presenti in .env. Il modulo è spento e nessuna superficie ${label} viene mostrata in altre pagine.`}
+              ? "Le credenziali eToro sono configurate. Il bot opera su questo broker e la dashboard ne aggrega i valori."
+              : "Le credenziali eToro non sono presenti in .env. Il modulo è spento."}
           </p>
           <div className="grid gap-3 md:grid-cols-2">
-            {secretFields.map((s) => (
+            {ETORO_SECRET_FIELDS.map((s) => (
               <div key={s.key} className="space-y-1">
                 <label className="text-xs uppercase text-(--color-muted)">{s.label}</label>
                 <Input value={(data?.values[s.key] as string) ?? ""} readOnly />
@@ -218,13 +217,13 @@ function EnvTab({ adminOnly }: { adminOnly: boolean }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Segreti Alpaca (sola lettura)</CardTitle>
+          <CardTitle>Segreti eToro (sola lettura)</CardTitle>
           <span className="text-xs text-(--color-muted)">
             Modificali solo via .env per sicurezza.
           </span>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {ALPACA_SECRET_FIELDS.map((s) => (
+          {ETORO_SECRET_FIELDS.map((s) => (
             <div key={s.key} className="space-y-1">
               <label className="text-xs uppercase text-(--color-muted)">{s.label}</label>
               <Input value={(settings.data?.values[s.key] as string) ?? ""} readOnly />

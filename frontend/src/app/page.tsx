@@ -17,23 +17,18 @@ import {
   YAxis,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { TimeframeSelector, type Timeframe } from "@/components/timeframe-selector";
 import { EquityBalanceChart } from "@/components/equity-balance-chart";
 import { api } from "@/lib/api";
 import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
-import { useProviders } from "@/lib/use-providers";
 import type {
   AllocationCategory,
-  AllocationProvider,
   AllocationSymbol,
   EquityPoint,
   Metrics,
   PnlBySymbolRow,
-  Provider,
   ReturnsBin,
 } from "@/lib/types";
-import { PROVIDER_LABELS } from "@/lib/types";
 
 const PIE_COLORS = ["#22c55e", "#38bdf8", "#a78bfa", "#f59e0b", "#f43f5e", "#facc15", "#34d399"];
 
@@ -85,7 +80,6 @@ function useDashboardAutoRefresh(): Date | null {
 
 export default function DashboardPage() {
   const [timeframe, setTimeframe] = useState<Timeframe>("3M");
-  const providers = useProviders();
   const lastAutoRefresh = useDashboardAutoRefresh();
 
   const metrics = useQuery({
@@ -118,7 +112,6 @@ export default function DashboardPage() {
       api.get<{
         by_category: AllocationCategory[];
         by_symbol: AllocationSymbol[];
-        by_provider?: AllocationProvider[];
       }>("/api/allocation"),
   });
   const distribution = useQuery({
@@ -144,36 +137,6 @@ export default function DashboardPage() {
     }));
   }, [distribution.data]);
 
-  if (!providers.isLoading && providers.active.length === 0) {
-    return (
-      <section className="space-y-6">
-        <header>
-          <h1 className="text-3xl font-semibold">Dashboard</h1>
-          <p className="text-sm text-(--color-muted)">
-            Nessun broker configurato. Aggiungi le credenziali Alpaca nel{" "}
-            <code>.env</code> del backend e riavvia per vedere KPI, equity curve e allocazione.
-          </p>
-        </header>
-        <Card>
-          <CardHeader>
-            <CardTitle>Onboarding</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm text-(--color-muted)">
-            <p>
-              Le pagine Universe, Prompt e Settings ti permettono di configurare i moduli broker
-              non appena le credenziali sono presenti.
-            </p>
-            <p>
-              Una volta avviato almeno un broker, questa dashboard aggregherà i valori (KPI,
-              equity curve, allocazione, P&amp;L) di tutti i provider attivi nella valuta di
-              display configurata.
-            </p>
-          </CardContent>
-        </Card>
-      </section>
-    );
-  }
-
   return (
     <section className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
@@ -184,24 +147,16 @@ export default function DashboardPage() {
             I dati si aggiornano una volta al minuto, ~30 s dopo il tick di
             mercato del backend.
           </p>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-(--color-muted)">
-            Aggregazione su:
-            {providers.active.map((p) => (
-              <Badge key={p} variant="open">
-                {PROVIDER_LABELS[p]}
-              </Badge>
-            ))}
-            {lastAutoRefresh && (
-              <span className="ml-2">
-                · ultimo aggiornamento{" "}
-                {lastAutoRefresh.toLocaleTimeString(undefined, {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  second: "2-digit",
-                })}
-              </span>
-            )}
-          </div>
+          {lastAutoRefresh && (
+            <p className="mt-1 text-xs text-(--color-muted)">
+              Ultimo aggiornamento:{" "}
+              {lastAutoRefresh.toLocaleTimeString(undefined, {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              })}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-3">
           {fxRate.data && fxRate.data.from !== fxRate.data.to && (
@@ -365,29 +320,6 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {providers.active.length > 1 && (allocation.data?.by_provider?.length ?? 0) > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Allocazione per provider</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-            {(allocation.data?.by_provider ?? []).map((row) => (
-              <div
-                key={row.provider}
-                className="rounded-lg border border-(--color-line) bg-slate-950/40 p-4"
-              >
-                <p className="text-xs uppercase text-(--color-muted)">
-                  {PROVIDER_LABELS[row.provider as Provider] ?? row.provider}
-                </p>
-                <p className="mt-1 text-xl font-semibold">
-                  {formatCurrency(row.value, m?.currency ?? "EUR")}
-                </p>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
@@ -528,4 +460,3 @@ function Kpi({
     </Card>
   );
 }
-

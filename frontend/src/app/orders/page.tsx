@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Inbox, RefreshCcw } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,8 +26,6 @@ import { StatusBanner } from "@/components/ui/status-banner";
 import { ApiError, api } from "@/lib/api";
 import { formatCurrency, formatDateTime, formatNumber } from "@/lib/format";
 import {
-  PROVIDER_LABELS,
-  type Provider,
   type Trade,
   type TradeCategory,
   type TradeStatus,
@@ -35,7 +33,6 @@ import {
 
 const STATUSES: TradeStatus[] = ["PENDING", "OPEN", "CLOSED", "CANCELLED"];
 const CATEGORIES: TradeCategory[] = ["STOCK", "CRYPTO"];
-const PROVIDERS: Provider[] = ["alpaca"];
 
 interface TradesEnvelope {
   items: Trade[];
@@ -95,7 +92,6 @@ export default function OrdersPage() {
   const qc = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<TradeStatus | "ALL">("ALL");
   const [categoryFilter, setCategoryFilter] = useState<TradeCategory | "ALL">("ALL");
-  const [providerFilter, setProviderFilter] = useState<Provider | "ALL">("ALL");
   const [symbolFilter, setSymbolFilter] = useState("");
   const [editing, setEditing] = useState<Trade | null>(null);
   const [closing, setClosing] = useState<Trade | null>(null);
@@ -114,13 +110,7 @@ export default function OrdersPage() {
     refetchInterval: 30_000,
   });
 
-  // Provider filter is applied client-side because the backend list endpoint
-  // doesn't expose it (the field is on the row itself).
-  const items = useMemo(() => {
-    const rows = trades.data?.items ?? [];
-    if (providerFilter === "ALL") return rows;
-    return rows.filter((t) => (t.provider ?? "alpaca") === providerFilter);
-  }, [trades.data?.items, providerFilter]);
+  const items = trades.data?.items ?? [];
 
   return (
     <section className="space-y-6">
@@ -144,7 +134,7 @@ export default function OrdersPage() {
         <CardHeader>
           <CardTitle>Filtri</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-4">
+        <CardContent className="grid gap-3 md:grid-cols-3">
           <div className="space-y-1">
             <label className="text-xs uppercase text-(--color-muted)">Stato</label>
             <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as TradeStatus | "ALL")}>
@@ -175,25 +165,6 @@ export default function OrdersPage() {
                 {CATEGORIES.map((c) => (
                   <SelectItem key={c} value={c}>
                     {c}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs uppercase text-(--color-muted)">Broker</label>
-            <Select
-              value={providerFilter}
-              onValueChange={(v) => setProviderFilter(v as Provider | "ALL")}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">Tutti</SelectItem>
-                {PROVIDERS.map((p) => (
-                  <SelectItem key={p} value={p}>
-                    {PROVIDER_LABELS[p]}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -279,19 +250,18 @@ function OrdersTable({
       <EmptyState
         icon={Inbox}
         title="Nessun trade"
-        description="Nessun trade per i filtri selezionati. Allenta i filtri di stato/categoria/broker o cerca un simbolo diverso."
+        description="Nessun trade per i filtri selezionati. Allenta i filtri di stato/categoria o cerca un simbolo diverso."
       />
     );
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[1600px] border-separate border-spacing-y-1 text-sm">
+      <table className="w-full min-w-[1500px] border-separate border-spacing-y-1 text-sm">
         <thead>
           <tr className="text-left text-xs uppercase text-(--color-muted)">
             <th className="px-2 py-2">ID</th>
             <th className="px-2 py-2">Simbolo</th>
             <th className="px-2 py-2">Stato</th>
             <th className="px-2 py-2">Cat.</th>
-            <th className="px-2 py-2">Broker</th>
             <th className="px-2 py-2">Dir.</th>
             <th className="px-2 py-2 text-right">Entry</th>
             <th className="px-2 py-2 text-right">Target</th>
@@ -329,10 +299,6 @@ function OrdersTable({
                   <Badge variant={statusVariant(t.status)}>{t.status}</Badge>
                 </td>
                 <td className="px-2 py-2 text-(--color-muted)">{t.category}</td>
-                <td className="px-2 py-2 text-(--color-muted)">
-                  {PROVIDER_LABELS[(t.provider ?? "alpaca") as Provider] ??
-                    (t.provider ?? "alpaca").toUpperCase()}
-                </td>
                 <td className="px-2 py-2 text-(--color-muted)">{t.direction}</td>
                 <td className="px-2 py-2 text-right">{formatNumber(t.entry_price)}</td>
                 <td className="px-2 py-2 text-right">{formatNumber(t.target_entry_price)}</td>

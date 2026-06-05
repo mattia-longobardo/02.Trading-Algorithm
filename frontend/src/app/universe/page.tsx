@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Globe, Plus, RefreshCcw, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,37 +16,31 @@ import {
 } from "@/components/ui/select";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusBanner } from "@/components/ui/status-banner";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatNumber } from "@/lib/format";
-import { useProviders } from "@/lib/use-providers";
-import { type Provider, PROVIDER_LABELS } from "@/lib/types";
 
 type Category = "STOCK" | "CRYPTO";
+
+const CATEGORIES: Category[] = ["STOCK", "CRYPTO"];
 
 interface UniverseEntry {
   symbol: string;
   category: Category;
-  provider: Provider;
+  provider: string;
   last_price: number | null;
   quote_error: string | null;
 }
 
 interface UniverseEnvelope {
-  universe: Record<Provider, Record<Category, UniverseEntry[]>>;
-  active_providers: Provider[];
+  universe: Record<string, Record<Category, UniverseEntry[]>>;
+  active_providers: string[];
 }
-
-const PROVIDER_CATEGORIES: Record<Provider, Category[]> = {
-  alpaca: ["STOCK", "CRYPTO"],
-};
 
 export default function UniversePage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const qc = useQueryClient();
-  const providers = useProviders();
 
   const universe = useQuery<UniverseEnvelope>({
     queryKey: ["universe"],
@@ -54,28 +48,8 @@ export default function UniversePage() {
     refetchInterval: 60_000,
   });
 
-  const activeProviders = useMemo<Provider[]>(() => {
-    if (universe.data?.active_providers?.length) {
-      return universe.data.active_providers;
-    }
-    return providers.active;
-  }, [universe.data, providers.active]);
-
-  if (!providers.isLoading && !providers.isError && activeProviders.length === 0) {
-    return (
-      <section className="space-y-6">
-        <header>
-          <h1 className="text-3xl font-semibold">Universe</h1>
-          <p className="text-sm text-(--color-muted)">
-            Nessun broker configurato. Imposta le credenziali Alpaca nel <code>.env</code>{" "}
-            del backend e riavvia per popolare l&apos;universe.
-          </p>
-        </header>
-      </section>
-    );
-  }
-
-  const defaultProvider: Provider = activeProviders[0] ?? "alpaca";
+  // The backend always returns universe keyed under "etoro"
+  const etoroEntries = universe.data?.universe?.["etoro"] ?? ({} as Record<Category, UniverseEntry[]>);
 
   return (
     <section className="space-y-6">
@@ -83,8 +57,7 @@ export default function UniversePage() {
         <div>
           <h1 className="text-3xl font-semibold">Universe</h1>
           <p className="text-sm text-(--color-muted)">
-            Universe attivo monitorato dal bot. Le aggiunte manuali sono validate via il broker
-            corrispondente.
+            Universe attivo monitorato dal bot. Le aggiunte manuali sono validate via eToro.
           </p>
         </div>
         <Button variant="secondary" size="sm" onClick={() => universe.refetch()}>
@@ -92,26 +65,21 @@ export default function UniversePage() {
         </Button>
       </header>
 
-      <Tabs defaultValue={defaultProvider}>
-        <TabsList>
-          {activeProviders.map((p) => (
-            <TabsTrigger key={p} value={p}>
-              {PROVIDER_LABELS[p]}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-        {activeProviders.map((provider) => (
-          <TabsContent key={provider} value={provider}>
-            <ProviderUniverseSection
-              provider={provider}
-              isAdmin={isAdmin}
-              loading={universe.isLoading}
-              entries={universe.data?.universe?.[provider] ?? ({} as Record<Category, UniverseEntry[]>)}
-              onMutated={() => qc.invalidateQueries({ queryKey: ["universe"] })}
-            />
-          </TabsContent>
+      <div className="space-y-4">
+        {isAdmin && (
+          <AddSymbolCard onAdded={() => qc.invalidateQueries({ queryKey: ["universe"] })} />
+        )}
+        {CATEGORIES.map((category) => (
+          <UniverseCategoryCard
+            key={category}
+            category={category}
+            items={etoroEntries[category] ?? []}
+            loading={universe.isLoading}
+            isAdmin={isAdmin}
+            onRemoved={() => qc.invalidateQueries({ queryKey: ["universe"] })}
+          />
         ))}
-      </Tabs>
+      </div>
 
       {!isAdmin && (
         <p className="text-xs text-(--color-muted)">
@@ -122,47 +90,8 @@ export default function UniversePage() {
   );
 }
 
-function ProviderUniverseSection({
-  provider,
-  isAdmin,
-  loading,
-  entries,
-  onMutated,
-}: {
-  provider: Provider;
-  isAdmin: boolean;
-  loading: boolean;
-  entries: Record<Category, UniverseEntry[]>;
-  onMutated: () => void;
-}) {
-  const categories = PROVIDER_CATEGORIES[provider];
-  return (
-    <div className="space-y-4">
-      {isAdmin && <AddSymbolCard provider={provider} onAdded={onMutated} />}
-      {categories.map((category) => (
-        <UniverseCategoryCard
-          key={`${provider}:${category}`}
-          provider={provider}
-          category={category}
-          items={entries[category] ?? []}
-          loading={loading}
-          isAdmin={isAdmin}
-          onRemoved={onMutated}
-        />
-      ))}
-    </div>
-  );
-}
-
-function AddSymbolCard({
-  provider,
-  onAdded,
-}: {
-  provider: Provider;
-  onAdded: () => void;
-}) {
-  const categories = PROVIDER_CATEGORIES[provider];
-  const [category, setCategory] = useState<Category>(categories[0]);
+function AddSymbolCard({ onAdded }: { onAdded: () => void }) {
+  const [category, setCategory] = useState<Category>("STOCK");
   const [symbol, setSymbol] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -170,18 +99,18 @@ function AddSymbolCard({
   const mutation = useMutation({
     mutationFn: () =>
       api.post<{
-        provider: Provider;
+        provider: string;
         category: Category;
         symbol: string;
         added: boolean;
         already_present: boolean;
-      }>(`/api/universe/symbols`, { provider, category, symbol }),
+      }>(`/api/universe/symbols`, { provider: "etoro", category, symbol }),
     onSuccess: (data) => {
-      const label = `${PROVIDER_LABELS[data.provider]} · ${data.category.toLowerCase()}`;
+      const label = `Universe · ${data.category.toLowerCase()}`;
       if (data.already_present) {
-        setSuccess(`${data.symbol} è già nel universe ${label}.`);
+        setSuccess(`${data.symbol} è già nel ${label}.`);
       } else {
-        setSuccess(`${data.symbol} aggiunto al universe ${label}.`);
+        setSuccess(`${data.symbol} aggiunto al ${label}.`);
       }
       setSymbol("");
       onAdded();
@@ -194,29 +123,21 @@ function AddSymbolCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Aggiungi simbolo — {PROVIDER_LABELS[provider]}</CardTitle>
+        <CardTitle>Aggiungi simbolo</CardTitle>
       </CardHeader>
-      <CardContent
-        className={
-          categories.length > 1
-            ? "grid gap-3 md:grid-cols-[10rem_1fr_auto]"
-            : "grid gap-3 md:grid-cols-[1fr_auto]"
-        }
-      >
-        {categories.length > 1 && (
-          <Select value={category} onValueChange={(v) => setCategory(v as Category)}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {categories.map((c) => (
-                <SelectItem key={c} value={c}>
-                  {c}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
+      <CardContent className="grid gap-3 md:grid-cols-[10rem_1fr_auto]">
+        <Select value={category} onValueChange={(v) => setCategory(v as Category)}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {CATEGORIES.map((c) => (
+              <SelectItem key={c} value={c}>
+                {c}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Input
           value={symbol}
           onChange={(e) => setSymbol(e.target.value)}
@@ -248,14 +169,12 @@ function AddSymbolCard({
 }
 
 function UniverseCategoryCard({
-  provider,
   category,
   items,
   loading,
   isAdmin,
   onRemoved,
 }: {
-  provider: Provider;
   category: Category;
   items: UniverseEntry[];
   loading: boolean;
@@ -273,9 +192,7 @@ function UniverseCategoryCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>
-          {PROVIDER_LABELS[provider]} · {category}
-        </CardTitle>
+        <CardTitle>Universe · {category}</CardTitle>
         <Badge variant="muted">{items.length}</Badge>
       </CardHeader>
       <CardContent>
@@ -283,7 +200,7 @@ function UniverseCategoryCard({
         {!loading && items.length === 0 && (
           <EmptyState
             icon={Globe}
-            title={`Universe ${PROVIDER_LABELS[provider]} · ${category} vuoto`}
+            title={`Universe ${category} vuoto`}
             description={
               <>
                 Aggiungi simboli manualmente con il form sopra oppure aspetta la
@@ -330,7 +247,7 @@ function UniverseCategoryCard({
                           onClick={() => {
                             if (
                               confirm(
-                                `Rimuovere ${entry.symbol} dal universe ${PROVIDER_LABELS[entry.provider]} ${entry.category.toLowerCase()}?`,
+                                `Rimuovere ${entry.symbol} dall'universe ${entry.category.toLowerCase()}?`,
                               )
                             ) {
                               removeMutation.mutate(entry);
@@ -351,4 +268,3 @@ function UniverseCategoryCard({
     </Card>
   );
 }
-
