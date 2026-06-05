@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
@@ -67,34 +68,39 @@ export default function SymbolPage() {
   const openTrade = symbolTrades.find((t) => t.status === "OPEN") ?? undefined;
 
   // --- candles ---
+  // Wait for the trades query to settle so `category` is derived before the
+  // first candles fetch — otherwise the default "CRYPTO" fires a request that
+  // a STOCK symbol would immediately supersede (double round-trip).
   const candlesQuery = useQuery<CandlesEnvelope>({
     queryKey: ["candles", symbol, category],
     queryFn: () =>
       api.get<CandlesEnvelope>(
         `/api/candles?symbol=${encodeURIComponent(symbol)}&category=${category}&count=120`,
       ),
-    enabled: !!symbol,
+    enabled: !!symbol && (tradesQuery.isSuccess || tradesQuery.isError),
     staleTime: 60_000,
   });
 
   const candles = candlesQuery.data?.candles ?? [];
 
-  // --- price lines ---
-  const priceLines: { price: number; color?: string; title?: string }[] = [];
-  const entrySource = livePosition ?? openTrade;
-  if (entrySource) {
-    priceLines.push({ price: entrySource.entry_price, title: "Entry" });
-    if (entrySource.take_profit != null) {
-      priceLines.push({ price: entrySource.take_profit, color: "#22d37f", title: "TP" });
+  // --- price lines (memoized so the chart isn't torn down on every live tick) ---
+  const priceLines = useMemo(() => {
+    const lines: { price: number; color?: string; title?: string }[] = [];
+    const src = livePosition ?? openTrade;
+    if (src) {
+      lines.push({ price: src.entry_price, title: "Entry" });
+      if (src.take_profit != null) {
+        lines.push({ price: src.take_profit, color: "#22d37f", title: "TP" });
+      }
+      if (src.stop_loss != null) {
+        lines.push({ price: src.stop_loss, color: "#f06868", title: "SL" });
+      }
     }
-    if (entrySource.stop_loss != null) {
-      priceLines.push({ price: entrySource.stop_loss, color: "#f06868", title: "SL" });
-    }
-  }
+    return lines;
+  }, [livePosition, openTrade]);
 
-  // --- loading / error states ---
+  // --- loading state ---
   const isLoading = tradesQuery.isLoading || candlesQuery.isLoading;
-  const hasError = tradesQuery.isError || candlesQuery.isError;
 
   return (
     <section className="space-y-6">
@@ -131,7 +137,7 @@ export default function SymbolPage() {
         <div className="flex h-[380px] w-full animate-pulse items-center justify-center rounded-xl border border-(--color-line) bg-(--color-panel)/40 text-sm text-(--color-muted)">
           Caricamento…
         </div>
-      ) : hasError ? (
+      ) : candlesQuery.isError ? (
         <div className="flex h-[380px] w-full items-center justify-center rounded-xl border border-dashed border-(--color-line) bg-(--color-panel)/40 text-sm text-(--color-muted)">
           Impossibile caricare il grafico.
         </div>
@@ -157,6 +163,8 @@ export default function SymbolPage() {
         </h2>
         {tradesQuery.isLoading ? (
           <p className="text-sm text-(--color-muted)">Caricamento…</p>
+        ) : tradesQuery.isError ? (
+          <p className="text-sm text-(--color-danger)">Impossibile caricare lo storico trade.</p>
         ) : (
           <SymbolTradeHistory trades={symbolTrades} />
         )}
