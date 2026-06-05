@@ -353,6 +353,41 @@ class EToroClient:
         payload = self._request("GET", path)
         return payload.get("clientPortfolio") or {}
 
+    def get_portfolio(self) -> dict[str, Any]:
+        """Return the raw normalized portfolio payload (one GET).
+
+        Exposes ``credit``, ``positions``, and ``orders`` so callers can
+        derive both cash and equity without a second network call.
+        """
+        return self._portfolio()
+
+    def get_rates_by_instruments(self, instrument_ids: list[int]) -> dict[int, dict]:
+        """Fetch live rates for a batch of instrument IDs in a single GET.
+
+        Returns ``{instrument_id: rate_dict}`` where each ``rate_dict``
+        contains ``bid``, ``ask``, and ``lastExecution`` (any may be ``None``).
+        Returns ``{}`` immediately when *instrument_ids* is empty (no network
+        call).
+        """
+        if not instrument_ids:
+            return {}
+        ids_param = ",".join(str(int(i)) for i in instrument_ids)
+        payload = self._request(
+            "GET",
+            "/api/v1/market-data/instruments/rates",
+            params={"instrumentIds": ids_param},
+        )
+        result: dict[int, dict] = {}
+        for row in payload.get("rates") or []:
+            iid = row.get("instrumentID")
+            if iid is None:
+                continue
+            bid = float(row.get("bid") or 0.0) or None
+            ask = float(row.get("ask") or 0.0) or None
+            last = float(row.get("lastExecution") or 0.0) or None
+            result[int(iid)] = {"bid": bid, "ask": ask, "lastExecution": last}
+        return result
+
     @staticmethod
     def _normalize_position(raw: dict[str, Any]) -> dict[str, Any]:
         return {

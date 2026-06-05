@@ -24,6 +24,7 @@ import {
 import { api } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
 import type { EquityPoint } from "@/lib/types";
+import { useChartTheme } from "@/components/charts/use-chart-theme";
 
 type Period = "1D" | "1W" | "1M" | "3M" | "6M" | "1Y" | "All" | "Custom";
 type Granularity = "15m" | "1h" | "4h" | "1d";
@@ -84,6 +85,7 @@ function formatTooltipLabel(iso: string): string {
 }
 
 export function EquityBalanceChart({ fallbackCurrency }: { fallbackCurrency: string }) {
+  const theme = useChartTheme();
   const now = useMemo(() => new Date(), []);
   const [period, setPeriod] = useState<Period>("1W");
   const [granularity, setGranularity] = useState<Granularity>("1h");
@@ -191,38 +193,38 @@ export function EquityBalanceChart({ fallbackCurrency }: { fallbackCurrency: str
         ) : (
           <ResponsiveContainer>
             <LineChart data={points} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+              <CartesianGrid strokeDasharray="3 3" stroke={theme.grid} />
               <XAxis
                 dataKey="t"
-                stroke="#94a3b8"
-                fontSize={11}
+                stroke={theme.grid}
+                tick={{ fill: theme.axis, fontSize: 11 }}
                 tickMargin={8}
                 minTickGap={32}
                 tickFormatter={(v: string) => formatTickForGranularity(v, granularity)}
               />
               <YAxis
-                stroke="#94a3b8"
-                fontSize={12}
+                stroke={theme.grid}
+                tick={{ fill: theme.axis, fontSize: 11 }}
                 tickFormatter={(v) => formatCurrency(v, currency)}
                 width={90}
                 domain={["auto", "auto"]}
               />
               <Tooltip
                 contentStyle={{
-                  background: "#0f172a",
-                  border: "1px solid #1f2937",
+                  background: theme.tooltipBg,
+                  border: `1px solid ${theme.tooltipBorder}`,
                   borderRadius: 8,
-                  color: "#e2e8f0",
+                  color: theme.text,
                 }}
-                labelStyle={{ color: "#94a3b8" }}
-                itemStyle={{ color: "#e2e8f0" }}
+                labelStyle={{ color: theme.axis }}
+                itemStyle={{ color: theme.text }}
                 labelFormatter={(label: string) => formatTooltipLabel(label)}
                 formatter={(v: number) => [formatCurrency(v, currency), "Saldo"]}
               />
               <Line
                 type="monotone"
                 dataKey="equity"
-                stroke="#38bdf8"
+                stroke={theme.info}
                 strokeWidth={2}
                 dot={false}
                 isAnimationActive={false}
@@ -231,8 +233,8 @@ export function EquityBalanceChart({ fallbackCurrency }: { fallbackCurrency: str
                 <Brush
                   dataKey="t"
                   height={24}
-                  stroke="#38bdf8"
-                  fill="#0f172a"
+                  stroke={theme.info}
+                  fill={theme.tooltipBg}
                   travellerWidth={8}
                   startIndex={startIndex}
                   endIndex={endIndex}

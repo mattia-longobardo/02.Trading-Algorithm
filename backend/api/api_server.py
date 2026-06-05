@@ -48,9 +48,11 @@ from core.utils import (
     AppConfig,
     apply_settings_overlay,
     isoformat_utc,
+    parse_datetime,
     utc_now,
 )
 from services.equity_snapshots import equity_curve_for_api, record_snapshots_all
+from services.live_snapshot import LiveSnapshotCache
 from services.metrics_service import MetricsService, parse_named_window, parse_window
 from services.universe_admin import (
     UniverseValidationError,
@@ -171,6 +173,26 @@ class UniverseSymbolPayload(BaseModel):
     provider: str | None = None
 
 
+# ----- SSE helpers ---------------------------------------------------------
+
+_LIVE_STREAM_INTERVAL_SECONDS = 5
+
+
+def _format_event(event_name: str, data: str) -> bytes:
+    """Encode a single Server-Sent-Event frame as UTF-8 bytes.
+
+    Multi-line data is split so each line is prefixed with ``data: `` per
+    the SSE specification. An empty trailing line terminates the event.
+    """
+    payload_lines = data.splitlines() or [""]
+    chunks = [f"event: {event_name}"]
+    for line in payload_lines:
+        chunks.append(f"data: {line}")
+    chunks.append("")
+    chunks.append("")
+    return "\n".join(chunks).encode("utf-8")
+
+
 # ----- error helper --------------------------------------------------------
 
 
@@ -179,6 +201,37 @@ def _error(status_code: int, code: str, message: str) -> HTTPException:
         status_code=status_code,
         detail={"error": {"code": code, "message": message}},
     )
+
+
+# ----- candle mapping helper -----------------------------------------------
+
+
+def _candle_to_dict(bar: dict[str, Any]) -> dict[str, Any]:
+    """Map an eToro bar dict to the compact OHLC wire shape.
+
+    Input keys (from ``EToroClient.get_candles_by_instrument``):
+        symbol, timestamp, open, high, low, close, volume
+
+    Output shape::
+
+        {"t": <iso-utc str>, "o": float, "h": float, "l": float,
+         "c": float, "v": float | None}
+    """
+    ts_raw: str = str(bar.get("timestamp") or "")
+    # Normalise to ISO-8601 UTC; keep raw string as fallback so callers
+    # always get a non-null "t" field even if the timestamp is unusual.
+    parsed = parse_datetime(ts_raw) if ts_raw else None
+    t = isoformat_utc(parsed) if parsed is not None else ts_raw
+    vol_raw = bar.get("volume")
+    v: float | None = float(vol_raw) if vol_raw is not None else None
+    return {
+        "t": t,
+        "o": float(bar["open"]),
+        "h": float(bar["high"]),
+        "l": float(bar["low"]),
+        "c": float(bar["close"]),
+        "v": v,
+    }
 
 
 # ----- factory -------------------------------------------------------------
@@ -190,6 +243,7 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
 
     brokers: dict[str, Any] = dict(getattr(scheduler.trade_manager, "brokers", {}) or {})
     metrics = MetricsService(config, api_logger, broker_clients=brokers)
+    live_cache = LiveSnapshotCache(metrics, brokers, config, api_logger)
 
     def _resolve_brokers() -> dict[str, Any]:
         # The scheduler holds the live broker registry; resolve it lazily so
@@ -674,6 +728,68 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
         else:
             from_dt, to_dt = parse_window(from_iso, to_iso)
         return metrics.returns_distribution(from_dt, to_dt, bins=bins)
+
+    @app.get("/api/candles")
+    def get_candles(
+        _user: auth_lib.AuthenticatedUser = Depends(get_current_user),
+        symbol: str = Query(...),
+        category: str = Query(default="CRYPTO"),
+        granularity: str = Query(default="OneDay"),
+        count: int = Query(default=120, ge=1, le=1000),
+    ) -> dict[str, Any]:
+        """Return the most-recent *count* OHLC bars for *symbol* at *granularity*.
+
+        Granularity values accepted by eToro: ``OneMinute``, ``FiveMinutes``,
+        ``FifteenMinutes``, ``ThirtyMinutes``, ``OneHour``, ``FourHours``,
+        ``OneDay``, ``OneWeek``, ``OneMonth``.  Bars are returned oldest-first.
+
+        Response shape::
+
+            {
+                "symbol": "BTC",
+                "category": "CRYPTO",
+                "granularity": "OneDay",
+                "candles": [{"t": ..., "o": ..., "h": ..., "l": ..., "c": ..., "v": ...}, ...]
+            }
+        """
+        live_brokers = _resolve_brokers()
+        broker = live_brokers.get(PROVIDER_ETORO)
+        if broker is None:
+            raise _error(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                "no_broker_configured",
+                "eToro broker is not configured or not connected",
+            )
+        normalized = str(symbol).upper().strip()
+        try:
+            instrument_id = broker.instrument_id_for_symbol(normalized)
+            if instrument_id is None:
+                raise _error(
+                    HTTPStatus.NOT_FOUND,
+                    "unknown_symbol",
+                    f"Symbol {normalized!r} could not be resolved to an eToro instrument",
+                )
+            bars = broker.get_candles_by_instrument(
+                instrument_id,
+                normalized,
+                count=count,
+                interval=granularity,
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            api_logger.warning("eToro candles fetch failed for %s: %s", normalized, exc)
+            raise _error(
+                HTTPStatus.BAD_GATEWAY,
+                "broker_error",
+                f"eToro API error while fetching candles for {normalized}: {exc}",
+            ) from exc
+        return {
+            "symbol": normalized,
+            "category": str(category).upper().strip(),
+            "granularity": granularity,
+            "candles": [_candle_to_dict(bar) for bar in bars],
+        }
 
     # ----- reports & folders --------------------------------------------
 
@@ -1218,15 +1334,6 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
     def get_logs_stream(_user: auth_lib.AuthenticatedUser = Depends(get_current_user)) -> StreamingResponse:
         log_path = Path(config.log_file)
 
-        def _format_event(event_name: str, data: str) -> bytes:
-            payload_lines = data.splitlines() or [""]
-            chunks = [f"event: {event_name}"]
-            for line in payload_lines:
-                chunks.append(f"data: {line}")
-            chunks.append("")
-            chunks.append("")
-            return "\n".join(chunks).encode("utf-8")
-
         async def streamer() -> Any:
             yield _format_event("heartbeat", isoformat_utc(utc_now()) or "")
             if not log_path.exists():
@@ -1250,6 +1357,36 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
                     yield _format_event("heartbeat", isoformat_utc(now) or "")
                     last_heartbeat_ts = now
                 await asyncio.sleep(1)
+
+        return StreamingResponse(streamer(), media_type="text/event-stream")
+
+    @app.get("/api/live/stream")
+    def get_live_stream(
+        _user: auth_lib.AuthenticatedUser = Depends(get_current_user),
+    ) -> StreamingResponse:
+        """Stream the live portfolio snapshot as Server-Sent Events.
+
+        Emits a ``snapshot`` event every ``_LIVE_STREAM_INTERVAL_SECONDS``
+        seconds containing the current live snapshot JSON, plus a
+        ``heartbeat`` event at least every 15 seconds to keep the
+        connection alive through proxies.
+        """
+
+        async def streamer() -> Any:
+            yield _format_event("heartbeat", isoformat_utc(utc_now()) or "")
+            last_heartbeat = utc_now()
+            while True:
+                try:
+                    loop = asyncio.get_running_loop()
+                    snapshot = await loop.run_in_executor(None, live_cache.get_snapshot)
+                    yield _format_event("snapshot", json.dumps(snapshot))
+                except Exception:
+                    api_logger.exception("live snapshot failed")
+                now = utc_now()
+                if (now - last_heartbeat).total_seconds() >= 15:
+                    yield _format_event("heartbeat", isoformat_utc(now) or "")
+                    last_heartbeat = now
+                await asyncio.sleep(_LIVE_STREAM_INTERVAL_SECONDS)
 
         return StreamingResponse(streamer(), media_type="text/event-stream")
 

@@ -1,26 +1,5 @@
 export type UserRole = "admin" | "user";
 
-export type Provider = "alpaca";
-
-export const ALL_PROVIDERS: Provider[] = ["alpaca"];
-
-export const PROVIDER_LABELS: Record<Provider, string> = {
-  alpaca: "Alpaca Markets",
-};
-
-export interface ProviderDescriptor {
-  provider: Provider;
-  active: boolean;
-  account_currency: string;
-  display_currency: string;
-  categories: string[];
-}
-
-export interface ProvidersResponse {
-  active: Provider[];
-  providers: ProviderDescriptor[];
-}
-
 export interface AuthUser {
   id: number;
   username: string;
@@ -63,10 +42,11 @@ export interface Trade {
   realized_pnl: number;
   unrealized_pnl: number;
   close_reason: string | null;
-  alpaca_order_id: string | null;
+  instrument_id: number | null;
+  position_id: string | null;
+  order_reference_id: string | null;
   reasoning: string | null;
   confidence: number | null;
-  provider: Provider;
   account_currency: string;
   created_at: string;
   updated_at: string;
@@ -88,7 +68,6 @@ export interface Metrics {
   account_equity: number;
   currency: string;
   account_currency: string;
-  providers?: Provider[];
 }
 
 export interface EquityPoint {
@@ -101,7 +80,6 @@ export interface PnlBySymbolRow {
   pnl_abs: number;
   pnl_pct: number;
   n_trades: number;
-  provider?: Provider;
 }
 
 export interface AllocationCategory {
@@ -112,12 +90,6 @@ export interface AllocationCategory {
 export interface AllocationSymbol {
   symbol: string;
   category: string;
-  value: number;
-  provider?: Provider;
-}
-
-export interface AllocationProvider {
-  provider: Provider;
   value: number;
 }
 
@@ -146,7 +118,7 @@ export interface ReportFolder {
   created_by: number | null;
 }
 
-export type AlpacaPromptKey =
+export type PromptKey =
   | "new_signal"
   | "batch_signals"
   | "pending_review"
@@ -156,9 +128,7 @@ export type AlpacaPromptKey =
   | "universe_final"
   | "universe_final_from_dossiers";
 
-export type PromptKey = AlpacaPromptKey;
-
-export const ALPACA_PROMPT_KEYS: AlpacaPromptKey[] = [
+export const PROMPT_KEYS: PromptKey[] = [
   "new_signal",
   "batch_signals",
   "pending_review",
@@ -168,8 +138,6 @@ export const ALPACA_PROMPT_KEYS: AlpacaPromptKey[] = [
   "universe_final",
   "universe_final_from_dossiers",
 ];
-
-export const PROMPT_KEYS: PromptKey[] = [...ALPACA_PROMPT_KEYS];
 
 export interface PromptSummary {
   key: PromptKey;
@@ -198,7 +166,7 @@ export interface PromptVersion {
 export interface SettingsResponse {
   values: Record<string, unknown>;
   restart_required: boolean;
-  active_providers?: Provider[];
+  active_providers?: string[];
 }
 
 export interface AuditEntry {
@@ -212,3 +180,31 @@ export interface AuditEntry {
   after_json: string | null;
   created_at: string;
 }
+
+export interface LivePosition {
+  id: number;
+  symbol: string;
+  category: TradeCategory;
+  units: number;
+  entry_price: number;
+  current_price: number | null;
+  unrealized_pnl: number | null;
+  unrealized_pnl_pct: number | null;
+  take_profit: number | null;
+  stop_loss: number | null;
+  position_id: string | null;
+  instrument_id: number | null;
+  is_buy: boolean;
+}
+
+export interface LiveSnapshot {
+  ts: string;
+  currency: string;
+  equity: number | null;
+  cash: number | null;
+  positions: LivePosition[];
+}
+
+export type LiveStatus = "connecting" | "live" | "stale" | "reconnecting";
+
+export interface Candle { t: string; o: number; h: number; l: number; c: number; v: number | null; }
