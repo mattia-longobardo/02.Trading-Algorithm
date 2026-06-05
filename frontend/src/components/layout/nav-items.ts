@@ -22,11 +22,10 @@ export const NAV: NavItem[] = [
   { href: "/", label: "Dashboard", icon: LineChart },
   { href: "/positions", label: "Posizioni", icon: Activity },
   { href: "/trades", label: "Trade", icon: ClipboardList },
-  { href: "/console", label: "Console", icon: Terminal },
+  { href: "/ops", label: "Operazioni", icon: Terminal },
   { href: "/universe", label: "Universe", icon: Globe },
   { href: "/reports", label: "Report", icon: FileText },
   { href: "/prompts", label: "Prompt", icon: Sparkles, adminOnly: true },
-  { href: "/logs", label: "Log", icon: Activity },
   { href: "/settings", label: "Impostazioni", icon: Settings },
 ];
 
