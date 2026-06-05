@@ -17,7 +17,7 @@ function FolderRow({ label, active, onClick, className }: FolderRowProps) {
   return (
     <button
       onClick={onClick}
-      className={`flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-sm transition-colors ${
+      className={`flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent) ${
         active
           ? "bg-(--color-panel) text-(--color-text)"
           : "text-(--color-muted) hover:bg-(--color-hover)"
@@ -63,6 +63,7 @@ function FolderTree({ folders, activeId, onSelect, onDelete }: FolderTreeProps) 
             size="icon"
             className="text-(--color-muted) hover:text-rose-400"
             onClick={() => onDelete(f)}
+            aria-label={`Elimina cartella ${f.name}`}
           >
             <Trash2 className="size-3.5" />
           </Button>

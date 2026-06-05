@@ -223,11 +223,11 @@ function ManageUsersCard() {
             <table className="w-full min-w-[760px] border-separate border-spacing-y-1 text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase text-(--color-muted)">
-                  <th className="px-2 py-2">Utente</th>
-                  <th className="px-2 py-2">Ruolo</th>
-                  <th className="px-2 py-2">Stato</th>
-                  <th className="px-2 py-2">Creato</th>
-                  <th className="px-2 py-2"></th>
+                  <th scope="col" className="px-2 py-2">Utente</th>
+                  <th scope="col" className="px-2 py-2">Ruolo</th>
+                  <th scope="col" className="px-2 py-2">Stato</th>
+                  <th scope="col" className="px-2 py-2">Creato</th>
+                  <th scope="col" className="px-2 py-2"></th>
                 </tr>
               </thead>
               <tbody>

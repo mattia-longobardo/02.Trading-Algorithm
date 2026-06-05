@@ -68,6 +68,7 @@ export function SymbolTradeHistory({ trades }: { trades: Trade[] }) {
             {HEADERS.map((h) => (
               <th
                 key={h}
+                scope="col"
                 className={`px-3 py-2 text-xs font-medium text-(--color-muted) ${
                   h === "Stato" ? "text-left" : "text-right"
                 }`}

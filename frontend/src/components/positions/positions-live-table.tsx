@@ -126,6 +126,7 @@ export function PositionsLiveTable({
             {HEADERS.map((h) => (
               <th
                 key={h}
+                scope="col"
                 className={`px-2 py-2 text-xs font-medium text-(--color-muted) ${
                   h === "Simbolo" ? "sticky left-0 z-10 bg-(--color-panel) text-left" : "text-right"
                 }`}
