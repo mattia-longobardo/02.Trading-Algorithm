@@ -19,9 +19,9 @@ function Kpi({
 }) {
   const tone =
     accent === "positive"
-      ? "text-emerald-400"
+      ? "text-(--color-accent)"
       : accent === "negative"
-      ? "text-rose-400"
+      ? "text-(--color-danger)"
       : "text-(--color-text)";
   return (
     <Card className="p-4">
