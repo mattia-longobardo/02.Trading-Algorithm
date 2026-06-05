@@ -59,6 +59,33 @@ class EtoroConfigTests(unittest.TestCase):
         self.assertEqual(config.etoro_default_leverage, 1)
         self.assertEqual(config.etoro_min_trade_amount, 50.0)
 
+    def test_universe_defaults(self):
+        config = AppConfig(openai_api_key="k", etoro_api_key="a", etoro_user_key="b")
+        self.assertEqual(config.universe_stock_shortlist, 300)
+        self.assertEqual(config.universe_crypto_shortlist, 150)
+        self.assertIn("NASDAQ", config.universe_stock_exchanges)
+        self.assertIn("MILAN", config.universe_stock_exchanges)
+
+    def test_load_config_reads_universe_env(self):
+        env = {
+            "OPENAI_API_KEY": "o",
+            "UNIVERSE_STOCK_SHORTLIST": "120",
+            "UNIVERSE_CRYPTO_SHORTLIST": "40",
+            "UNIVERSE_STOCK_EXCHANGES": "NASDAQ, NYSE , London",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            config = load_config()
+        self.assertEqual(config.universe_stock_shortlist, 120)
+        self.assertEqual(config.universe_crypto_shortlist, 40)
+        self.assertEqual(config.universe_stock_exchanges, ("NASDAQ", "NYSE", "London"))
+
+    def test_load_config_universe_exchanges_default_when_unset(self):
+        env = {"OPENAI_API_KEY": "o"}
+        with patch.dict(os.environ, env, clear=True):
+            config = load_config()
+        self.assertIn("NASDAQ", config.universe_stock_exchanges)
+        self.assertEqual(config.universe_stock_shortlist, 300)
+
 
 if __name__ == "__main__":
     unittest.main()
