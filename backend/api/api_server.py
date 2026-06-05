@@ -245,6 +245,23 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
     metrics = MetricsService(config, api_logger, broker_clients=brokers)
     live_cache = LiveSnapshotCache(metrics, brokers, config, api_logger)
 
+    # Snapshot the restart-only settings as they were when this process booted
+    # (main() applies the overlay before constructing the API). A restart is
+    # "required" only when the persisted overlay later DIVERGES from this
+    # snapshot — i.e. an operator changed a restart-only setting that won't take
+    # effect until the next process start. After a real restart this snapshot
+    # reflects the new values, so the banner clears on its own.
+    _boot_restart_settings = {
+        key: app_db.read_all_settings(config.db_app).get(key)
+        for key in SETTINGS_RESTART_REQUIRED_KEYS
+    }
+
+    def _restart_pending(current_overlay: dict[str, Any]) -> bool:
+        return any(
+            current_overlay.get(key) != _boot_restart_settings.get(key)
+            for key in SETTINGS_RESTART_REQUIRED_KEYS
+        )
+
     def _resolve_brokers() -> dict[str, Any]:
         # The scheduler holds the live broker registry; resolve it lazily so
         # add/remove of providers via settings (future) can be picked up.
@@ -1049,7 +1066,7 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
         # Expose the account currency label read-only so the settings tab can
         # render it as an informational field.
         values["account_currency"] = config.account_currency
-        restart_required = any(key in SETTINGS_RESTART_REQUIRED_KEYS for key in overlay)
+        restart_required = _restart_pending(overlay)
         return {
             "values": values,
             "restart_required": restart_required,
@@ -1078,7 +1095,7 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
             before=before,
             after=app_db.read_all_settings(config.db_app),
         )
-        restart_required = any(key in SETTINGS_RESTART_REQUIRED_KEYS for key in accepted)
+        restart_required = _restart_pending(app_db.read_all_settings(config.db_app))
         return {
             "values": {key: getattr(config, key, None) for key in SETTINGS_OVERRIDABLE_KEYS},
             "restart_required": restart_required,
