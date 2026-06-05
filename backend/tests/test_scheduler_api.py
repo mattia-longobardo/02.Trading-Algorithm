@@ -321,6 +321,47 @@ class TradingApiServerTests(unittest.TestCase):
         self.assertEqual(body["log_file"], str(self._log_file))
         self.assertEqual(body["logs"], "line 2\nline 3\n")
 
+    def test_live_stream_requires_auth(self) -> None:
+        # No login cookie — must be rejected with 401.
+        response = self._client.get("/api/live/stream")
+        self.assertEqual(response.status_code, 401)
+
+
+@unittest.skipUnless(_FASTAPI_AVAILABLE, "fastapi not installed in this test env")
+class FormatEventTests(unittest.TestCase):
+    """Unit tests for the module-level _format_event SSE helper.
+
+    Requires FastAPI to be importable (needed to import api_server).
+    Run in Docker where all deps are available.
+    """
+
+    def test_simple_single_line_event(self) -> None:
+        from api.api_server import _format_event
+
+        result = _format_event("snapshot", json.dumps({"a": 1}))
+        self.assertIsInstance(result, bytes)
+        text = result.decode("utf-8")
+        self.assertIn("event: snapshot", text)
+        self.assertIn('data: {"a": 1}', text)
+        # SSE event terminated by a blank line.
+        self.assertTrue(text.endswith("\n\n"))
+
+    def test_empty_data_uses_empty_data_line(self) -> None:
+        from api.api_server import _format_event
+
+        result = _format_event("heartbeat", "")
+        text = result.decode("utf-8")
+        self.assertIn("event: heartbeat", text)
+        self.assertIn("data: ", text)
+
+    def test_multiline_data_each_line_prefixed(self) -> None:
+        from api.api_server import _format_event
+
+        result = _format_event("append", "line1\nline2")
+        text = result.decode("utf-8")
+        self.assertIn("data: line1", text)
+        self.assertIn("data: line2", text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -51,6 +51,7 @@ from core.utils import (
     utc_now,
 )
 from services.equity_snapshots import equity_curve_for_api, record_snapshots_all
+from services.live_snapshot import LiveSnapshotCache
 from services.metrics_service import MetricsService, parse_named_window, parse_window
 from services.universe_admin import (
     UniverseValidationError,
@@ -171,6 +172,26 @@ class UniverseSymbolPayload(BaseModel):
     provider: str | None = None
 
 
+# ----- SSE helpers ---------------------------------------------------------
+
+_LIVE_STREAM_INTERVAL_SECONDS = 5
+
+
+def _format_event(event_name: str, data: str) -> bytes:
+    """Encode a single Server-Sent-Event frame as UTF-8 bytes.
+
+    Multi-line data is split so each line is prefixed with ``data: `` per
+    the SSE specification. An empty trailing line terminates the event.
+    """
+    payload_lines = data.splitlines() or [""]
+    chunks = [f"event: {event_name}"]
+    for line in payload_lines:
+        chunks.append(f"data: {line}")
+    chunks.append("")
+    chunks.append("")
+    return "\n".join(chunks).encode("utf-8")
+
+
 # ----- error helper --------------------------------------------------------
 
 
@@ -190,6 +211,7 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
 
     brokers: dict[str, Any] = dict(getattr(scheduler.trade_manager, "brokers", {}) or {})
     metrics = MetricsService(config, api_logger, broker_clients=brokers)
+    live_cache = LiveSnapshotCache(metrics, brokers, config, api_logger)
 
     def _resolve_brokers() -> dict[str, Any]:
         # The scheduler holds the live broker registry; resolve it lazily so
@@ -1218,15 +1240,6 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
     def get_logs_stream(_user: auth_lib.AuthenticatedUser = Depends(get_current_user)) -> StreamingResponse:
         log_path = Path(config.log_file)
 
-        def _format_event(event_name: str, data: str) -> bytes:
-            payload_lines = data.splitlines() or [""]
-            chunks = [f"event: {event_name}"]
-            for line in payload_lines:
-                chunks.append(f"data: {line}")
-            chunks.append("")
-            chunks.append("")
-            return "\n".join(chunks).encode("utf-8")
-
         async def streamer() -> Any:
             yield _format_event("heartbeat", isoformat_utc(utc_now()) or "")
             if not log_path.exists():
@@ -1250,6 +1263,35 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
                     yield _format_event("heartbeat", isoformat_utc(now) or "")
                     last_heartbeat_ts = now
                 await asyncio.sleep(1)
+
+        return StreamingResponse(streamer(), media_type="text/event-stream")
+
+    @app.get("/api/live/stream")
+    def get_live_stream(
+        _user: auth_lib.AuthenticatedUser = Depends(get_current_user),
+    ) -> StreamingResponse:
+        """Stream the live portfolio snapshot as Server-Sent Events.
+
+        Emits a ``snapshot`` event every ``_LIVE_STREAM_INTERVAL_SECONDS``
+        seconds containing the current live snapshot JSON, plus a
+        ``heartbeat`` event at least every 15 seconds to keep the
+        connection alive through proxies.
+        """
+
+        async def streamer() -> Any:
+            yield _format_event("heartbeat", isoformat_utc(utc_now()) or "")
+            last_heartbeat = utc_now()
+            while True:
+                try:
+                    snapshot = live_cache.get_snapshot()
+                    yield _format_event("snapshot", json.dumps(snapshot))
+                except Exception:
+                    api_logger.exception("live snapshot failed")
+                now = utc_now()
+                if (now - last_heartbeat).total_seconds() >= 15:
+                    yield _format_event("heartbeat", isoformat_utc(now) or "")
+                    last_heartbeat = now
+                await asyncio.sleep(_LIVE_STREAM_INTERVAL_SECONDS)
 
         return StreamingResponse(streamer(), media_type="text/event-stream")
 
