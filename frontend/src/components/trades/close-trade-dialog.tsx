@@ -71,12 +71,13 @@ export function CloseTradeDialog({ trade, onClose, onDone }: CloseTradeDialogPro
           {error}
         </StatusBanner>
       )}
-      <div className="mt-4 flex justify-end gap-2">
-        <Button type="button" variant="secondary" onClick={onClose}>
+      <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <Button type="button" variant="secondary" className="w-full sm:w-auto" onClick={onClose}>
           Indietro
         </Button>
         <Button
           variant="danger"
+          className="w-full sm:w-auto"
           disabled={mutation.isPending}
           onClick={() => {
             setError(null);

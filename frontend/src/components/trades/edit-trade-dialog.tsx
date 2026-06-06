@@ -131,6 +131,7 @@ export function EditTradeDialog({ trade, onClose, onSaved }: EditTradeDialogProp
             </label>
             <Input
               inputMode="decimal"
+              className="text-base"
               value={values[f.key as string] ?? ""}
               onChange={(e) =>
                 setValues((prev) => ({ ...prev, [f.key as string]: e.target.value }))
@@ -141,11 +142,11 @@ export function EditTradeDialog({ trade, onClose, onSaved }: EditTradeDialogProp
           </div>
         ))}
         {error && <StatusBanner kind="error">{error}</StatusBanner>}
-        <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="secondary" onClick={onClose}>
+        <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+          <Button type="button" variant="secondary" className="w-full sm:w-auto" onClick={onClose}>
             Annulla
           </Button>
-          <Button type="submit" disabled={mutation.isPending}>
+          <Button type="submit" className="w-full sm:w-auto" disabled={mutation.isPending}>
             {mutation.isPending ? "Salvataggio…" : "Salva"}
           </Button>
         </div>
