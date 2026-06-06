@@ -49,15 +49,23 @@ export function TradeCard({ trade: t, onEdit, onClose }: TradeCardProps) {
           onClick={() => setExpanded((v) => !v)}
           className="text-xs text-(--color-muted) hover:text-(--color-text)"
           aria-expanded={expanded}
-          aria-label={expanded ? "Nascondi dettagli" : "Dettagli"}
+          aria-controls={`trade-card-detail-${t.id}`}
         >
-          {expanded ? "Nascondi dettagli ▲" : "Dettagli ▼"}
+          {expanded ? (
+            <>Nascondi dettagli <span aria-hidden="true">▲</span></>
+          ) : (
+            <>Dettagli <span aria-hidden="true">▼</span></>
+          )}
         </button>
       </div>
 
       {/* Expanded detail section */}
       {expanded && (
-        <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+        <dl id={`trade-card-detail-${t.id}`} className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+          <div>
+            <dt className="text-(--color-muted)">Dir.</dt>
+            <dd>{t.direction}</dd>
+          </div>
           <div>
             <dt className="text-(--color-muted)">Entry</dt>
             <dd className="tnum">{formatNumber(t.entry_price)}</dd>
@@ -91,7 +99,7 @@ export function TradeCard({ trade: t, onEdit, onClose }: TradeCardProps) {
             <dd className="tnum">{formatNumber(t.trailing_take_profit_activation_pct)}</dd>
           </div>
           <div>
-            <dt className={`text-(--color-muted)`}>TTP trigger</dt>
+            <dt className="text-(--color-muted)">TTP trigger</dt>
             <dd
               className={`tnum ${ttpArmed ? "text-(--color-accent)" : "text-(--color-muted)"}`}
               title={ttpArmed ? "Trailing TP armato" : "Trailing TP non ancora armato"}
