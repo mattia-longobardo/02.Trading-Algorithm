@@ -788,6 +788,7 @@ class UniverseManager:
             self._asset_snapshot(asset)
             for asset in assets
             if getattr(asset, "tradable", False)
+            and not self._is_dated_future(getattr(asset, "symbol", ""))
         ]
         payload = self._dedupe_payload_by_symbol(payload)
         payload.sort(key=lambda asset: str(asset["symbol"]))

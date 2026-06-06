@@ -70,6 +70,16 @@ class EtoroUniverseSelectionTests(unittest.TestCase):
         self.assertEqual(stock[0]["symbol"], "AAPL")
         self.assertEqual(crypto[0]["symbol"], "BTC")
 
+    def test_legacy_crypto_payload_excludes_dated_futures(self):
+        self.broker.list_assets.side_effect = lambda cls: (
+            [_asset("AAPL", "Apple")] if cls in ("US_EQUITY", "STOCK")
+            else [_asset("BTC", "Bitcoin"), _asset("BTC.MAY26", "BTC May26 Future")]
+        )
+        payload = self.manager._get_etoro_crypto_candidate_payload()
+        symbols = [a["symbol"] for a in payload]
+        self.assertIn("BTC", symbols)
+        self.assertNotIn("BTC.MAY26", symbols)
+
     def test_select_etoro_universe_tops_up_when_no_dossiers(self):
         result = self.manager._select_etoro_universe(self.manager.get_current_universe())
         self.assertEqual(result["STOCK"], ["AAPL"])
