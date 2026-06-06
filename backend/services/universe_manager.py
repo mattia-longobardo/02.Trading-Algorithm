@@ -799,8 +799,26 @@ class UniverseManager:
             return {}
         preferred = universe_for_provider(current_universe, PROVIDER_ETORO)
         try:
-            base_stock_payload = self._get_etoro_stock_candidate_payload()
-            base_crypto_payload = self._get_etoro_crypto_candidate_payload()
+            base_stock_payload: list[dict[str, Any]] = []
+            base_crypto_payload: list[dict[str, Any]] = []
+            try:
+                exchange_whitelist = self._resolve_exchange_whitelist(broker)
+                base_stock_payload = self._build_cheap_shortlist(
+                    broker, "STOCK", preferred.get("STOCK", []), exchange_whitelist
+                )
+                base_crypto_payload = self._build_cheap_shortlist(
+                    broker, "CRYPTO", preferred.get("CRYPTO", []), None
+                )
+            except Exception:
+                self.logger.warning(
+                    "eToro discover prefilter failed; falling back to legacy full scan",
+                    exc_info=True,
+                )
+            if not base_stock_payload and not base_crypto_payload:
+                self.logger.warning("eToro discover prefilter empty; falling back to legacy full scan")
+                base_stock_payload = self._get_etoro_stock_candidate_payload()
+                base_crypto_payload = self._get_etoro_crypto_candidate_payload()
+
             full_stock_payload = self._enrich_payload_with_market_metrics(
                 PROVIDER_ETORO, "STOCK", base_stock_payload, preferred.get("STOCK", [])
             )
