@@ -84,3 +84,55 @@ class PortfolioRiskService:
         if saa <= 0 or sbb <= 0:
             return None
         return sab / math.sqrt(saa * sbb)
+
+    def _default_vol(self, category: str) -> float:
+        if str(category).upper() == "CRYPTO":
+            return self.config.risk_default_crypto_vol
+        return self.config.risk_default_stock_vol
+
+    def _symbol_stats(
+        self, symbol_categories: list[tuple[str, str]]
+    ) -> tuple[dict[str, float], dict[str, dict[str, float]], bool]:
+        """Return (annualized vols, returns-by-ts per symbol, low_confidence)."""
+        vols: dict[str, float] = {}
+        returns_map: dict[str, dict[str, float]] = {}
+        low_confidence = False
+        lookback = self.config.risk_lookback_days
+        for symbol, category in symbol_categories:
+            bars = self._history(symbol, lookback) or []
+            returns = self._returns_by_ts(self._closes_by_ts(bars))
+            returns_map[symbol] = returns
+            vol = self._annualized_vol(list(returns.values()), category)
+            if vol is None or vol <= 0:
+                vols[symbol] = self._default_vol(category)
+                low_confidence = True
+            else:
+                vols[symbol] = vol
+        return vols, returns_map, low_confidence
+
+    def _shrunk_correlation(
+        self, sym_a: str, sym_b: str, returns_map: dict[str, dict[str, float]]
+    ) -> float:
+        """Pairwise correlation shrunk toward a constant prior for stability."""
+        prior = 0.5
+        lam = self.config.risk_corr_shrinkage
+        if sym_a == sym_b:
+            return 1.0
+        sample = self._pearson(returns_map.get(sym_a, {}), returns_map.get(sym_b, {}))
+        if sample is None:
+            return prior
+        return lam * sample + (1.0 - lam) * prior
+
+    def _portfolio_vol(
+        self,
+        weights: dict[str, float],
+        vols: dict[str, float],
+        returns_map: dict[str, dict[str, float]],
+    ) -> float:
+        symbols = list(weights.keys())
+        variance = 0.0
+        for a in symbols:
+            for b in symbols:
+                rho = 1.0 if a == b else self._shrunk_correlation(a, b, returns_map)
+                variance += weights[a] * weights[b] * rho * vols[a] * vols[b]
+        return math.sqrt(variance) if variance > 0 else 0.0
