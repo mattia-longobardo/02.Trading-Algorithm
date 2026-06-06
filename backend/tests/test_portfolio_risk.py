@@ -137,6 +137,31 @@ class AssessTests(unittest.TestCase):
         self.assertTrue(a.low_confidence)
         self.assertEqual(round(sum(a.per_position_risk_contribution.values())), 100)
 
+    def test_duplicate_symbols_are_aggregated(self):
+        svc = self._svc(history={"AAA": _bars([10, 10.1, 9.9, 10.2, 10.0, 10.3])})
+        a = svc.assess([
+            {"symbol": "AAA", "category": "STOCK", "value": 3_000.0},
+            {"symbol": "AAA", "category": "STOCK", "value": 2_000.0},
+        ], equity=10_000.0)
+        # one effective holding -> HHI == 1 -> concentration 100; exposure 50%
+        self.assertEqual(a.components["concentration"], 100.0)
+        self.assertAlmostEqual(a.exposure, 0.5, places=6)
+
+    def test_non_numeric_value_is_skipped(self):
+        svc = self._svc(history={"AAA": _bars([10, 10.1, 9.9, 10.2, 10.0, 10.3])})
+        a = svc.assess([
+            {"symbol": "AAA", "category": "STOCK", "value": 5_000.0},
+            {"symbol": "BAD", "category": "STOCK", "value": "N/A"},
+        ], equity=10_000.0)
+        self.assertNotIn("BAD", a.per_position_risk_contribution)
+        self.assertAlmostEqual(a.exposure, 0.5, places=6)  # only AAA counts
+
+    def test_equity_zero_with_positions_low_confidence(self):
+        svc = self._svc(history={"AAA": _bars([10, 10.1, 9.9, 10.2])})
+        a = svc.assess([{"symbol": "AAA", "category": "STOCK", "value": 5_000.0}], equity=0.0)
+        self.assertEqual(a.score, 0.0)
+        self.assertTrue(a.low_confidence)
+
 
 if __name__ == "__main__":
     unittest.main()
