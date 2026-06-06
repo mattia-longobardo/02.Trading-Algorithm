@@ -226,6 +226,7 @@ class EToroOrderTests(unittest.TestCase):
         self.assertEqual(body["InstrumentID"], 100000)
         self.assertNotIn("UnitsToDeduct", body)
         self.assertEqual(result["raw"]["orderForClose"]["orderID"], 42)
+        self.assertEqual(result["order_id"], "42")
 
     def test_close_position_market_partial_sends_units(self):
         client, session = make_client("demo")
