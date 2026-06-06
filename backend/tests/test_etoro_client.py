@@ -236,6 +236,50 @@ class EToroOrderTests(unittest.TestCase):
         sent_request_id = session.request.call_args.kwargs["headers"]["x-request-id"]
         self.assertEqual(result["request_id"], sent_request_id)
 
+    def test_get_order_status_filled(self):
+        client, session = make_client("demo")
+        session.request.return_value = make_response(200, {
+            "orderId": 555, "status": {"id": 3, "name": "Filled", "errorCode": 0, "errorMessage": None},
+            "positionExecutions": [{"positionId": 9001, "state": "open"}],
+        })
+        st = client.get_order_status("555")
+        self.assertTrue(st["executed"])
+        self.assertFalse(st["rejected"])
+        self.assertEqual(st["position_id"], "9001")
+        params = session.request.call_args.kwargs["params"]
+        self.assertEqual(params["orderId"], "555")
+        self.assertTrue(session.request.call_args.args[1].endswith("/api/v2/trading/info/demo/orders:lookup"))
+
+    def test_get_order_status_rejected(self):
+        client, session = make_client("demo")
+        session.request.return_value = make_response(200, {
+            "orderId": 7, "status": {"id": 4, "name": "Rejected", "errorCode": 759,
+                                     "errorMessage": "manual Trading is disallowed for this instrument type(10:CRYPTO)"},
+            "positionExecutions": [],
+        })
+        st = client.get_order_status("7")
+        self.assertTrue(st["rejected"])
+        self.assertFalse(st["executed"])
+        self.assertEqual(st["error_code"], 759)
+        self.assertIn("disallowed", st["error_message"])
+        self.assertIsNone(st["position_id"])
+
+    def test_get_order_status_waiting(self):
+        client, session = make_client("demo")
+        session.request.return_value = make_response(200, {
+            "orderId": 8, "status": {"id": 11, "name": "WaitingForMarket", "errorCode": 0, "errorMessage": None},
+            "positionExecutions": [],
+        })
+        st = client.get_order_status("8")
+        self.assertTrue(st["waiting"])
+        self.assertFalse(st["executed"])
+        self.assertFalse(st["rejected"])
+
+    def test_get_order_status_not_found(self):
+        client, session = make_client("demo")
+        session.request.side_effect = EToroAPIError(404, "no operation")
+        self.assertIsNone(client.get_order_status("404ref"))
+
 
 class EToroResolutionTests(unittest.TestCase):
     def setUp(self):
