@@ -23,6 +23,7 @@ function signedPct(value: number | null): string {
 function DirectionHint({ isBuy }: { isBuy: boolean }) {
   return (
     <span
+      aria-label={isBuy ? "Long" : "Short"}
       className={`ml-1 rounded px-1 py-0.5 text-[10px] font-medium ${
         isBuy
           ? "bg-(--color-accent)/15 text-(--color-accent)"
@@ -47,7 +48,7 @@ function PositionCard({ pos }: { pos: LivePosition }) {
           <DirectionHint isBuy={pos.is_buy} />
         </span>
         <span className={`tnum text-right text-sm font-semibold ${pnlClass(pnl ?? 0)}`}>
-          {signedPnl(pnl)} <span className="text-xs font-normal">({signedPct(pnlPct)})</span>
+          {signedPnl(pnl)} <span className={`text-xs font-normal ${pnlClass(pnlPct ?? 0)}`}>({signedPct(pnlPct)})</span>
         </span>
       </div>
       <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-(--color-muted)">
