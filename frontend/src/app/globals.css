@@ -63,3 +63,8 @@ input[type="number"]::-webkit-outer-spin-button {
 input[type="number"] {
   -moz-appearance: textfield;
 }
+
+/* Mobile safe-area helpers (iOS notch / home indicator). */
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.h-bottom-nav { height: 3.5rem; }
+.pb-bottom-nav { padding-bottom: calc(3.5rem + env(safe-area-inset-bottom)); }
