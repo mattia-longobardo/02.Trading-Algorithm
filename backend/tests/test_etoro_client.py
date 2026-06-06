@@ -245,6 +245,8 @@ class EToroOrderTests(unittest.TestCase):
         st = client.get_order_status("555")
         self.assertTrue(st["executed"])
         self.assertFalse(st["rejected"])
+        self.assertFalse(st["waiting"])
+        self.assertFalse(st["canceled"])
         self.assertEqual(st["position_id"], "9001")
         params = session.request.call_args.kwargs["params"]
         self.assertEqual(params["orderId"], "555")
@@ -279,6 +281,23 @@ class EToroOrderTests(unittest.TestCase):
         client, session = make_client("demo")
         session.request.side_effect = EToroAPIError(404, "no operation")
         self.assertIsNone(client.get_order_status("404ref"))
+
+    def test_get_order_status_unknown_name_waits(self):
+        client, session = make_client("demo")
+        session.request.return_value = make_response(200, {
+            "orderId": 9, "status": {"id": 3, "name": "SomethingNew", "errorCode": 0, "errorMessage": None},
+            "positionExecutions": [],
+        })
+        st = client.get_order_status("9")
+        self.assertTrue(st["waiting"])
+        self.assertFalse(st["executed"])
+        self.assertFalse(st["rejected"])
+
+    def test_get_order_status_reraises_non_404(self):
+        client, session = make_client("demo")
+        session.request.side_effect = EToroAPIError(500, "boom")
+        with self.assertRaises(EToroAPIError):
+            client.get_order_status("x")
 
 
 class EToroResolutionTests(unittest.TestCase):
