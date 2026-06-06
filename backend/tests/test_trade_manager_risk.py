@@ -48,6 +48,18 @@ class RiskAllocationTests(unittest.TestCase):
         alloc = tm._risk_based_allocation("STOCK", "WILD", provider=PROVIDER_ETORO)
         self.assertEqual(alloc, 0.0)
 
+    def test_falls_back_when_equity_fetch_raises(self):
+        tm, broker = _manager()
+        broker.get_account_equity.side_effect = Exception("api down")
+        alloc = tm._risk_based_allocation("STOCK", "AAA", provider=PROVIDER_ETORO)
+        self.assertAlmostEqual(alloc, round(10_000.0 / 6, 2), places=2)
+
+    def test_falls_back_when_cash_fetch_raises(self):
+        tm, broker = _manager()
+        broker.get_available_cash.side_effect = [Exception("api down"), 10_000.0, 10_000.0, 10_000.0]
+        alloc = tm._risk_based_allocation("STOCK", "AAA", provider=PROVIDER_ETORO)
+        self.assertAlmostEqual(alloc, round(10_000.0 / 6, 2), places=2)
+
 
 if __name__ == "__main__":
     unittest.main()

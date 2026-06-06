@@ -316,7 +316,10 @@ class TradeManager:
             equity = 0.0
         if equity <= 0:
             return self.compute_allocated_capital(provider=provider)
-        cash = float(broker.get_available_cash())
+        try:
+            cash = float(broker.get_available_cash())
+        except Exception:
+            return self.compute_allocated_capital(provider=provider)
         positions = self._open_position_values(provider)
         candidate = {"symbol": str(symbol).upper(), "category": category}
         size = self.risk.suggest_size(candidate, positions, equity, cash)
