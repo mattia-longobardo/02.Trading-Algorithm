@@ -204,6 +204,7 @@ class EToroOrderTests(unittest.TestCase):
         # ("Exactly one of Symbol or InstrumentID must be provided"); send only
         # the canonical instrumentId.
         self.assertNotIn("symbol", body)
+        self.assertEqual(body["settlementType"], "real")
         self.assertEqual(body["orderType"], "mkt")
         self.assertEqual(body["amount"], 250.0)
         self.assertEqual(body["orderCurrency"], "usd")

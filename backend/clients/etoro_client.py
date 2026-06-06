@@ -609,6 +609,7 @@ class EToroClient:
             "action": "open",
             "transaction": "buy",
             "instrumentId": int(instrument_id),
+            "settlementType": "real",
             "orderType": "mkt",
             "leverage": int(leverage),
             "amount": float(amount_usd),
