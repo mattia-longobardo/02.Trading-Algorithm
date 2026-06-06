@@ -750,7 +750,7 @@ class TradeManager:
 
         if status is None:
             if timed_out:
-                self._abandon_unfilled_order(trade, order_id, "ORDER_AWAIT_TIMEOUT")
+                self._abandon_unfilled_order(broker, trade, order_id, "ORDER_AWAIT_TIMEOUT")
             return
         if status.get("executed"):
             position = broker.get_open_position(trade["symbol"])
@@ -767,10 +767,9 @@ class TradeManager:
             return
         # waiting / not yet executed
         if timed_out:
-            self._abandon_unfilled_order(trade, order_id, "ORDER_AWAIT_TIMEOUT")
+            self._abandon_unfilled_order(broker, trade, order_id, "ORDER_AWAIT_TIMEOUT")
 
-    def _abandon_unfilled_order(self, trade: dict[str, Any], order_id: str, reason: str) -> None:
-        broker = self._trade_broker(trade)
+    def _abandon_unfilled_order(self, broker: Any, trade: dict[str, Any], order_id: str, reason: str) -> None:
         if broker is not None:
             try:
                 broker.cancel_order(order_id)
