@@ -108,6 +108,38 @@ class EtoroConfigTests(unittest.TestCase):
         self.assertEqual(config.universe_stock_shortlist, 10)
         self.assertEqual(config.universe_crypto_shortlist, 10)
 
+    def test_risk_defaults(self):
+        config = AppConfig(openai_api_key="k", etoro_api_key="a", etoro_user_key="b")
+        self.assertEqual(config.risk_weight_vol, 0.30)
+        self.assertEqual(config.risk_weight_concentration, 0.30)
+        self.assertEqual(config.risk_weight_correlation, 0.25)
+        self.assertEqual(config.risk_weight_exposure, 0.15)
+        self.assertEqual(config.risk_budget_vol_min, 0.10)
+        self.assertEqual(config.risk_budget_vol_max, 0.45)
+        self.assertEqual(config.risk_lookback_days, 120)
+        self.assertEqual(config.risk_alert_threshold, 70.0)
+        self.assertEqual(config.risk_hard_threshold, 85.0)
+        self.assertEqual(config.risk_sizing_corr_floor, 0.30)
+        self.assertEqual(config.risk_max_position_pct, 0.25)
+        self.assertEqual(config.risk_default_stock_vol, 0.30)
+        self.assertEqual(config.risk_default_crypto_vol, 0.60)
+        self.assertEqual(config.risk_corr_shrinkage, 0.6)
+
+    def test_load_config_reads_risk_env(self):
+        env = {
+            "OPENAI_API_KEY": "o",
+            "RISK_WEIGHT_CONCENTRATION": "0.4",
+            "RISK_LOOKBACK_DAYS": "90",
+            "RISK_HARD_THRESHOLD": "80",
+            "RISK_MAX_POSITION_PCT": "0.2",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            config = load_config()
+        self.assertEqual(config.risk_weight_concentration, 0.4)
+        self.assertEqual(config.risk_lookback_days, 90)
+        self.assertEqual(config.risk_hard_threshold, 80.0)
+        self.assertEqual(config.risk_max_position_pct, 0.2)
+
 
 if __name__ == "__main__":
     unittest.main()
