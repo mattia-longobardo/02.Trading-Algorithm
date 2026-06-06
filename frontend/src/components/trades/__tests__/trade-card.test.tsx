@@ -66,4 +66,18 @@ describe("TradeCard", () => {
     await user.click(screen.getByRole("button", { name: /modifica/i }));
     expect(onEdit).toHaveBeenCalledTimes(1);
   });
+
+  it("shows Annulla and fires onClose for a PENDING trade", async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(<TradeCard trade={{ ...trade, status: "PENDING" }} onEdit={vi.fn()} onClose={onClose} />);
+    await user.click(screen.getByRole("button", { name: /annulla/i }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the close/cancel button for a CLOSED trade", () => {
+    render(<TradeCard trade={{ ...trade, status: "CLOSED" }} onEdit={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /annulla/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /chiudi/i })).toBeNull();
+  });
 });
