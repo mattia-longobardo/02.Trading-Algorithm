@@ -21,13 +21,27 @@ export function BottomNav({ items }: { items: NavItem[] }) {
     setSheetOpen(false);
   }, [pathname]);
 
+  useEffect(() => {
+    if (!sheetOpen) return;
+    const original = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setSheetOpen(false);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = original;
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [sheetOpen]);
+
   const cell =
-    "flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[11px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent)";
+    "flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[11px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent) focus-visible:ring-offset-2 focus-visible:ring-offset-(--color-bg)";
 
   return (
     <>
       {sheetOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true">
+        <div id="bottom-nav-altro-sheet" className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Altro">
           <button
             type="button"
             aria-label="Chiudi"
@@ -83,6 +97,8 @@ export function BottomNav({ items }: { items: NavItem[] }) {
         <button
           type="button"
           aria-label="Altro"
+          aria-expanded={sheetOpen}
+          aria-controls="bottom-nav-altro-sheet"
           onClick={() => setSheetOpen(true)}
           className={cn(cell, "text-(--color-muted)")}
         >
