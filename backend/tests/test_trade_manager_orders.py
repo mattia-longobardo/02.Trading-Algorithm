@@ -81,6 +81,16 @@ class ResolveSubmittedOrderTests(unittest.TestCase):
         tm._cancel_pending_trade_record.assert_not_called()
         tm._activate_trade_from_position.assert_not_called()
 
+    def test_status_none_past_timeout_cancels_order(self):
+        broker = Mock()
+        broker.get_order_status.return_value = None
+        tm = _tm(broker)
+        seen = {}
+        tm._cancel_pending_trade_record = lambda trade, reason: seen.update(reason=reason)
+        tm._resolve_submitted_order(self._trade(order_submitted_at="2000-01-01T00:00:00+00:00"))
+        broker.cancel_order.assert_called_once_with("555")
+        self.assertEqual(seen["reason"], "ORDER_AWAIT_TIMEOUT")
+
 
 if __name__ == "__main__":
     unittest.main()
