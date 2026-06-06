@@ -294,8 +294,11 @@ class PortfolioRiskService:
         prior = 0.5
         lam = self.config.risk_corr_shrinkage
         for p in positions:
-            sym = str(p["symbol"]).upper()
-            weight = self._coerce_value(p.get("value")) / invested
+            sym = str(p.get("symbol") or "").upper()
+            value = self._coerce_value(p.get("value"))
+            if not sym or value <= 0:
+                continue
+            weight = value / invested
             other = self._returns_by_ts(self._closes_by_ts(self._history(sym, self.config.risk_lookback_days) or []))
             sample = self._pearson(cand_returns, other)
             rho = prior if sample is None else (lam * sample + (1.0 - lam) * prior)

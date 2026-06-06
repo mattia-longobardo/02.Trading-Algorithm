@@ -192,6 +192,24 @@ class SizingTests(unittest.TestCase):
         svc = self._svc(history={"AAA": _bars([10, 10.1, 9.9, 10.2])})
         self.assertEqual(svc.suggest_size({"symbol": "AAA", "category": "STOCK"}, [], 10_000.0, 10.0), 0.0)
 
+    def test_correlated_book_reduces_size(self):
+        vol_series = [10, 12, 8, 13, 7, 14, 6]          # high, meaningful volatility
+        svc = self._svc(history={
+            "NEW": _bars(vol_series),
+            "SAME": _bars(vol_series),                  # correlates with NEW
+            "OPP": _bars(list(reversed(vol_series))),   # anti-correlated with NEW
+        }, risk_max_position_pct=1.0)
+        equity = 10_000.0
+        size_corr = svc.suggest_size({"symbol": "NEW", "category": "STOCK"},
+                                     [{"symbol": "SAME", "category": "STOCK", "value": 5_000.0}],
+                                     equity, equity)
+        size_anti = svc.suggest_size({"symbol": "NEW", "category": "STOCK"},
+                                     [{"symbol": "OPP", "category": "STOCK", "value": 5_000.0}],
+                                     equity, equity)
+        # higher correlation to the existing book -> smaller risk-based size
+        self.assertLess(size_corr, size_anti)
+        self.assertGreater(size_corr, 0.0)
+
     def test_project_adds_candidate(self):
         up = [10, 11, 12.1, 13.31, 14.641, 16.105, 17.716]
         svc = self._svc(history={"AAA": _bars(up), "BBB": _bars(up)})
