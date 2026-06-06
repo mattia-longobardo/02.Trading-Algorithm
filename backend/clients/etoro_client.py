@@ -637,13 +637,57 @@ class EToroClient:
             "raw": payload,
         }
 
-    def get_order_info(self, order_id: str) -> dict[str, Any]:
+    @staticmethod
+    def _classify_order_status(name: str, status_id: int | None) -> tuple[bool, bool, bool, bool]:
+        """Return (executed, waiting, rejected, canceled) from the status name.
+
+        eToro status ids are inconsistent across asset types, so classify by the
+        human-readable name and fall back to ids only when the name is unknown.
+        """
+        text = name.lower()
+        if "fill" in text or "execut" in text:
+            return True, False, False, False
+        if "reject" in text:
+            return False, False, True, False
+        if "cancel" in text:
+            return False, False, False, True
+        if "wait" in text or "pending" in text:
+            return False, True, False, False
+        mapping = {1: (True, False, False, False), 2: (False, False, False, True),
+                   3: (False, False, True, False), 4: (False, False, True, False),
+                   7: (False, False, False, True), 11: (False, True, False, False)}
+        return mapping.get(int(status_id) if status_id is not None else -1, (False, True, False, False))
+
+    def get_order_status(self, order_id: str) -> dict[str, Any] | None:
+        """Resolve an order's async outcome via the orders:lookup endpoint.
+
+        Returns ``None`` when the order is not (yet) found (HTTP 404).
+        """
         path = f"/api/v2/trading/info/{self._mode_segment()}orders:lookup"
-        payload = self._request("GET", path, params={"orderId": str(order_id)})
-        position_id = payload.get("positionId")
+        try:
+            payload = self._request("GET", path, params={"orderId": str(order_id)})
+        except EToroAPIError as exc:
+            if exc.status_code == 404:
+                return None
+            raise
+        status = payload.get("status") or {}
+        name = str(status.get("name") or "")
+        status_id = status.get("id")
+        executed, waiting, rejected, canceled = self._classify_order_status(name, status_id)
+        position_id = None
+        for execution in payload.get("positionExecutions") or []:
+            if str(execution.get("state") or "").lower() == "open" and execution.get("positionId") is not None:
+                position_id = str(execution["positionId"])
+                break
         return {
-            "position_id": str(position_id) if position_id is not None else None,
-            "filled_price": (float(payload["openRate"]) if payload.get("openRate") is not None else None),
-            "units": (float(payload["units"]) if payload.get("units") is not None else None),
-            "raw": payload,
+            "order_id": str(order_id),
+            "status_name": name,
+            "status_id": status_id,
+            "executed": executed,
+            "waiting": waiting,
+            "rejected": rejected,
+            "canceled": canceled,
+            "error_code": status.get("errorCode"),
+            "error_message": status.get("errorMessage"),
+            "position_id": position_id,
         }
