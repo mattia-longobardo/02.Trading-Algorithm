@@ -101,8 +101,9 @@ class EtoroPendingTests(EtoroLifecycleBase):
         position = {
             "position_id": "p1", "instrument_id": 101, "units": 2.0, "open_rate": 100.0,
             "amount": 200.0, "is_buy": True}
-        # No position before the fill; the position appears after open_market_position.
-        self.broker.get_open_position.side_effect = [None, position]
+        # Tick 1: price touches target → open_market_position fires → order submitted (PENDING with order_id).
+        # get_open_position returns None on the pre-fill check inside sync_pending_trade.
+        self.broker.get_open_position.return_value = None
         self.broker.get_latest_price.return_value = 101.0
         self.manager.sync_pending_trade(trade)
         self.broker.open_market_position.assert_called_once()
@@ -111,6 +112,16 @@ class EtoroPendingTests(EtoroLifecycleBase):
         self.assertEqual(kwargs["stop_loss_rate"], 90.0)
         self.assertEqual(kwargs["take_profit_rate"], 120.0)
         self.assertEqual(kwargs["leverage"], 1)
+        # After tick 1 the trade is still PENDING but now carries order_id.
+        self.assertEqual(len(self._rows("PENDING")), 1)
+        self.assertEqual(self._rows("PENDING")[0]["order_id"], "o1")
+        # Tick 2: _resolve_submitted_order sees executed=True → activates to OPEN.
+        self.broker.get_order_status.return_value = {
+            "executed": True, "rejected": False, "canceled": False, "waiting": False,
+            "position_id": "p1", "error_message": None}
+        self.broker.get_open_position.return_value = position
+        trade2 = self._rows("PENDING")[0]
+        self.manager.sync_pending_trade(trade2)
         row = self._rows("OPEN")[0]
         self.assertEqual(row["position_id"], "p1")
         self.assertEqual(row["quantity"], 2.0)
@@ -155,7 +166,7 @@ class EtoroExitTests(EtoroLifecycleBase):
             return {"order_id": "c1", "raw": {}}
         self.broker.close_position_market.side_effect = _after_close
         self.manager.sync_open_trade(trade)
-        self.broker.close_position_market.assert_called_once_with("p1")
+        self.broker.close_position_market.assert_called_once_with("p1", instrument_id=101)
         closed = self._rows("CLOSED")[0]
         self.assertEqual(closed["close_reason"], "TAKE_PROFIT")
 
