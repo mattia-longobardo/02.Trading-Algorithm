@@ -89,5 +89,54 @@ class PortfolioVolTests(unittest.TestCase):
         self.assertLess(sigma_p, vols["AAA"])
 
 
+class AssessTests(unittest.TestCase):
+    def _svc(self, history=None, **cfg_over):
+        cfg = AppConfig(openai_api_key="k", etoro_api_key="a", etoro_user_key="b",
+                        max_open_trades_stock=3, max_open_trades_crypto=3, **cfg_over)
+        history = history or {}
+        return PortfolioRiskService(cfg, logging.getLogger("t"),
+                                    history_provider=lambda s, l: history.get(s, []))
+
+    def test_budget_vol_mapping(self):
+        svc = self._svc(risk_tolerance=1)
+        self.assertAlmostEqual(svc._budget_vol(), 0.10, places=6)
+        svc = self._svc(risk_tolerance=10)
+        self.assertAlmostEqual(svc._budget_vol(), 0.45, places=6)
+
+    def test_empty_portfolio(self):
+        svc = self._svc()
+        a = svc.assess([], equity=10_000.0)
+        self.assertEqual(a.score, 0.0)
+        self.assertEqual(a.exposure, 0.0)
+        self.assertFalse(a.over_alert)
+
+    def test_single_position_concentration_max(self):
+        svc = self._svc(history={"AAA": _bars([10, 10.1, 9.9, 10.2, 10.0, 10.3])})
+        a = svc.assess([{"symbol": "AAA", "category": "STOCK", "value": 5_000.0}], equity=10_000.0)
+        self.assertEqual(a.components["concentration"], 100.0)
+        self.assertEqual(a.components["correlation"], 0.0)
+        self.assertAlmostEqual(a.exposure, 0.5, places=6)
+        self.assertEqual(a.components["exposure"], 50.0)
+
+    def test_correlated_vs_diversified_score(self):
+        up = [10, 11, 12.1, 13.31, 14.641, 16.105, 17.716]
+        down = list(reversed(up))
+        corr = self._svc(history={"AAA": _bars(up), "BBB": _bars(up)})
+        div = self._svc(history={"AAA": _bars(up), "BBB": _bars(down)})
+        pos = [{"symbol": "AAA", "category": "STOCK", "value": 5_000.0},
+               {"symbol": "BBB", "category": "STOCK", "value": 5_000.0}]
+        self.assertGreater(corr.assess(pos, 10_000.0).score, div.assess(pos, 10_000.0).score)
+
+    def test_over_thresholds_and_low_confidence(self):
+        svc = self._svc(history={"AAA": _bars([10, 13, 9, 14, 8, 15, 7])},
+                        risk_tolerance=1, risk_hard_threshold=10.0, risk_alert_threshold=5.0)
+        a = svc.assess([{"symbol": "AAA", "category": "STOCK", "value": 9_000.0},
+                        {"symbol": "ZZZ", "category": "STOCK", "value": 1_000.0}], equity=10_000.0)
+        self.assertTrue(a.over_alert)
+        self.assertTrue(a.over_hard)
+        self.assertTrue(a.low_confidence)
+        self.assertEqual(round(sum(a.per_position_risk_contribution.values())), 100)
+
+
 if __name__ == "__main__":
     unittest.main()
