@@ -215,16 +215,32 @@ class EToroOrderTests(unittest.TestCase):
         self.assertEqual(result["order_id"], "o1")
         self.assertEqual(result["reference_id"], "ref-1")
 
-    def test_close_position_market_builds_body(self):
-        client, session = make_client("real")
-        session.request.return_value = make_response(200, {"orderId": "c1"})
-        result = client.close_position_market("p1")
+    def test_close_position_market_uses_market_close_endpoint(self):
+        client, session = make_client("demo")
+        session.request.return_value = make_response(200, {"orderForClose": {"orderID": 42}})
+        result = client.close_position_market("p1", instrument_id=100000)
         args, kwargs = session.request.call_args
-        self.assertTrue(args[1].endswith("/api/v2/trading/execution/orders"))
+        self.assertEqual(args[0], "POST")
+        self.assertTrue(args[1].endswith("/api/v1/trading/execution/demo/market-close-orders/positions/p1"))
         body = kwargs["json"]
-        self.assertEqual(body["action"], "close")
-        self.assertEqual(body["positionIds"], ["p1"])
-        self.assertEqual(result["order_id"], "c1")
+        self.assertEqual(body["InstrumentID"], 100000)
+        self.assertNotIn("UnitsToDeduct", body)
+        self.assertEqual(result["raw"]["orderForClose"]["orderID"], 42)
+
+    def test_close_position_market_partial_sends_units(self):
+        client, session = make_client("demo")
+        session.request.return_value = make_response(200, {"orderForClose": {"orderID": 43}})
+        client.close_position_market("p2", instrument_id=100000, units=0.5)
+        body = session.request.call_args.kwargs["json"]
+        self.assertEqual(body["UnitsToDeduct"], 0.5)
+
+    def test_cancel_order_deletes(self):
+        client, session = make_client("demo")
+        session.request.return_value = make_response(200, {"token": "t1"})
+        client.cancel_order("999")
+        args, _ = session.request.call_args
+        self.assertEqual(args[0], "DELETE")
+        self.assertTrue(args[1].endswith("/api/v2/trading/execution/demo/orders/999"))
 
     def test_open_uses_request_id_as_idempotency_key(self):
         client, session = make_client()

@@ -627,15 +627,28 @@ class EToroClient:
             "raw": payload,
         }
 
-    def close_position_market(self, position_id: str, units: float | None = None) -> dict[str, Any]:
-        body: dict[str, Any] = {"action": "close", "positionIds": [str(position_id)]}
+    def close_position_market(self, position_id: str, instrument_id: int, units: float | None = None) -> dict[str, Any]:
+        """Close (or partially close) a position via the dedicated market-close endpoint.
+
+        eToro's v2 orders endpoint does not accept ``action=close``; the correct
+        path is the v1 market-close-orders endpoint, which needs the instrument id
+        and (optionally) the units to deduct for a partial close.
+        """
+        path = f"/api/v1/trading/execution/{self._mode_segment()}market-close-orders/positions/{position_id}"
+        body: dict[str, Any] = {"InstrumentID": int(instrument_id)}
         if units is not None:
-            body["units"] = float(units)
-        payload = self._request("POST", self._orders_path(), json_body=body)
+            body["UnitsToDeduct"] = float(units)
+        payload = self._request_with_id("POST", path, str(uuid4()), json_body=body)
+        order = payload.get("orderForClose") or {}
         return {
-            "order_id": str(payload.get("orderId")) if payload.get("orderId") is not None else None,
+            "order_id": str(order.get("orderID")) if order.get("orderID") is not None else None,
             "raw": payload,
         }
+
+    def cancel_order(self, order_id: str) -> dict[str, Any]:
+        """Cancel an order before it executes (idempotent if already closed)."""
+        path = f"/api/v2/trading/execution/{self._mode_segment()}orders/{order_id}"
+        return self._request_with_id("DELETE", path, str(uuid4()))
 
     @staticmethod
     def _classify_order_status(name: str) -> tuple[bool, bool, bool, bool]:
