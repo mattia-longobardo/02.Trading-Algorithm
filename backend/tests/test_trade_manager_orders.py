@@ -92,5 +92,33 @@ class ResolveSubmittedOrderTests(unittest.TestCase):
         self.assertEqual(seen["reason"], "ORDER_AWAIT_TIMEOUT")
 
 
+class PositionConfirmedTests(unittest.TestCase):
+    def _open_trade(self, **over):
+        t = {"id": 5, "symbol": "AAPL", "category": "STOCK", "status": "OPEN", "provider": "etoro",
+             "instrument_id": 9422, "entry_price": 100.0, "quantity": 1.0, "allocated_capital": 100.0,
+             "position_id": "9001", "position_confirmed": 0, "current_price": 100.0,
+             "stop_loss": 90.0, "take_profit": 130.0}
+        t.update(over)
+        return t
+
+    def test_unconfirmed_trade_not_externally_closed(self):
+        broker = Mock()
+        broker.get_open_position.return_value = None
+        tm = _tm(broker)
+        closed = {}
+        tm._close_trade_without_position = lambda trade, *a, **k: closed.setdefault("hit", True)
+        tm.sync_open_trade(self._open_trade(position_confirmed=0))
+        self.assertNotIn("hit", closed)
+
+    def test_confirmed_trade_is_externally_closed(self):
+        broker = Mock()
+        broker.get_open_position.return_value = None
+        tm = _tm(broker)
+        closed = {}
+        tm._close_trade_without_position = lambda trade, *a, **k: closed.setdefault("hit", True)
+        tm.sync_open_trade(self._open_trade(position_confirmed=1))
+        self.assertTrue(closed.get("hit"))
+
+
 if __name__ == "__main__":
     unittest.main()

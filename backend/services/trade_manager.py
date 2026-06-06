@@ -808,13 +808,15 @@ class TradeManager:
                 UPDATE trades
                 SET status = 'OPEN', open_timestamp = ?, entry_price = ?, quantity = ?, current_price = ?, pnl = ?,
                     high_water_mark = ?, trailing_take_profit_price = ?, trailing_stop_price = ?,
-                    position_id = ?, order_reference_id = ?, updated_at = CURRENT_TIMESTAMP
+                    position_id = ?, order_reference_id = ?, position_confirmed = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
                 (
                     isoformat_utc(utc_now()), entry_price, quantity, current_price, pnl,
                     high_water_mark, trailing_take_profit_price, trailing_stop_price,
-                    position_id, reference_id, trade["id"],
+                    position_id, reference_id,
+                    1 if isinstance(position, dict) and position else int(trade.get("position_confirmed") or 0),
+                    trade["id"],
                 ),
             )
         self.logger.info("Trade %s opened on eToro (position %s)", trade["id"], position_id)
@@ -893,7 +895,7 @@ class TradeManager:
             self._mark_trade_closed(trade, close_reason, trigger_price)
             return
         try:
-            order = broker.close_position_market(str(position_id))
+            order = broker.close_position_market(str(position_id), instrument_id=int(trade.get("instrument_id") or 0))
         except Exception as exc:
             message = str(exc).lower()
             if "position" in message and ("not" in message or "exist" in message):
@@ -1069,8 +1071,18 @@ class TradeManager:
             return
         position = broker.get_open_position(trade["symbol"])
         if position is None:
-            self._close_trade_without_position(trade)
+            # Only treat a vanished position as an external close once we have
+            # actually observed it live; a never-confirmed trade (just filled,
+            # portfolio still catching up, or a transient read) is left to retry.
+            if trade.get("position_confirmed"):
+                self._close_trade_without_position(trade)
             return
+        if not trade.get("position_confirmed"):
+            with db_cursor(self.config.db_trades) as cursor:
+                cursor.execute(
+                    "UPDATE trades SET position_confirmed = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (trade["id"],),
+                )
 
         quantity = self._as_float(position.get("units")) or float(trade["quantity"])
         current_price = self._resolve_current_price(
