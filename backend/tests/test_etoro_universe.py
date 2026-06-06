@@ -59,6 +59,7 @@ class EtoroUniverseSelectionTests(unittest.TestCase):
             [_asset("AAPL", "Apple")] if cls in ("US_EQUITY", "STOCK") else [_asset("BTC", "Bitcoin")]
         )
         self.broker.get_multi_bars.return_value = {}
+        self.broker.discover_instruments.side_effect = Exception("no discover")
         self.gpt = Mock()
         self.gpt.request_universe_symbol_dossier.side_effect = Exception("no gpt")
         self.manager = UniverseManager(self.config, logging.getLogger("t"), {PE: self.broker}, self.gpt)
@@ -237,6 +238,71 @@ class CheapPrefilterHelperTests(unittest.TestCase):
         self.assertIn("ETH.SPOT", symbols)
         self.assertIn("HYPE", symbols)
         self.assertNotIn("BTC.MAY26", symbols)
+
+
+class SelectEtoroUniverseWiringTests(unittest.TestCase):
+    def _manager(self, broker):
+        from services.universe_manager import UniverseManager
+        config = AppConfig(
+            openai_api_key="k", etoro_api_key="a", etoro_user_key="b",
+            etoro_account_type="demo", weekly_universe_stocks=1, weekly_universe_crypto=1,
+            universe_stock_shortlist=5, universe_crypto_shortlist=5,
+        )
+        gpt = Mock()
+        gpt.request_universe_symbol_dossier.side_effect = Exception("no gpt")
+        gpt.request_universe_final_selection_from_dossiers.side_effect = Exception("no gpt")
+        return UniverseManager(config, logging.getLogger("t"), {PE: broker}, gpt)
+
+    def _empty_current(self):
+        return {PE: {"STOCK": [], "CRYPTO": []}}
+
+    def test_uses_discover_shortlist_when_available(self):
+        broker = Mock()
+        broker.list_exchanges.return_value = {4: "NASDAQ"}
+        broker.discover_instruments.side_effect = lambda cat: (
+            [{"symbol": "AAPL", "name": "Apple", "tradable": True, "delisted": False,
+              "exchange_id": 4, "current_rate": 100.0, "popularity": 9000,
+              "instrument_type": "Stocks", "price_change_1d": 0.0, "price_change_1w": 0.0,
+              "price_change_1m": 0.0, "price_change_3m": 0.0, "price_change_6m": 0.0}]
+            if cat == "STOCK" else
+            [{"symbol": "ETH.SPOT", "name": "Eth", "tradable": True, "delisted": False,
+              "exchange_id": None, "current_rate": 1.0, "popularity": 9000,
+              "instrument_type": "Crypto", "price_change_1d": 0.0, "price_change_1w": 0.0,
+              "price_change_1m": 0.0, "price_change_3m": 0.0, "price_change_6m": 0.0}]
+        )
+        broker.get_multi_bars.return_value = {}
+        manager = self._manager(broker)
+        result = manager._select_etoro_universe(self._empty_current())
+        broker.list_assets.assert_not_called()
+        self.assertEqual(result["STOCK"], ["AAPL"])
+        self.assertEqual(result["CRYPTO"], ["ETH.SPOT"])
+
+    def test_falls_back_to_list_assets_when_discover_raises(self):
+        broker = Mock()
+        broker.list_exchanges.return_value = {4: "NASDAQ"}
+        broker.discover_instruments.side_effect = Exception("discover down")
+        broker.list_assets.side_effect = lambda cls: (
+            [_asset("AAPL", "Apple")] if cls in ("US_EQUITY", "STOCK") else [_asset("BTC", "Bitcoin")]
+        )
+        broker.get_multi_bars.return_value = {}
+        manager = self._manager(broker)
+        result = manager._select_etoro_universe(self._empty_current())
+        broker.list_assets.assert_called()
+        self.assertEqual(result["STOCK"], ["AAPL"])
+        self.assertEqual(result["CRYPTO"], ["BTC"])
+
+    def test_falls_back_when_discover_empty(self):
+        broker = Mock()
+        broker.list_exchanges.return_value = {4: "NASDAQ"}
+        broker.discover_instruments.return_value = []
+        broker.list_assets.side_effect = lambda cls: (
+            [_asset("AAPL", "Apple")] if cls in ("US_EQUITY", "STOCK") else [_asset("BTC", "Bitcoin")]
+        )
+        broker.get_multi_bars.return_value = {}
+        manager = self._manager(broker)
+        result = manager._select_etoro_universe(self._empty_current())
+        broker.list_assets.assert_called()
+        self.assertEqual(result["STOCK"], ["AAPL"])
 
 
 if __name__ == "__main__":
