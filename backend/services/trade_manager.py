@@ -668,6 +668,10 @@ class TradeManager:
         if broker is None:
             return
 
+        if trade.get("order_id"):
+            self._resolve_submitted_order(trade)
+            return
+
         existing = broker.get_open_position(trade["symbol"])
         if existing is not None:
             self._activate_trade_from_position(trade, existing, None)
@@ -714,8 +718,65 @@ class TradeManager:
             self._cancel_pending_trade_record(trade, "ENTRY_FAILED")
             return
 
-        position = broker.get_open_position(trade["symbol"])
-        self._activate_trade_from_position(trade, position, result)
+        self._mark_order_submitted(trade, result)
+
+    def _mark_order_submitted(self, trade: dict[str, Any], open_result: dict[str, Any] | None) -> None:
+        order_id = str((open_result or {}).get("order_id") or "") or None
+        if not order_id:
+            # No order id to track → fall back to the legacy immediate activation.
+            self._activate_trade_from_position(trade, None, open_result)
+            return
+        with db_cursor(self.config.db_trades) as cursor:
+            cursor.execute(
+                "UPDATE trades SET order_id = ?, order_submitted_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (order_id, isoformat_utc(utc_now()), trade["id"]),
+            )
+        self.logger.info("Trade %s order submitted (order %s); awaiting fill", trade["id"], order_id)
+
+    def _resolve_submitted_order(self, trade: dict[str, Any]) -> None:
+        broker = self._trade_broker(trade)
+        if broker is None:
+            return
+        order_id = str(trade.get("order_id") or "")
+        if not order_id:
+            return
+        try:
+            status = broker.get_order_status(order_id)
+        except Exception:
+            self.logger.warning("Order status lookup failed for trade %s", trade["id"], exc_info=True)
+            return
+        submitted_age = self._minutes_since(parse_datetime(trade.get("order_submitted_at"))) or 0.0
+        timed_out = submitted_age >= int(self.config.order_await_timeout_minutes)
+
+        if status is None:
+            if timed_out:
+                self._abandon_unfilled_order(trade, order_id, "ORDER_AWAIT_TIMEOUT")
+            return
+        if status.get("executed"):
+            position = broker.get_open_position(trade["symbol"])
+            self._activate_trade_from_position(trade, position, {"position_id": status.get("position_id")})
+            return
+        if status.get("rejected") or status.get("canceled"):
+            self.logger.warning(
+                "Entry order for trade %s/%s was %s: %s",
+                trade["id"], trade["symbol"],
+                "rejected" if status.get("rejected") else "canceled",
+                status.get("error_message"),
+            )
+            self._cancel_pending_trade_record(trade, "ENTRY_REJECTED")
+            return
+        # waiting / not yet executed
+        if timed_out:
+            self._abandon_unfilled_order(trade, order_id, "ORDER_AWAIT_TIMEOUT")
+
+    def _abandon_unfilled_order(self, trade: dict[str, Any], order_id: str, reason: str) -> None:
+        broker = self._trade_broker(trade)
+        if broker is not None:
+            try:
+                broker.cancel_order(order_id)
+            except Exception:
+                self.logger.warning("cancel_order failed for trade %s order %s", trade["id"], order_id, exc_info=True)
+        self._cancel_pending_trade_record(trade, reason)
 
     def _activate_trade_from_position(
         self, trade: dict[str, Any], position: Any, open_result: dict[str, Any] | None
