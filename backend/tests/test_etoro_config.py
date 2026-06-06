@@ -8,7 +8,7 @@ dotenv_stub = ModuleType("dotenv")
 dotenv_stub.load_dotenv = lambda: None
 sys.modules.setdefault("dotenv", dotenv_stub)
 
-from core.utils import AppConfig, DEFAULT_UNIVERSE_STOCK_EXCHANGES, PROVIDER_ETORO, load_config
+from core.utils import AppConfig, DEFAULT_UNIVERSE_COUNTRIES, PROVIDER_ETORO, load_config
 
 
 class EtoroConfigTests(unittest.TestCase):
@@ -63,34 +63,43 @@ class EtoroConfigTests(unittest.TestCase):
         config = AppConfig(openai_api_key="k", etoro_api_key="a", etoro_user_key="b")
         self.assertEqual(config.universe_stock_shortlist, 300)
         self.assertEqual(config.universe_crypto_shortlist, 150)
-        self.assertIn("NASDAQ", config.universe_stock_exchanges)
-        self.assertIn("MILAN", config.universe_stock_exchanges)
+        self.assertEqual(config.universe_stock_min_market_cap, 2_000_000_000.0)
+        self.assertEqual(config.universe_stock_min_dollar_volume, 5_000_000.0)
+        self.assertEqual(config.universe_crypto_min_market_cap, 100_000_000.0)
+        self.assertIn("US", config.universe_countries)
+        self.assertIn("IT", config.universe_countries)
 
     def test_load_config_reads_universe_env(self):
         env = {
             "OPENAI_API_KEY": "o",
             "UNIVERSE_STOCK_SHORTLIST": "120",
             "UNIVERSE_CRYPTO_SHORTLIST": "40",
-            "UNIVERSE_STOCK_EXCHANGES": "NASDAQ, NYSE , London",
+            "UNIVERSE_COUNTRIES": "us, GB , de",
+            "UNIVERSE_STOCK_MIN_MARKET_CAP": "5000000000",
+            "UNIVERSE_STOCK_MIN_DOLLAR_VOLUME": "10000000",
+            "UNIVERSE_CRYPTO_MIN_MARKET_CAP": "250000000",
         }
         with patch.dict(os.environ, env, clear=True):
             config = load_config()
         self.assertEqual(config.universe_stock_shortlist, 120)
         self.assertEqual(config.universe_crypto_shortlist, 40)
-        self.assertEqual(config.universe_stock_exchanges, ("NASDAQ", "NYSE", "London"))
+        self.assertEqual(config.universe_countries, ("US", "GB", "DE"))
+        self.assertEqual(config.universe_stock_min_market_cap, 5_000_000_000.0)
+        self.assertEqual(config.universe_stock_min_dollar_volume, 10_000_000.0)
+        self.assertEqual(config.universe_crypto_min_market_cap, 250_000_000.0)
 
-    def test_load_config_universe_exchanges_default_when_unset(self):
+    def test_load_config_universe_countries_default_when_unset(self):
         env = {"OPENAI_API_KEY": "o"}
         with patch.dict(os.environ, env, clear=True):
             config = load_config()
-        self.assertIn("NASDAQ", config.universe_stock_exchanges)
+        self.assertEqual(config.universe_countries, DEFAULT_UNIVERSE_COUNTRIES)
         self.assertEqual(config.universe_stock_shortlist, 300)
 
-    def test_load_config_universe_exchanges_blank_falls_back(self):
-        env = {"OPENAI_API_KEY": "o", "UNIVERSE_STOCK_EXCHANGES": "  ,  "}
+    def test_load_config_universe_countries_blank_falls_back(self):
+        env = {"OPENAI_API_KEY": "o", "UNIVERSE_COUNTRIES": "  ,  "}
         with patch.dict(os.environ, env, clear=True):
             config = load_config()
-        self.assertEqual(config.universe_stock_exchanges, DEFAULT_UNIVERSE_STOCK_EXCHANGES)
+        self.assertEqual(config.universe_countries, DEFAULT_UNIVERSE_COUNTRIES)
 
     def test_load_config_shortlist_floor_clamp(self):
         env = {"OPENAI_API_KEY": "o", "UNIVERSE_STOCK_SHORTLIST": "3", "UNIVERSE_CRYPTO_SHORTLIST": "0"}

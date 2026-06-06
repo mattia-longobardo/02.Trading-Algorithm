@@ -312,7 +312,23 @@ class EToroClient:
     }
 
     DISCOVER_PAGE_SIZE = 200
-    DISCOVER_MAX_ITEMS = 4000
+    DISCOVER_MAX_ITEMS = 2500
+    # discover mixes all asset classes; the working server-side type filter is
+    # `assetClass` (NOT `instrumentTypeID`, which does not filter).
+    _ASSET_CLASS_PARAM = {"US_EQUITY": "Stocks", "STOCK": "Stocks", "CRYPTO": "Crypto"}
+    _DISCOVER_CAPS = {"STOCK": 2500, "CRYPTO": 1000}
+    # The default discover projection is minimal; requesting an explicit field
+    # list returns the full fundamentals object (incl. marketCap, liquidity,
+    # analyst consensus, growth/margin) with NO bar fetch.
+    _DISCOVER_FIELDS = (
+        "symbol,isin,displayName,assetClass,exchangeName,countryCode,"
+        "marketCapInUSD,currentRate,popularityUniques,isBuyEnabled,isDelisted,"
+        "daysSinceFirstTrade,averageDailyVolumeLast3Months-TTM,"
+        "tipranksAllConsensus,tipranksAllUpside,tipranksAllTotalAnalysts,"
+        "oneYearAnnualRevenueGrowthRate,netProfitMargin,"
+        "dailyPriceChange,weeklyPriceChange,monthlyPriceChange,"
+        "threeMonthPriceChange,sixMonthPriceChange"
+    )
 
     def list_exchanges(self) -> dict[int, str]:
         """Return ``{exchangeID: exchangeDescription}`` (cached for the run)."""
@@ -371,79 +387,106 @@ class EToroClient:
         except (TypeError, ValueError):
             return None
 
+    def _normalize_discover_row(self, row: dict[str, Any], category: str) -> dict[str, Any]:
+        symbol = str(row.get("symbol") or "").upper().strip()
+        instrument_id = int(row["instrumentId"])
+        name = str(row.get("displayName") or "")
+        delisted = bool(row.get("isDelisted"))
+        tradable = bool(row.get("isBuyEnabled", True)) and not delisted
+        current_rate = self._discover_float(row.get("currentRate"))
+        avg_daily_volume = self._discover_float(row.get("averageDailyVolumeLast3Months-TTM"))
+        dollar_volume = (
+            avg_daily_volume * current_rate
+            if avg_daily_volume is not None and current_rate is not None
+            else None
+        )
+        consensus = row.get("tipranksAllConsensus")
+        asset = {
+            "symbol": symbol,
+            "name": name,
+            "isin": str(row.get("isin") or "").strip(),
+            "status": "active",
+            "tradable": tradable,
+            "delisted": delisted,
+            "fractionable": False,
+            "instrument_id": instrument_id,
+            "asset_class": str(row.get("assetClass") or ""),
+            "instrument_type": str(row.get("assetClass") or ""),
+            "exchange_name": str(row.get("exchangeName") or ""),
+            "country_code": str(row.get("countryCode") or "").upper(),
+            "market_cap": self._discover_float(row.get("marketCapInUSD")),
+            "current_rate": current_rate,
+            "avg_daily_volume": avg_daily_volume,
+            "dollar_volume": dollar_volume,
+            "days_since_first_trade": self._discover_float(row.get("daysSinceFirstTrade")),
+            "popularity": int(self._discover_float(row.get("popularityUniques")) or 0),
+            "analyst_consensus": str(consensus) if consensus else None,
+            "analyst_upside": self._discover_float(row.get("tipranksAllUpside")),
+            "analyst_count": int(self._discover_float(row.get("tipranksAllTotalAnalysts")) or 0),
+            "revenue_growth": self._discover_float(row.get("oneYearAnnualRevenueGrowthRate")),
+            "net_margin": self._discover_float(row.get("netProfitMargin")),
+            "price_change_1d": self._discover_float(row.get("dailyPriceChange")),
+            "price_change_1w": self._discover_float(row.get("weeklyPriceChange")),
+            "price_change_1m": self._discover_float(row.get("monthlyPriceChange")),
+            "price_change_3m": self._discover_float(row.get("threeMonthPriceChange")),
+            "price_change_6m": self._discover_float(row.get("sixMonthPriceChange")),
+        }
+        try:
+            upsert_instrument_mapping(self.config.db_market_data, symbol, instrument_id, category, name, tradable)
+        except Exception:
+            self.logger.debug("Failed to cache instrument mapping for %s", symbol)
+        return asset
+
     def discover_instruments(self, asset_class: str) -> list[dict[str, Any]]:
         """Cheap metadata discovery for the universe prefilter.
 
-        Uses ``/api/v1/instruments/discover`` (popularity-sorted, paginated) to
-        return rich per-instrument metadata WITHOUT fetching any price bars.
+        Uses ``/api/v1/instruments/discover`` with the ``assetClass`` server-side
+        filter and an explicit ``fields`` projection to return rich fundamentals
+        (market cap, liquidity, analyst consensus, growth/margin, momentum)
+        WITHOUT fetching any price bars. Stocks are filtered to
+        ``universe_stock_min_market_cap`` server-side and sorted by market cap.
 
         Note: each accepted row is upserted into the local ``instrument_map``
-        cache individually (mirrors ``list_assets``); this is O(rows) SQLite
-        writes per run, bounded by ``DISCOVER_MAX_ITEMS``.
+        cache individually; O(rows) SQLite writes per run, bounded by the
+        per-category cap.
         """
-        hints = self._ASSET_CLASS_HINTS.get(str(asset_class).upper(), (str(asset_class).lower(),))
-        category = "CRYPTO" if "crypto" in hints else "STOCK"
-        type_ids = self._instrument_type_ids(hints)
-        if not type_ids:
-            return []
+        ac = str(asset_class).upper()
+        asset_class_param = self._ASSET_CLASS_PARAM.get(ac, ac.title())
+        category = "CRYPTO" if asset_class_param == "Crypto" else "STOCK"
+        params_base: dict[str, Any] = {
+            "assetClass": asset_class_param,
+            "pageSize": self.DISCOVER_PAGE_SIZE,
+            "fields": self._DISCOVER_FIELDS,
+        }
+        if category == "STOCK":
+            params_base["sort"] = "-marketCap"
+            min_cap = self.config.universe_stock_min_market_cap
+            if min_cap and min_cap > 0:
+                params_base["marketCapMin"] = int(min_cap)
+        else:
+            params_base["sort"] = "-popularityUniques"
+        cap = self._DISCOVER_CAPS.get(category, self.DISCOVER_MAX_ITEMS)
         out: list[dict[str, Any]] = []
         seen: set[str] = set()
-        collected = 0
-        for type_id in type_ids:
-            page = 1
-            while collected < self.DISCOVER_MAX_ITEMS:
-                payload = self._request(
-                    "GET",
-                    "/api/v1/instruments/discover",
-                    params={
-                        "page": page,
-                        "pageSize": self.DISCOVER_PAGE_SIZE,
-                        "sort": "-popularityUniques",
-                        "instrumentTypeID": type_id,
-                        "isDelisted": "false",
-                        "isCurrentlyTradable": "true",
-                    },
-                )
-                items = payload.get("items") or []
-                if not items:
-                    break
-                for row in items:
-                    if row.get("isInternalInstrument") or row.get("isHiddenFromClient"):
-                        continue
-                    symbol = str(row.get("symbol") or "").upper().strip()
-                    if not symbol or symbol in seen or row.get("instrumentId") is None:
-                        continue
-                    seen.add(symbol)
-                    instrument_id = int(row["instrumentId"])
-                    name = str(row.get("displayname") or "")
-                    tradable = bool(row.get("isCurrentlyTradable")) and bool(row.get("isBuyEnabled", True))
-                    out.append({
-                        "symbol": symbol,
-                        "name": name,
-                        "status": "active",
-                        "tradable": tradable,
-                        "fractionable": False,
-                        "instrument_id": instrument_id,
-                        "instrument_type_id": int(row.get("instrumentTypeID") or type_id),
-                        "instrument_type": str(row.get("instrumentType") or ""),
-                        "exchange_id": (int(row["exchangeID"]) if row.get("exchangeID") is not None else None),
-                        "delisted": bool(row.get("isDelisted")),
-                        "current_rate": self._discover_float(row.get("currentRate")),
-                        "popularity": int(row.get("popularityUniques") or 0),
-                        "price_change_1d": self._discover_float(row.get("dailyPriceChange")),
-                        "price_change_1w": self._discover_float(row.get("weeklyPriceChange")),
-                        "price_change_1m": self._discover_float(row.get("monthlyPriceChange")),
-                        "price_change_3m": self._discover_float(row.get("threeMonthPriceChange")),
-                        "price_change_6m": self._discover_float(row.get("sixMonthPriceChange")),
-                    })
-                    collected += 1
-                    try:
-                        upsert_instrument_mapping(self.config.db_market_data, symbol, instrument_id, category, name, tradable)
-                    except Exception:
-                        self.logger.debug("Failed to cache instrument mapping for %s", symbol)
-                if len(items) < self.DISCOVER_PAGE_SIZE:
-                    break
-                page += 1
+        page = 1
+        while len(out) < cap:
+            payload = self._request(
+                "GET", "/api/v1/instruments/discover", params={**params_base, "page": page}
+            )
+            items = payload.get("items") or []
+            if not items:
+                break
+            for row in items:
+                if row.get("isInternalInstrument") or row.get("isHiddenFromClient"):
+                    continue
+                symbol = str(row.get("symbol") or "").upper().strip()
+                if not symbol or symbol in seen or row.get("instrumentId") is None:
+                    continue
+                seen.add(symbol)
+                out.append(self._normalize_discover_row(row, category))
+            if len(items) < self.DISCOVER_PAGE_SIZE:
+                break
+            page += 1
         return out
 
     # --- account & portfolio ------------------------------------------------

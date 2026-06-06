@@ -132,108 +132,109 @@ class CheapPrefilterHelperTests(unittest.TestCase):
         obj.name = "Apple Inc"
         self.assertEqual(UniverseManager._asset_name(obj), "apple inc")
 
-    def test_cheap_score_rewards_popularity(self):
+    def test_cheap_score_rewards_liquidity_and_size(self):
         manager, _ = self._manager()
-        high = manager._cheap_prefilter_score({"popularity": 100000, "price_change_3m": 10.0})
-        low = manager._cheap_prefilter_score({"popularity": 10, "price_change_3m": 10.0})
-        self.assertGreater(high, low)
+        big = manager._cheap_prefilter_score({"market_cap": 1e12, "dollar_volume": 1e9})
+        small = manager._cheap_prefilter_score({"market_cap": 3e8, "dollar_volume": 1e5})
+        self.assertGreater(big, small)
 
-    def test_resolve_exchange_whitelist_matches_patterns(self):
-        manager, broker = self._manager()
-        broker.list_exchanges.return_value = {
-            4: "NASDAQ", 5: "NYSE", 80: "Borsa Italiana", 99: "Tokyo Stock Exchange",
-        }
-        wanted = manager._resolve_exchange_whitelist(broker)
-        self.assertEqual(wanted, {4, 5, 80})
-
-    def test_resolve_exchange_whitelist_none_on_error(self):
-        manager, broker = self._manager()
-        broker.list_exchanges.side_effect = Exception("boom")
-        self.assertIsNone(manager._resolve_exchange_whitelist(broker))
-
-    def test_resolve_exchange_whitelist_none_when_no_match(self):
-        manager, broker = self._manager()
-        broker.list_exchanges.return_value = {99: "Tokyo Stock Exchange"}
-        self.assertIsNone(manager._resolve_exchange_whitelist(broker))
-
-    def test_resolve_exchange_whitelist_skips_broker_when_no_patterns(self):
-        manager, broker = self._manager()
-        manager.config.universe_stock_exchanges = ()
-        self.assertIsNone(manager._resolve_exchange_whitelist(broker))
-        broker.list_exchanges.assert_not_called()
+    def test_cheap_score_rewards_analyst_consensus(self):
+        manager, _ = self._manager()
+        base = {"market_cap": 5e9, "dollar_volume": 2e7, "analyst_count": 15, "analyst_upside": 20.0}
+        buy = manager._cheap_prefilter_score({**base, "analyst_consensus": "StrongBuy"})
+        sell = manager._cheap_prefilter_score({**base, "analyst_consensus": "Sell"})
+        self.assertGreater(buy, sell)
 
     def test_cheap_score_penalizes_daily_spike(self):
         manager, _ = self._manager()
-        calm = manager._cheap_prefilter_score({"popularity": 1000, "price_change_1d": 0.0})
-        spiky = manager._cheap_prefilter_score({"popularity": 1000, "price_change_1d": 50.0})
+        base = {"market_cap": 5e9, "dollar_volume": 2e7}
+        calm = manager._cheap_prefilter_score({**base, "price_change_1d": 0.0})
+        spiky = manager._cheap_prefilter_score({**base, "price_change_1d": 50.0})
         self.assertGreater(calm, spiky)
 
-    def _stock(self, symbol, exch=4, rate=100.0, pop=1000, name="Co", tradable=True, delisted=False):
+    def test_dedupe_by_isin_merges_variants(self):
+        manager, _ = self._manager()
+        canonical = self._stock("NVDA", isin="US67", pop=2, consensus="StrongBuy", upside=50.0, analysts=30)
+        rth = self._stock("NVDA.RTH", isin="US67", pop=1043, consensus=None, upside=None, analysts=0)
+        out = manager._dedupe_by_isin([canonical, rth])
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["symbol"], "NVDA.RTH")             # most popular variant kept
+        self.assertEqual(out[0]["analyst_consensus"], "StrongBuy")  # back-filled from sibling
+        self.assertEqual(out[0]["analyst_count"], 30)
+
+    def test_dedupe_by_isin_passes_through_empty_isin(self):
+        manager, _ = self._manager()
+        out = manager._dedupe_by_isin([self._crypto("BTC"), self._crypto("ETH")])
+        self.assertEqual({r["symbol"] for r in out}, {"BTC", "ETH"})
+
+    def _stock(self, symbol, country="US", market_cap=5e9, dollar_volume=2e7, pop=1000,
+               name="Co", tradable=True, delisted=False, consensus="Buy", upside=10.0,
+               analysts=10, isin=None):
         return {
-            "symbol": symbol, "name": name, "tradable": tradable, "delisted": delisted,
-            "exchange_id": exch, "current_rate": rate, "popularity": pop,
-            "instrument_type": "Stocks",
-            "price_change_1d": 0.0, "price_change_1w": 0.0,
-            "price_change_1m": 0.0, "price_change_3m": 0.0, "price_change_6m": 0.0,
+            "symbol": symbol, "name": name, "isin": isin if isin is not None else symbol,
+            "tradable": tradable, "delisted": delisted, "country_code": country,
+            "market_cap": market_cap, "dollar_volume": dollar_volume, "popularity": pop,
+            "instrument_type": "Stocks", "analyst_consensus": consensus,
+            "analyst_upside": upside, "analyst_count": analysts,
+            "revenue_growth": 10.0, "net_margin": 15.0,
+            "price_change_1d": 0.0, "price_change_1m": 0.0,
+            "price_change_3m": 0.0, "price_change_6m": 0.0,
         }
 
-    def _crypto(self, symbol, pop=1000, itype="Crypto", tradable=True):
+    def _crypto(self, symbol, pop=1000, itype="Crypto", tradable=True, market_cap=5e8):
         return {
-            "symbol": symbol, "name": symbol, "tradable": tradable, "delisted": False,
-            "exchange_id": None, "current_rate": 1.0, "popularity": pop,
-            "instrument_type": itype,
-            "price_change_1d": 0.0, "price_change_1w": 0.0,
-            "price_change_1m": 0.0, "price_change_3m": 0.0, "price_change_6m": 0.0,
+            "symbol": symbol, "name": symbol, "isin": "", "tradable": tradable, "delisted": False,
+            "country_code": "", "market_cap": market_cap, "dollar_volume": 1e6, "popularity": pop,
+            "instrument_type": itype, "analyst_consensus": None, "analyst_upside": None,
+            "analyst_count": 0, "revenue_growth": None, "net_margin": None,
+            "price_change_1d": 0.0, "price_change_1m": 0.0, "price_change_3m": 0.0, "price_change_6m": 0.0,
         }
 
     def test_passes_cheap_filter_stock_rules(self):
         manager, _ = self._manager()
-        wl = {4, 5}
-        self.assertTrue(manager._passes_cheap_filter("STOCK", self._stock("AAPL", exch=4), wl))
-        self.assertFalse(manager._passes_cheap_filter("STOCK", self._stock("X", exch=99), wl))
-        self.assertFalse(manager._passes_cheap_filter("STOCK", self._stock("X", rate=1.0), wl))
-        self.assertFalse(manager._passes_cheap_filter("STOCK", self._stock("X", tradable=False), wl))
-        self.assertFalse(manager._passes_cheap_filter("STOCK", self._stock("X", name="Big Index Fund"), wl))
+        self.assertTrue(manager._passes_cheap_filter("STOCK", self._stock("AAPL")))
+        self.assertFalse(manager._passes_cheap_filter("STOCK", self._stock("X", country="CN")))
+        self.assertFalse(manager._passes_cheap_filter("STOCK", self._stock("X", market_cap=1e8)))
+        self.assertFalse(manager._passes_cheap_filter("STOCK", self._stock("X", dollar_volume=1e3)))
+        self.assertFalse(manager._passes_cheap_filter("STOCK", self._stock("X", tradable=False)))
+        self.assertFalse(manager._passes_cheap_filter("STOCK", self._stock("X", name="Big Index Fund")))
 
-    def test_passes_cheap_filter_crypto_excludes_futures(self):
+    def test_passes_cheap_filter_crypto_rules(self):
         manager, _ = self._manager()
-        self.assertTrue(manager._passes_cheap_filter("CRYPTO", self._crypto("ETH.SPOT"), None))
-        self.assertTrue(manager._passes_cheap_filter("CRYPTO", self._crypto("HYPE"), None))
-        self.assertFalse(manager._passes_cheap_filter("CRYPTO", self._crypto("BTC.MAY26"), None))
-        self.assertFalse(manager._passes_cheap_filter("CRYPTO", self._crypto("X", itype="Crypto Futures"), None))
+        self.assertTrue(manager._passes_cheap_filter("CRYPTO", self._crypto("ETH.SPOT")))
+        self.assertTrue(manager._passes_cheap_filter("CRYPTO", self._crypto("HYPE")))
+        self.assertFalse(manager._passes_cheap_filter("CRYPTO", self._crypto("BTC.MAY26")))
+        self.assertFalse(manager._passes_cheap_filter("CRYPTO", self._crypto("X", itype="Crypto Futures")))
+        self.assertFalse(manager._passes_cheap_filter("CRYPTO", self._crypto("TINY", market_cap=1e6)))
 
     def test_build_cheap_shortlist_stock_caps_and_filters(self):
         manager, broker = self._manager()
         manager.config.universe_stock_shortlist = 2
-        broker.list_exchanges.return_value = {4: "NASDAQ", 99: "Tokyo"}
         broker.discover_instruments.return_value = [
-            self._stock("AAA", exch=4, pop=10),
-            self._stock("BBB", exch=4, pop=9000),
-            self._stock("CCC", exch=4, pop=5000),
-            self._stock("TKO", exch=99, pop=99999),
+            self._stock("AAA", dollar_volume=1e6),
+            self._stock("BBB", dollar_volume=9e8),
+            self._stock("CCC", dollar_volume=5e8),
+            self._stock("FOREIGN", country="CN", dollar_volume=9e9),
         ]
-        wl = manager._resolve_exchange_whitelist(broker)
-        shortlist = manager._build_cheap_shortlist(broker, "STOCK", [], wl)
+        shortlist = manager._build_cheap_shortlist(broker, "STOCK", [])
         symbols = [a["symbol"] for a in shortlist]
         self.assertEqual(len(shortlist), 2)
-        self.assertEqual(symbols, ["BBB", "CCC"])
-        self.assertNotIn("TKO", symbols)
+        self.assertEqual(symbols, ["BBB", "CCC"])   # ranked by liquidity, capped
+        self.assertNotIn("FOREIGN", symbols)         # wrong country filtered out
 
     def test_build_cheap_shortlist_pins_preferred(self):
         manager, broker = self._manager()
         manager.config.universe_stock_shortlist = 2
-        broker.list_exchanges.return_value = {4: "NASDAQ"}
         broker.discover_instruments.return_value = [
-            self._stock("AAA", exch=4, pop=9000),
-            self._stock("BBB", exch=4, pop=8000),
-            self._stock("KEEP", exch=4, pop=1),
+            self._stock("AAA", dollar_volume=9e8),
+            self._stock("BBB", dollar_volume=8e8),
+            self._stock("KEEP", dollar_volume=1e6),
         ]
-        wl = manager._resolve_exchange_whitelist(broker)
-        shortlist = manager._build_cheap_shortlist(broker, "STOCK", ["KEEP"], wl)
+        shortlist = manager._build_cheap_shortlist(broker, "STOCK", ["KEEP"])
         symbols = [a["symbol"] for a in shortlist]
         self.assertEqual(len(shortlist), 2)        # limit=2: 1 pinned + 1 top-scored
         self.assertEqual(symbols[0], "KEEP")       # pinned symbol comes first
-        self.assertIn("AAA", symbols)              # highest-popularity pool survivor
+        self.assertIn("AAA", symbols)              # highest-liquidity pool survivor
 
     def test_build_cheap_shortlist_crypto_drops_futures(self):
         manager, broker = self._manager()
@@ -243,7 +244,7 @@ class CheapPrefilterHelperTests(unittest.TestCase):
             self._crypto("BTC.MAY26", pop=99999),
             self._crypto("HYPE", pop=50),
         ]
-        shortlist = manager._build_cheap_shortlist(broker, "CRYPTO", [], None)
+        shortlist = manager._build_cheap_shortlist(broker, "CRYPTO", [])
         symbols = [a["symbol"] for a in shortlist]
         self.assertIn("ETH.SPOT", symbols)
         self.assertIn("HYPE", symbols)
@@ -266,19 +267,32 @@ class SelectEtoroUniverseWiringTests(unittest.TestCase):
     def _empty_current(self):
         return {PE: {"STOCK": [], "CRYPTO": []}}
 
+    def _stock_row(self, symbol, **over):
+        row = {
+            "symbol": symbol, "name": symbol, "isin": symbol, "tradable": True, "delisted": False,
+            "country_code": "US", "market_cap": 3e12, "dollar_volume": 1e9, "popularity": 9000,
+            "instrument_type": "Stocks", "analyst_consensus": "Buy", "analyst_upside": 10.0,
+            "analyst_count": 20, "revenue_growth": 10.0, "net_margin": 20.0,
+            "price_change_1d": 0.0, "price_change_1m": 0.0, "price_change_3m": 0.0, "price_change_6m": 0.0,
+        }
+        row.update(over)
+        return row
+
+    def _crypto_row(self, symbol, **over):
+        row = {
+            "symbol": symbol, "name": symbol, "isin": "", "tradable": True, "delisted": False,
+            "country_code": "", "market_cap": 2e11, "dollar_volume": 1e8, "popularity": 9000,
+            "instrument_type": "Crypto", "analyst_consensus": None, "analyst_upside": None,
+            "analyst_count": 0, "revenue_growth": None, "net_margin": None,
+            "price_change_1d": 0.0, "price_change_1m": 0.0, "price_change_3m": 0.0, "price_change_6m": 0.0,
+        }
+        row.update(over)
+        return row
+
     def test_uses_discover_shortlist_when_available(self):
         broker = Mock()
-        broker.list_exchanges.return_value = {4: "NASDAQ"}
         broker.discover_instruments.side_effect = lambda cat: (
-            [{"symbol": "AAPL", "name": "Apple", "tradable": True, "delisted": False,
-              "exchange_id": 4, "current_rate": 100.0, "popularity": 9000,
-              "instrument_type": "Stocks", "price_change_1d": 0.0, "price_change_1w": 0.0,
-              "price_change_1m": 0.0, "price_change_3m": 0.0, "price_change_6m": 0.0}]
-            if cat == "STOCK" else
-            [{"symbol": "ETH.SPOT", "name": "Eth", "tradable": True, "delisted": False,
-              "exchange_id": None, "current_rate": 1.0, "popularity": 9000,
-              "instrument_type": "Crypto", "price_change_1d": 0.0, "price_change_1w": 0.0,
-              "price_change_1m": 0.0, "price_change_3m": 0.0, "price_change_6m": 0.0}]
+            [self._stock_row("AAPL")] if cat == "STOCK" else [self._crypto_row("ETH.SPOT")]
         )
         broker.get_multi_bars.return_value = {}
         manager = self._manager(broker)
@@ -289,7 +303,6 @@ class SelectEtoroUniverseWiringTests(unittest.TestCase):
 
     def test_falls_back_to_list_assets_when_discover_raises(self):
         broker = Mock()
-        broker.list_exchanges.return_value = {4: "NASDAQ"}
         broker.discover_instruments.side_effect = Exception("discover down")
         broker.list_assets.side_effect = lambda cls: (
             [_asset("AAPL", "Apple")] if cls in ("US_EQUITY", "STOCK") else [_asset("BTC", "Bitcoin")]
@@ -303,7 +316,6 @@ class SelectEtoroUniverseWiringTests(unittest.TestCase):
 
     def test_falls_back_when_discover_empty(self):
         broker = Mock()
-        broker.list_exchanges.return_value = {4: "NASDAQ"}
         broker.discover_instruments.return_value = []
         broker.list_assets.side_effect = lambda cls: (
             [_asset("AAPL", "Apple")] if cls in ("US_EQUITY", "STOCK") else [_asset("BTC", "Bitcoin")]
@@ -317,13 +329,9 @@ class SelectEtoroUniverseWiringTests(unittest.TestCase):
 
     def test_partial_discover_falls_back_per_category(self):
         broker = Mock()
-        broker.list_exchanges.return_value = {4: "NASDAQ"}
         def _discover(cat):
             if cat == "STOCK":
-                return [{"symbol": "AAPL", "name": "Apple", "tradable": True, "delisted": False,
-                         "exchange_id": 4, "current_rate": 100.0, "popularity": 9000,
-                         "instrument_type": "Stocks", "price_change_1d": 0.0, "price_change_1w": 0.0,
-                         "price_change_1m": 0.0, "price_change_3m": 0.0, "price_change_6m": 0.0}]
+                return [self._stock_row("AAPL")]
             return []  # crypto discover empty → must fall back per-category
         broker.discover_instruments.side_effect = _discover
         broker.list_assets.side_effect = lambda cls: (

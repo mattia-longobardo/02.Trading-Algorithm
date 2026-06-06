@@ -57,14 +57,12 @@ SETTINGS_RESTART_REQUIRED_KEYS: frozenset[str] = frozenset(
     }
 )
 
-# Default whitelist of exchange-name fragments (case-insensitive substring match
-# against eToro's exchangeDescription) used to scope the stock universe to USA +
-# major EU venues. Override via the UNIVERSE_STOCK_EXCHANGES env var.
-DEFAULT_UNIVERSE_STOCK_EXCHANGES: tuple[str, ...] = (
-    "NASDAQ", "NYSE", "NEW YORK", "ARCA", "AMERICAN STOCK",
-    "LONDON", "LSE", "XETRA", "FRANKFURT", "EURONEXT", "PARIS",
-    "AMSTERDAM", "BRUSSELS", "BORSA ITALIANA", "MILAN",
-    "SIX", "SWISS", "ZURICH", "BME", "MADRID",
+# Default country whitelist (ISO codes, eToro `countryCode` = company domicile) used
+# to scope the stock universe to USA + major EU. Cleaner than eToro's inconsistent
+# exchange names. Override via the UNIVERSE_COUNTRIES env var.
+DEFAULT_UNIVERSE_COUNTRIES: tuple[str, ...] = (
+    "US", "GB", "DE", "FR", "NL", "IT", "ES", "CH",
+    "SE", "DK", "NO", "FI", "IE", "BE", "AT", "PT", "LU",
 )
 
 
@@ -82,7 +80,10 @@ class AppConfig:
     weekly_universe_stocks: int = 5
     weekly_universe_crypto: int = 5
     risk_tolerance: int = 5
-    universe_stock_exchanges: tuple[str, ...] = DEFAULT_UNIVERSE_STOCK_EXCHANGES
+    universe_countries: tuple[str, ...] = DEFAULT_UNIVERSE_COUNTRIES
+    universe_stock_min_market_cap: float = 2_000_000_000.0
+    universe_stock_min_dollar_volume: float = 5_000_000.0
+    universe_crypto_min_market_cap: float = 100_000_000.0
     universe_stock_shortlist: int = 300
     universe_crypto_shortlist: int = 150
     currency: str = "EUR"
@@ -184,11 +185,14 @@ def load_config() -> AppConfig:
         weekly_universe_stocks=int(os.getenv("WEEKLY_UNIVERSE_STOCKS", "5")),
         weekly_universe_crypto=int(os.getenv("WEEKLY_UNIVERSE_CRYPTO", "5")),
         risk_tolerance=max(1, min(10, int(os.getenv("RISK_TOLERANCE", "5")))),
-        universe_stock_exchanges=tuple(
-            fragment.strip()
-            for fragment in os.getenv("UNIVERSE_STOCK_EXCHANGES", "").split(",")
-            if fragment.strip()
-        ) or DEFAULT_UNIVERSE_STOCK_EXCHANGES,
+        universe_countries=tuple(
+            code.strip().upper()
+            for code in os.getenv("UNIVERSE_COUNTRIES", "").split(",")
+            if code.strip()
+        ) or DEFAULT_UNIVERSE_COUNTRIES,
+        universe_stock_min_market_cap=max(0.0, float(os.getenv("UNIVERSE_STOCK_MIN_MARKET_CAP", "2000000000"))),
+        universe_stock_min_dollar_volume=max(0.0, float(os.getenv("UNIVERSE_STOCK_MIN_DOLLAR_VOLUME", "5000000"))),
+        universe_crypto_min_market_cap=max(0.0, float(os.getenv("UNIVERSE_CRYPTO_MIN_MARKET_CAP", "100000000"))),
         universe_stock_shortlist=max(10, int(os.getenv("UNIVERSE_STOCK_SHORTLIST", "300"))),
         universe_crypto_shortlist=max(10, int(os.getenv("UNIVERSE_CRYPTO_SHORTLIST", "150"))),
         currency=os.getenv("CURRENCY", "EUR").upper(),
