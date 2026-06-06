@@ -23,6 +23,7 @@ from core.utils import (
     utc_now,
 )
 from services.data_manager import DataManager
+from services.portfolio_risk import PortfolioRiskService
 
 
 class TradeManager:
@@ -44,6 +45,12 @@ class TradeManager:
         if gpt_client is None:
             raise TypeError("TradeManager requires a gpt_client")
         self.data_manager = data_manager
+        history_provider = (
+            self.data_manager.get_symbol_history
+            if self.data_manager is not None
+            else (lambda symbol, limit=None: [])
+        )
+        self.risk = PortfolioRiskService(config, self.logger, history_provider)
         self.gpt_client = gpt_client
 
     @property
@@ -271,6 +278,65 @@ class TradeManager:
             return minimum
         return allocated
 
+    def _open_position_values(self, provider: str) -> list[dict[str, Any]]:
+        """Current OPEN positions for *provider* as {symbol, category, value(USD)}."""
+        positions: list[dict[str, Any]] = []
+        for trade in self.get_open_or_pending_trades():
+            if self._trade_provider(trade) != provider:
+                continue
+            if str(trade.get("status") or "").upper() != "OPEN":
+                continue
+            quantity = self._as_float(trade.get("quantity")) or 0.0
+            current_price = self._as_float(trade.get("current_price")) or 0.0
+            value = quantity * current_price
+            if value <= 0:
+                value = self._as_float(trade.get("allocated_capital")) or 0.0
+            if value <= 0:
+                continue
+            positions.append({
+                "symbol": str(trade.get("symbol")).upper(),
+                "category": str(trade.get("category") or "STOCK"),
+                "value": value,
+            })
+        return positions
+
+    def _risk_based_allocation(self, category: str, symbol: str, provider: str = PROVIDER_ETORO) -> float:
+        """Risk-based size for a new position, with an over-budget entry gate.
+
+        Falls back to equal-slot allocation when equity/risk data is unavailable.
+        Returns 0.0 to signal "skip" when the trade cannot fit under the hard
+        risk threshold even at the minimum trade amount.
+        """
+        broker = self.broker(provider)
+        if broker is None:
+            return 0.0
+        try:
+            equity = float(broker.get_account_equity())
+        except Exception:
+            equity = 0.0
+        if equity <= 0:
+            return self.compute_allocated_capital(provider=provider)
+        cash = float(broker.get_available_cash())
+        positions = self._open_position_values(provider)
+        candidate = {"symbol": str(symbol).upper(), "category": category}
+        size = self.risk.suggest_size(candidate, positions, equity, cash)
+        if size <= 0:
+            return 0.0
+        minimum = float(getattr(self.config, "etoro_min_trade_amount", 0.0) or 0.0) or 1.0
+        projection = self.risk.project(candidate, size, positions, equity)
+        tries = 0
+        while projection.over_hard and size > minimum and tries < 8:
+            size = round(max(minimum, size * 0.5), 2)
+            projection = self.risk.project(candidate, size, positions, equity)
+            tries += 1
+        if projection.over_hard:
+            self.logger.info(
+                "Risk gate: skipping %s/%s — projected portfolio risk %.1f over hard threshold %.1f",
+                provider, symbol, projection.score, self.config.risk_hard_threshold,
+            )
+            return 0.0
+        return size
+
     def _cancel_pending_trade_record(
         self,
         trade: dict[str, Any],
@@ -489,7 +555,7 @@ class TradeManager:
         if not self._signal_has_required_levels(signal):
             return False
 
-        allocated_capital = self.compute_allocated_capital(provider=provider)
+        allocated_capital = self._risk_based_allocation(category, symbol, provider=provider)
         if allocated_capital <= 0:
             self.logger.warning("Skipping %s because allocated capital is zero", symbol)
             return False
