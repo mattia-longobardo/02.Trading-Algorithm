@@ -113,7 +113,12 @@ class PortfolioRiskService:
     def _shrunk_correlation(
         self, sym_a: str, sym_b: str, returns_map: dict[str, dict[str, float]]
     ) -> float:
-        """Pairwise correlation shrunk toward a constant prior for stability."""
+        """Pairwise correlation shrunk toward a constant 0.5 prior for stability.
+
+        ``risk_corr_shrinkage`` (lam) is the weight on the *sample* correlation:
+        result = lam*sample + (1-lam)*prior. So lam=1 keeps the raw sample, lam=0
+        ignores it entirely.
+        """
         prior = 0.5
         lam = self.config.risk_corr_shrinkage
         if sym_a == sym_b:

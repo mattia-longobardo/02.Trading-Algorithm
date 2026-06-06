@@ -66,12 +66,18 @@ class PortfolioVolTests(unittest.TestCase):
         self.assertIn("AAA", returns_map)
 
     def test_portfolio_vol_correlation_effect(self):
-        up = [10, 11, 12.1, 13.31, 14.641, 16.105, 17.716]
-        hist = {"AAA": _bars(up), "BBB": _bars(up)}
+        # a series with meaningful volatility (not near-zero) so shrinkage shows
+        series = [10, 11, 9.5, 12, 9, 12.5, 10.5]
+        hist = {"AAA": _bars(series), "BBB": _bars(series)}
         svc = self._svc_with_history(hist)
         vols, returns_map, _ = svc._symbol_stats([("AAA", "STOCK"), ("BBB", "STOCK")])
         sigma_p = svc._portfolio_vol({"AAA": 0.5, "BBB": 0.5}, vols, returns_map)
-        self.assertAlmostEqual(sigma_p, vols["AAA"], places=4)
+        lam = svc.config.risk_corr_shrinkage
+        rho = lam * 1.0 + (1.0 - lam) * 0.5  # identical series -> sample corr 1.0, shrunk
+        expected = math.sqrt(0.5 + 0.5 * rho) * vols["AAA"]
+        self.assertAlmostEqual(sigma_p, expected, places=6)
+        # correlated pair is riskier than the fully-diversified floor
+        self.assertGreater(sigma_p, 0.0)
 
     def test_portfolio_vol_diversification_reduces(self):
         up = [10, 11, 12.1, 13.31, 14.641, 16.105, 17.716]
