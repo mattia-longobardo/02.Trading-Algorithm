@@ -3,6 +3,12 @@ import { render, screen } from "@testing-library/react";
 import { PositionsLiveTable } from "@/components/positions/positions-live-table";
 import type { LivePosition } from "@/lib/types";
 
+const pos: LivePosition = {
+  id: 1, symbol: "AAPL", category: "STOCK", units: 3, entry_price: 100,
+  current_price: 110, unrealized_pnl: 30, unrealized_pnl_pct: 10,
+  take_profit: 130, stop_loss: 90, position_id: "p1", instrument_id: 101, is_buy: true,
+};
+
 const POSITION_PROFIT: LivePosition = {
   id: 1,
   symbol: "BTC",
@@ -35,6 +41,23 @@ const POSITION_LOSS: LivePosition = {
   is_buy: true,
 };
 
+describe("PositionsLiveTable mobile cards", () => {
+  it("renders a card list with symbol and signed PnL", () => {
+    render(<PositionsLiveTable positions={[pos]} />);
+    const cards = screen.getByTestId("positions-card-list");
+    expect(cards).toHaveTextContent("AAPL");
+    expect(cards).toHaveTextContent("+30");
+    expect(cards).toHaveTextContent("+10");
+  });
+
+  it("symbol links to the symbol detail page in the card", () => {
+    render(<PositionsLiveTable positions={[pos]} />);
+    const cards = screen.getByTestId("positions-card-list");
+    const link = cards.querySelector('a[href="/symbol/AAPL"]');
+    expect(link).not.toBeNull();
+  });
+});
+
 describe("PositionsLiveTable", () => {
   describe("with positions", () => {
     beforeEach(() => {
@@ -42,8 +65,8 @@ describe("PositionsLiveTable", () => {
     });
 
     it("renders both symbols", () => {
-      expect(screen.getByText("BTC")).toBeInTheDocument();
-      expect(screen.getByText("AAPL")).toBeInTheDocument();
+      expect(screen.getAllByText("BTC").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("AAPL").length).toBeGreaterThan(0);
     });
 
     it("positive PnL cell has accent/profit class", () => {
