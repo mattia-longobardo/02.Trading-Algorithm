@@ -814,9 +814,11 @@ class UniverseManager:
                     "eToro discover prefilter failed; falling back to legacy full scan",
                     exc_info=True,
                 )
-            if not base_stock_payload and not base_crypto_payload:
-                self.logger.warning("eToro discover prefilter empty; falling back to legacy full scan")
+            if not base_stock_payload:
+                self.logger.warning("eToro discover STOCK prefilter empty; using legacy full scan for STOCK")
                 base_stock_payload = self._get_etoro_stock_candidate_payload()
+            if not base_crypto_payload:
+                self.logger.warning("eToro discover CRYPTO prefilter empty; using legacy full scan for CRYPTO")
                 base_crypto_payload = self._get_etoro_crypto_candidate_payload()
 
             full_stock_payload = self._enrich_payload_with_market_metrics(

@@ -303,6 +303,32 @@ class SelectEtoroUniverseWiringTests(unittest.TestCase):
         result = manager._select_etoro_universe(self._empty_current())
         broker.list_assets.assert_called()
         self.assertEqual(result["STOCK"], ["AAPL"])
+        self.assertEqual(result["CRYPTO"], ["BTC"])
+
+    def test_partial_discover_falls_back_per_category(self):
+        broker = Mock()
+        broker.list_exchanges.return_value = {4: "NASDAQ"}
+        def _discover(cat):
+            if cat == "STOCK":
+                return [{"symbol": "AAPL", "name": "Apple", "tradable": True, "delisted": False,
+                         "exchange_id": 4, "current_rate": 100.0, "popularity": 9000,
+                         "instrument_type": "Stocks", "price_change_1d": 0.0, "price_change_1w": 0.0,
+                         "price_change_1m": 0.0, "price_change_3m": 0.0, "price_change_6m": 0.0}]
+            return []  # crypto discover empty → must fall back per-category
+        broker.discover_instruments.side_effect = _discover
+        broker.list_assets.side_effect = lambda cls: (
+            [_asset("AAPL", "Apple")] if cls in ("US_EQUITY", "STOCK") else [_asset("BTC", "Bitcoin")]
+        )
+        broker.get_multi_bars.return_value = {}
+        manager = self._manager(broker)
+        result = manager._select_etoro_universe(self._empty_current())
+        self.assertEqual(result["STOCK"], ["AAPL"])       # discover path
+        self.assertEqual(result["CRYPTO"], ["BTC"])        # legacy fallback
+        broker.list_assets.assert_any_call("CRYPTO")       # crypto fell back
+        # stock did NOT fall back to legacy
+        stock_legacy_calls = [c for c in broker.list_assets.call_args_list
+                              if c.args and c.args[0] in ("STOCK", "US_EQUITY")]
+        self.assertEqual(stock_legacy_calls, [])
 
 
 if __name__ == "__main__":
