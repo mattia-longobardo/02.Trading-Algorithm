@@ -275,3 +275,71 @@ class PortfolioRiskService:
             low_confidence=low_conf, over_alert=score >= self.config.risk_alert_threshold,
             over_hard=score >= self.config.risk_hard_threshold,
         )
+
+    def _candidate_vol(self, symbol: str, category: str) -> float:
+        bars = self._history(symbol, self.config.risk_lookback_days) or []
+        returns = self._returns_by_ts(self._closes_by_ts(bars))
+        vol = self._annualized_vol(list(returns.values()), category)
+        return vol if vol and vol > 0 else self._default_vol(category)
+
+    def _candidate_correlation(
+        self, symbol: str, positions: list[dict[str, Any]], invested: float
+    ) -> float:
+        if not positions or invested <= 0:
+            return 1.0
+        bars = self._history(symbol, self.config.risk_lookback_days) or []
+        cand_returns = self._returns_by_ts(self._closes_by_ts(bars))
+        num = 0.0
+        den = 0.0
+        prior = 0.5
+        lam = self.config.risk_corr_shrinkage
+        for p in positions:
+            sym = str(p["symbol"]).upper()
+            weight = self._coerce_value(p.get("value")) / invested
+            other = self._returns_by_ts(self._closes_by_ts(self._history(sym, self.config.risk_lookback_days) or []))
+            sample = self._pearson(cand_returns, other)
+            rho = prior if sample is None else (lam * sample + (1.0 - lam) * prior)
+            num += weight * rho
+            den += weight
+        return (num / den) if den > 0 else prior
+
+    def suggest_size(
+        self,
+        candidate: dict[str, Any],
+        positions: list[dict[str, Any]],
+        equity: float,
+        available_cash: float,
+    ) -> float:
+        if equity <= 0 or available_cash <= 0:
+            return 0.0
+        symbol = str(candidate["symbol"]).upper()
+        category = str(candidate.get("category") or "STOCK")
+        invested = sum(self._coerce_value(p.get("value")) for p in positions
+                       if self._coerce_value(p.get("value")) > 0)
+        sigma_c = self._candidate_vol(symbol, category)
+        corr_c = max(self._candidate_correlation(symbol, positions, invested), self.config.risk_sizing_corr_floor)
+        target = max(self.config.max_open_trades_stock + self.config.max_open_trades_crypto, 1)
+        target_risk_per_slot = self._budget_vol() / target
+        denom = sigma_c * corr_c
+        if denom <= 0:
+            return 0.0
+        value = (target_risk_per_slot / denom) * equity
+        value = min(value, available_cash, self.config.risk_max_position_pct * equity)
+        minimum = float(getattr(self.config, "etoro_min_trade_amount", 0.0) or 0.0)
+        if value < minimum:
+            return minimum if available_cash >= minimum else 0.0
+        return round(value, 2)
+
+    def project(
+        self,
+        candidate: dict[str, Any],
+        value: float,
+        positions: list[dict[str, Any]],
+        equity: float,
+    ) -> RiskAssessment:
+        combined = list(positions) + [{
+            "symbol": str(candidate["symbol"]).upper(),
+            "category": str(candidate.get("category") or "STOCK"),
+            "value": float(value),
+        }]
+        return self.assess(combined, equity)
