@@ -601,10 +601,13 @@ class EToroClient:
         leverage: int = 1,
     ) -> dict[str, Any]:
         request_id = str(uuid4())
+        # eToro requires EXACTLY ONE of symbol / instrumentId on open orders
+        # (sending both → HTTP 400 "Exactly one of Symbol or InstrumentID must
+        # be provided. Both were supplied."). We send the canonical instrumentId
+        # only; `symbol` is kept in the signature for logging/clarity.
         body = {
             "action": "open",
             "transaction": "buy",
-            "symbol": str(symbol).upper().strip(),
             "instrumentId": int(instrument_id),
             "orderType": "mkt",
             "leverage": int(leverage),

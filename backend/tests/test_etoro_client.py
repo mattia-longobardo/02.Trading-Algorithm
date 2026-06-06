@@ -200,6 +200,10 @@ class EToroOrderTests(unittest.TestCase):
         self.assertEqual(body["action"], "open")
         self.assertEqual(body["transaction"], "buy")
         self.assertEqual(body["instrumentId"], 101)
+        # eToro rejects orders that supply BOTH symbol and instrumentId
+        # ("Exactly one of Symbol or InstrumentID must be provided"); send only
+        # the canonical instrumentId.
+        self.assertNotIn("symbol", body)
         self.assertEqual(body["orderType"], "mkt")
         self.assertEqual(body["amount"], 250.0)
         self.assertEqual(body["orderCurrency"], "usd")
