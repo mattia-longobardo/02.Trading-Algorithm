@@ -30,3 +30,18 @@ export const NAV: NavItem[] = [
 export function visibleNavFor(role: UserRole): NavItem[] {
   return NAV.filter((item) => !item.adminOnly || role === "admin");
 }
+
+/** Routes shown directly in the phone bottom tab bar (in this order). */
+export const MOBILE_PRIMARY: readonly string[] = ["/", "/positions", "/trades"];
+
+/** Primary nav items (bottom-bar tabs) from a role-filtered list. */
+export function primaryNav(items: NavItem[]): NavItem[] {
+  return MOBILE_PRIMARY.map((href) => items.find((i) => i.href === href)).filter(
+    (i): i is NavItem => Boolean(i)
+  );
+}
+
+/** Secondary nav items (shown under the "Altro" sheet). */
+export function secondaryNav(items: NavItem[]): NavItem[] {
+  return items.filter((i) => !MOBILE_PRIMARY.includes(i.href));
+}
