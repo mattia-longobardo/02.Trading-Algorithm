@@ -683,6 +683,10 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
     def get_allocation(_user: auth_lib.AuthenticatedUser = Depends(get_current_user)) -> dict[str, Any]:
         return metrics.allocation()
 
+    @app.get("/api/risk")
+    def get_risk(_user: auth_lib.AuthenticatedUser = Depends(get_current_user)) -> dict[str, Any]:
+        return scheduler.trade_manager.portfolio_risk_snapshot()
+
     @app.get("/api/fx/rate")
     def get_fx_rate(
         _user: auth_lib.AuthenticatedUser = Depends(get_current_user),

@@ -340,6 +340,22 @@ class TradeManager:
             return 0.0
         return size
 
+    def portfolio_risk_snapshot(self, provider: str = PROVIDER_ETORO) -> dict[str, Any]:
+        """Full risk assessment for the dashboard API (always returns a dict)."""
+        broker = self.broker(provider)
+        equity = 0.0
+        if broker is not None:
+            try:
+                equity = float(broker.get_account_equity())
+            except Exception:
+                equity = 0.0
+        positions = self._open_position_values(provider) if broker is not None else []
+        assessment = self.risk.assess(positions, equity)
+        snapshot = assessment.to_dict()
+        snapshot["equity"] = round(equity, 2)
+        snapshot["positions"] = len(positions)
+        return snapshot
+
     def _risk_context(self, provider: str = PROVIDER_ETORO) -> dict[str, Any] | None:
         """Compact portfolio-risk block for GPT prompts, or None if unavailable."""
         broker = self.broker(provider)

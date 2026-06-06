@@ -79,5 +79,23 @@ class RiskContextTests(unittest.TestCase):
         self.assertIsNone(tm._risk_context(provider=PROVIDER_ETORO))
 
 
+class RiskSnapshotTests(unittest.TestCase):
+    def test_snapshot_dict_shape(self):
+        tm, _ = _manager(history={"AAA": _bars([10, 10.1, 9.9, 10.2, 10.0, 10.3])},
+                         open_trades=[{"symbol": "AAA", "category": "STOCK", "status": "OPEN",
+                                       "quantity": 10, "current_price": 100.0,
+                                       "allocated_capital": 1000.0, "provider": "etoro"}])
+        snap = tm.portfolio_risk_snapshot(provider=PROVIDER_ETORO)
+        self.assertIn("score", snap)
+        self.assertIn("components", snap)
+        self.assertIn("per_position_risk_contribution", snap)
+        self.assertIn("equity", snap)
+
+    def test_snapshot_low_confidence_without_equity(self):
+        tm, _ = _manager(equity=0.0)
+        snap = tm.portfolio_risk_snapshot(provider=PROVIDER_ETORO)
+        self.assertTrue(snap["low_confidence"])
+
+
 if __name__ == "__main__":
     unittest.main()
