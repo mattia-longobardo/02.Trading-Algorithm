@@ -68,10 +68,11 @@ class RiskContextTests(unittest.TestCase):
                                        "quantity": 10, "current_price": 100.0,
                                        "allocated_capital": 1000.0, "provider": "etoro"}])
         ctx = tm._risk_context(provider=PROVIDER_ETORO)
-        self.assertIn("score", ctx)
-        self.assertIn("budget_vol", ctx)
-        self.assertIn("avg_correlation", ctx)
-        self.assertIn("remaining_budget", ctx)
+        self.assertEqual(
+            set(ctx.keys()),
+            {"score", "portfolio_vol", "budget_vol", "avg_correlation", "n_eff",
+             "exposure", "remaining_budget", "alert_threshold", "hard_threshold"},
+        )
 
     def test_risk_context_none_without_equity(self):
         tm, _ = _manager(equity=0.0)

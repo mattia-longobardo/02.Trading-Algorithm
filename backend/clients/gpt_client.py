@@ -274,7 +274,7 @@ INSTRUCTIONS_NEW_SIGNAL = (
     "Do not optimize for quick daily flips, small intraday moves, or noise-driven momentum. "
     "Use constraints.currency as the reference currency for both stocks and crypto. For crypto, only consider symbols quoted in that currency. "
     "Honor constraints.risk_tolerance on a 1-10 scale where 10 is the highest risk appetite: low values should favor resilient, liquid, lower-volatility setups with tighter downside control; high values may accept more volatility and more aggressive upside theses. "
-    "When constraints.portfolio_risk is present, treat it as the live portfolio state: prefer setups not highly correlated with existing holdings (avg_correlation) and avoid pushing the portfolio over its risk budget (score vs alert_threshold, remaining_budget); when remaining_budget is low, favor SKIP or defensive, uncorrelated names. "
+    "When constraints.portfolio_risk is present, treat it as the live portfolio state: prefer setups not highly correlated with existing holdings (avg_correlation) and avoid pushing the portfolio over its risk budget. score is the current 0-100 risk; alert_threshold/hard_threshold are the warning/ceiling levels; remaining_budget is the headroom to the hard ceiling. When score is near or above alert_threshold or remaining_budget is low, favor SKIP or defensive, uncorrelated names. "
     "The OHLCV data is split into two timeframes: ohlcv.daily contains the most recent daily bars for short-term context, and ohlcv.weekly contains older bars aggregated to weekly granularity for medium/long-term context. Treat them as a continuous history, not as separate datasets. "
     "Return only JSON matching the schema. If risk/reward is unattractive, choose SKIP. "
     "If you choose OPEN, entry_price, take_profit, and stop_loss must be non-null positive numbers. "
@@ -297,7 +297,7 @@ INSTRUCTIONS_BATCH_SIGNALS = (
     "This is not day trading: focus on setups likely to play out over weeks or months, aligned with constraints.target_holding_period_days. "
     "Use constraints.currency as the reference currency; for crypto only consider pairs quoted in that currency. "
     "Honor constraints.risk_tolerance on a 1-10 scale where 10 means maximum tolerated risk. "
-    "When constraints.portfolio_risk is present, treat it as the live portfolio state: prefer setups not highly correlated with existing holdings (avg_correlation) and avoid pushing the portfolio over its risk budget (score vs alert_threshold, remaining_budget); when remaining_budget is low, favor SKIP or defensive, uncorrelated names. "
+    "When constraints.portfolio_risk is present, treat it as the live portfolio state: prefer setups not highly correlated with existing holdings (avg_correlation) and avoid pushing the portfolio over its risk budget. score is the current 0-100 risk; alert_threshold/hard_threshold are the warning/ceiling levels; remaining_budget is the headroom to the hard ceiling. When score is near or above alert_threshold or remaining_budget is low, favor SKIP or defensive, uncorrelated names. "
     "Low risk tolerance should emphasize quality, liquidity, drawdown control, and more conservative levels. "
     "High risk tolerance can accept more volatility, wider stops, and more speculative catalysts if the upside is compelling. "
     "The portfolio can open at most constraints.max_new_trades_this_cycle new trades in this cycle. "
@@ -562,11 +562,12 @@ class GPTClient:
                     "min": self.config.strategy_horizon_days_min,
                     "max": self.config.strategy_horizon_days_max,
                 },
-                "portfolio_risk": portfolio_risk,
             },
             "symbols": symbol_payloads,
             "existing_trades": existing_trades,
         }
+        if portfolio_risk is not None:
+            payload["constraints"]["portfolio_risk"] = portfolio_risk
         prompt_key = _resolve_provider_prompt_key(PROMPT_KEY_BATCH_SIGNALS, provider)
         default = INSTRUCTIONS_BATCH_SIGNALS
         return self._request_json(

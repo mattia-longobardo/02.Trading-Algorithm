@@ -361,6 +361,7 @@ class TradeManager:
             "exposure": assessment.exposure,
             "remaining_budget": round(max(0.0, self.config.risk_hard_threshold - assessment.score), 2),
             "alert_threshold": self.config.risk_alert_threshold,
+            "hard_threshold": self.config.risk_hard_threshold,
         }
 
     def _cancel_pending_trade_record(
