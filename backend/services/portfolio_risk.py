@@ -54,6 +54,13 @@ class PortfolioRiskService:
         return max(low, min(high, value))
 
     @staticmethod
+    def _coerce_value(raw: Any) -> float:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
     def _closes_by_ts(bars: list[dict[str, Any]]) -> dict[str, float]:
         out: dict[str, float] = {}
         for bar in bars:
@@ -188,18 +195,37 @@ class PortfolioRiskService:
             per_position_risk_contribution={}, low_confidence=(equity <= 0),
             over_alert=False, over_hard=False,
         )
-        valid = [p for p in positions if float(p.get("value") or 0.0) > 0 and p.get("symbol")]
+        # Aggregate by symbol so duplicate legs don't truncate weights, and coerce
+        # values defensively (positions may originate from broker/API payloads).
+        aggregated: dict[str, dict[str, Any]] = {}
+        for p in positions:
+            value = self._coerce_value(p.get("value"))
+            symbol = str(p.get("symbol") or "").upper()
+            if value <= 0 or not symbol:
+                continue
+            if symbol in aggregated:
+                aggregated[symbol]["value"] += value
+            else:
+                aggregated[symbol] = {
+                    "symbol": symbol,
+                    "category": str(p.get("category") or "STOCK"),
+                    "value": value,
+                }
+        valid = list(aggregated.values())
         if not valid or equity <= 0:
             return empty
 
-        invested = sum(float(p["value"]) for p in valid)
-        symbol_categories = [(str(p["symbol"]).upper(), str(p.get("category") or "STOCK")) for p in valid]
+        invested = sum(p["value"] for p in valid)
+        symbol_categories = [(p["symbol"], p["category"]) for p in valid]
         vols, returns_map, low_conf = self._symbol_stats(symbol_categories)
 
-        eq_weights = {str(p["symbol"]).upper(): float(p["value"]) / equity for p in valid}
-        hold_weights = {str(p["symbol"]).upper(): float(p["value"]) / invested for p in valid}
+        # vol / exposure / risk-contributions use equity weights (cash drags risk
+        # down); concentration / correlation use invested weights (holdings shape).
+        eq_weights = {p["symbol"]: p["value"] / equity for p in valid}
+        hold_weights = {p["symbol"]: p["value"] / invested for p in valid}
 
         sigma_p = self._portfolio_vol(eq_weights, vols, returns_map)
+        # at-budget vol scores 50; twice-budget vol scores 100
         vol_score = self._clamp(sigma_p / budget * 50.0, 0.0, 100.0) if budget > 0 else 0.0
 
         hhi = sum(w * w for w in hold_weights.values())
