@@ -66,7 +66,7 @@ export function CategoryAllocationChart({
         <CardHeader>
           <CardTitle>Allocazione aperta per categoria</CardTitle>
         </CardHeader>
-        <CardContent className="flex h-72 items-center justify-center">
+        <CardContent className="flex h-56 sm:h-72 items-center justify-center">
           <p className="text-sm text-(--color-muted)">Errore nel caricamento</p>
         </CardContent>
       </Card>
@@ -79,7 +79,7 @@ export function CategoryAllocationChart({
         <CardHeader>
           <CardTitle>Allocazione aperta per categoria</CardTitle>
         </CardHeader>
-        <CardContent className="flex h-72 flex-col">
+        <CardContent className="flex h-56 sm:h-72 flex-col">
           <Skeleton className="flex-1 rounded-lg" />
         </CardContent>
       </Card>
@@ -92,7 +92,7 @@ export function CategoryAllocationChart({
         <CardHeader>
           <CardTitle>Allocazione aperta per categoria</CardTitle>
         </CardHeader>
-        <CardContent className="flex h-72 items-center justify-center">
+        <CardContent className="flex h-56 sm:h-72 items-center justify-center">
           <p className="text-sm text-(--color-muted)">Nessun dato</p>
         </CardContent>
       </Card>
@@ -104,7 +104,7 @@ export function CategoryAllocationChart({
       <CardHeader>
         <CardTitle>Allocazione aperta per categoria</CardTitle>
       </CardHeader>
-      <CardContent className="flex h-72 flex-col">
+      <CardContent className="flex h-56 sm:h-72 flex-col">
         <div className="flex-1">
           <ResponsiveContainer>
             <PieChart>

@@ -201,7 +201,7 @@ export default function DashboardPage() {
           <CardHeader>
             <CardTitle>Equity curve (PnL realizzato cumulato)</CardTitle>
           </CardHeader>
-          <CardContent className="h-72">
+          <CardContent className="h-56 sm:h-72">
             <ResponsiveContainer>
               <LineChart data={equity.data?.points ?? []}>
                 <CartesianGrid strokeDasharray="3 3" stroke={theme.grid} />
