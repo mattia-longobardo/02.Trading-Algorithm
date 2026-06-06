@@ -378,6 +378,11 @@ class UniverseManager:
         pool: list[dict[str, Any]] = []
         for asset in candidates:
             symbol = self._normalize_symbol(asset.get("symbol"))
+            # Current-universe symbols are pinned for continuity and intentionally
+            # bypass the cheap filter. discover_instruments already applies the
+            # server-side isCurrentlyTradable/isDelisted filters, so a pinned symbol
+            # present here is by definition still tradable. pinned_symbols is a
+            # defensive guard (candidates are pre-deduped, so it should never fire).
             if symbol in preferred_set and symbol not in pinned_symbols:
                 pinned_symbols.add(symbol)
                 pinned.append(asset)
@@ -399,6 +404,14 @@ class UniverseManager:
             if category == "STOCK"
             else self.config.universe_crypto_shortlist
         )
+        if len(pinned) > limit:
+            self.logger.warning(
+                "Universe %s has %s pinned (current-universe) symbols exceeding the shortlist limit %s; "
+                "shortlist will carry all pinned symbols",
+                category,
+                len(pinned),
+                limit,
+            )
         shortlist = (pinned + pool)[: max(limit, len(pinned))]
         self.logger.info(
             "Universe cheap prefilter for %s reduced %s discovered to %s shortlist before bars",

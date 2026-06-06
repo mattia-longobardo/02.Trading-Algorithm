@@ -220,7 +220,9 @@ class CheapPrefilterHelperTests(unittest.TestCase):
         wl = manager._resolve_exchange_whitelist(broker)
         shortlist = manager._build_cheap_shortlist(broker, "STOCK", ["KEEP"], wl)
         symbols = [a["symbol"] for a in shortlist]
-        self.assertIn("KEEP", symbols)
+        self.assertEqual(len(shortlist), 2)        # limit=2: 1 pinned + 1 top-scored
+        self.assertEqual(symbols[0], "KEEP")       # pinned symbol comes first
+        self.assertIn("AAA", symbols)              # highest-popularity pool survivor
 
     def test_build_cheap_shortlist_crypto_drops_futures(self):
         manager, broker = self._manager()
