@@ -340,6 +340,29 @@ class TradeManager:
             return 0.0
         return size
 
+    def _risk_context(self, provider: str = PROVIDER_ETORO) -> dict[str, Any] | None:
+        """Compact portfolio-risk block for GPT prompts, or None if unavailable."""
+        broker = self.broker(provider)
+        if broker is None:
+            return None
+        try:
+            equity = float(broker.get_account_equity())
+        except Exception:
+            return None
+        if equity <= 0:
+            return None
+        assessment = self.risk.assess(self._open_position_values(provider), equity)
+        return {
+            "score": assessment.score,
+            "portfolio_vol": assessment.portfolio_vol,
+            "budget_vol": assessment.budget_vol,
+            "avg_correlation": assessment.avg_correlation,
+            "n_eff": assessment.n_eff,
+            "exposure": assessment.exposure,
+            "remaining_budget": round(max(0.0, self.config.risk_hard_threshold - assessment.score), 2),
+            "alert_threshold": self.config.risk_alert_threshold,
+        }
+
     def _cancel_pending_trade_record(
         self,
         trade: dict[str, Any],
@@ -600,7 +623,10 @@ class TradeManager:
             self.logger.warning("No market data found for %s, skipping new trade decision", symbol)
             return
 
-        signal = self.gpt_client.request_new_signal(symbol, category, candles, [], provider=provider)
+        signal = self.gpt_client.request_new_signal(
+            symbol, category, candles, [], provider=provider,
+            portfolio_risk=self._risk_context(provider=provider),
+        )
         if signal["action"] != "OPEN":
             self.logger.debug("GPT skipped %s", symbol)
             return
@@ -1055,6 +1081,7 @@ class TradeManager:
                 existing_trades=[],
                 max_new_trades=available_slots,
                 provider=provider,
+                portfolio_risk=self._risk_context(provider=provider),
             )
             by_symbol = {payload["symbol"]: payload for payload in symbol_payloads}
             candidate_signals = [

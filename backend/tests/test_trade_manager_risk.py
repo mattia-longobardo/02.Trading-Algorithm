@@ -61,5 +61,22 @@ class RiskAllocationTests(unittest.TestCase):
         self.assertAlmostEqual(alloc, round(10_000.0 / 6, 2), places=2)
 
 
+class RiskContextTests(unittest.TestCase):
+    def test_build_risk_context_shape(self):
+        tm, _ = _manager(history={"AAA": _bars([10, 10.1, 9.9, 10.2, 10.0, 10.3])},
+                         open_trades=[{"symbol": "AAA", "category": "STOCK", "status": "OPEN",
+                                       "quantity": 10, "current_price": 100.0,
+                                       "allocated_capital": 1000.0, "provider": "etoro"}])
+        ctx = tm._risk_context(provider=PROVIDER_ETORO)
+        self.assertIn("score", ctx)
+        self.assertIn("budget_vol", ctx)
+        self.assertIn("avg_correlation", ctx)
+        self.assertIn("remaining_budget", ctx)
+
+    def test_risk_context_none_without_equity(self):
+        tm, _ = _manager(equity=0.0)
+        self.assertIsNone(tm._risk_context(provider=PROVIDER_ETORO))
+
+
 if __name__ == "__main__":
     unittest.main()
