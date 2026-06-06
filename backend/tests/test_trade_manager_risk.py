@@ -90,6 +90,8 @@ class RiskSnapshotTests(unittest.TestCase):
         self.assertIn("components", snap)
         self.assertIn("per_position_risk_contribution", snap)
         self.assertIn("equity", snap)
+        self.assertIn("positions", snap)
+        self.assertEqual(snap["positions"], 1)
 
     def test_snapshot_low_confidence_without_equity(self):
         tm, _ = _manager(equity=0.0)
