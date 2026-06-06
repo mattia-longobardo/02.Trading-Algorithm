@@ -34,7 +34,7 @@ Weights are taken **vs equity** for the volatility and exposure terms (so cash d
 ### Per-symbol statistics
 - Log returns `rᵢ,t = ln(close_t / close_{t-1})` over the lookback.
 - Annualized vol `σᵢ = stdev(rᵢ) · √A`, `A = 252` (STOCK) or `365` (CRYPTO).
-- Correlation matrix from overlapping return windows, then **shrinkage** toward the mean off-diagonal correlation: `ρ̃ = λ·ρ_sample + (1−λ)·ρ̄·(J−I) ...` (λ default 0.6) for stability with few/short series.
+- Correlation from overlapping return windows, then **shrinkage** toward a constant 0.5 prior for stability with few/short series: `ρ̃ = λ·ρ_sample + (1−λ)·0.5` (λ = `risk_corr_shrinkage`, default 0.6 = weight on the sample; prior used when <3 overlapping points). (A constant prior is used rather than the mean off-diagonal correlation, keeping the pairwise estimate pure and order-independent.)
 - Covariance `Σᵢⱼ = ρ̃ᵢⱼ · σᵢ · σⱼ`.
 
 ### Four components (each normalized to 0-100)
