@@ -98,7 +98,7 @@ export default function TradesPage() {
       </Card>
 
       <Dialog open={Boolean(editing)} onOpenChange={(open) => !open && setEditing(null)}>
-        <DialogContent>
+        <DialogContent className="bottom-0 left-0 right-0 top-auto w-full max-w-none translate-x-0 translate-y-0 rounded-t-2xl sm:bottom-auto sm:left-1/2 sm:right-auto sm:top-1/2 sm:w-full sm:max-w-lg sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl">
           {editing && (
             <EditTradeDialog
               trade={editing}
@@ -113,7 +113,7 @@ export default function TradesPage() {
       </Dialog>
 
       <Dialog open={Boolean(closing)} onOpenChange={(open) => !open && setClosing(null)}>
-        <DialogContent>
+        <DialogContent className="bottom-0 left-0 right-0 top-auto w-full max-w-none translate-x-0 translate-y-0 rounded-t-2xl sm:bottom-auto sm:left-1/2 sm:right-auto sm:top-1/2 sm:w-full sm:max-w-lg sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl">
           {closing && (
             <CloseTradeDialog
               trade={closing}
