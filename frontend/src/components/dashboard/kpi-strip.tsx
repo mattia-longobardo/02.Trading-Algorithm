@@ -24,7 +24,7 @@ function Kpi({
       ? "text-(--color-danger)"
       : "text-(--color-text)";
   return (
-    <Card className="p-4">
+    <Card className="p-3 sm:p-4">
       <p className="text-xs uppercase tracking-wide text-(--color-muted)">{title}</p>
       <p className={`tnum mt-1 text-xl font-semibold tabular-nums ${tone}`}>{value}</p>
       {subtitle && <p className="tnum mt-1 text-xs tabular-nums text-(--color-muted)">{subtitle}</p>}

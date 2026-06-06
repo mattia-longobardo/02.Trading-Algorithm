@@ -23,7 +23,7 @@ export function PnlBySymbolChart({ items, currency, loading, error }: PnlBySymbo
         <CardHeader>
           <CardTitle>PnL per simbolo</CardTitle>
         </CardHeader>
-        <CardContent className="flex h-72 items-center justify-center">
+        <CardContent className="flex h-56 sm:h-72 items-center justify-center">
           <p className="text-sm text-(--color-muted)">Errore nel caricamento</p>
         </CardContent>
       </Card>
@@ -36,7 +36,7 @@ export function PnlBySymbolChart({ items, currency, loading, error }: PnlBySymbo
         <CardHeader>
           <CardTitle>PnL per simbolo</CardTitle>
         </CardHeader>
-        <CardContent className="h-72">
+        <CardContent className="h-56 sm:h-72">
           <Skeleton className="h-full w-full rounded-lg" />
         </CardContent>
       </Card>
@@ -49,7 +49,7 @@ export function PnlBySymbolChart({ items, currency, loading, error }: PnlBySymbo
         <CardHeader>
           <CardTitle>PnL per simbolo</CardTitle>
         </CardHeader>
-        <CardContent className="flex h-72 items-center justify-center">
+        <CardContent className="flex h-56 sm:h-72 items-center justify-center">
           <p className="text-sm text-(--color-muted)">Nessun dato</p>
         </CardContent>
       </Card>
@@ -61,7 +61,7 @@ export function PnlBySymbolChart({ items, currency, loading, error }: PnlBySymbo
       <CardHeader>
         <CardTitle>PnL per simbolo</CardTitle>
       </CardHeader>
-      <CardContent className="h-72">
+      <CardContent className="h-56 sm:h-72">
         <ResponsiveContainer>
           <BarChart data={items}>
             <CartesianGrid strokeDasharray="3 3" stroke={theme.grid} />
