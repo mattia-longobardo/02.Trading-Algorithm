@@ -125,6 +125,13 @@ class EtoroConfigTests(unittest.TestCase):
         self.assertEqual(config.risk_default_crypto_vol, 0.60)
         self.assertEqual(config.risk_corr_shrinkage, 0.6)
 
+    def test_load_config_threshold_clamp(self):
+        env = {"OPENAI_API_KEY": "o", "RISK_ALERT_THRESHOLD": "-5", "RISK_HARD_THRESHOLD": "250"}
+        with patch.dict(os.environ, env, clear=True):
+            config = load_config()
+        self.assertEqual(config.risk_alert_threshold, 0.0)
+        self.assertEqual(config.risk_hard_threshold, 100.0)
+
     def test_load_config_reads_risk_env(self):
         env = {
             "OPENAI_API_KEY": "o",
