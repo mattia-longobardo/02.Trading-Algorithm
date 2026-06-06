@@ -147,6 +147,11 @@ class EtoroConfigTests(unittest.TestCase):
         self.assertEqual(config.risk_hard_threshold, 80.0)
         self.assertEqual(config.risk_max_position_pct, 0.2)
 
+    def test_order_await_timeout_default_and_env(self):
+        self.assertEqual(AppConfig(openai_api_key="k", etoro_api_key="a", etoro_user_key="b").order_await_timeout_minutes, 360)
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "o", "ORDER_AWAIT_TIMEOUT_MINUTES": "30"}, clear=True):
+            self.assertEqual(load_config().order_await_timeout_minutes, 30)
+
 
 if __name__ == "__main__":
     unittest.main()

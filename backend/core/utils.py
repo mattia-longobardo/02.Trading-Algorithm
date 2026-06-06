@@ -105,6 +105,7 @@ class AppConfig:
     crypto_entry_max_chase_bps: int = 40
     crypto_pending_reprice_minutes: int = 2
     crypto_pending_cancel_minutes: int = 12
+    order_await_timeout_minutes: int = 360
     # Minimum profit cushion (in percent of entry_price) that the trailing
     # take profit must guarantee. The bot rejects GPT signals whose
     # `activation_pct − distance/entry × 100` falls below this buffer and
@@ -228,6 +229,7 @@ def load_config() -> AppConfig:
         crypto_entry_max_chase_bps=max(0, int(os.getenv("CRYPTO_ENTRY_MAX_CHASE_BPS", "40"))),
         crypto_pending_reprice_minutes=max(1, int(os.getenv("CRYPTO_PENDING_REPRICE_MINUTES", "2"))),
         crypto_pending_cancel_minutes=max(1, int(os.getenv("CRYPTO_PENDING_CANCEL_MINUTES", "12"))),
+        order_await_timeout_minutes=max(1, int(os.getenv("ORDER_AWAIT_TIMEOUT_MINUTES", "360"))),
         trailing_tp_min_profit_buffer_pct=max(0.0, float(os.getenv("TRAILING_TP_MIN_PROFIT_BUFFER_PCT", "0.5"))),
         strategy_horizon_days_min=int(os.getenv("STRATEGY_HORIZON_DAYS_MIN", "90")),
         strategy_horizon_days_max=int(os.getenv("STRATEGY_HORIZON_DAYS_MAX", "120")),
