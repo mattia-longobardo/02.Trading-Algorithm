@@ -638,11 +638,13 @@ class EToroClient:
         }
 
     @staticmethod
-    def _classify_order_status(name: str, status_id: int | None) -> tuple[bool, bool, bool, bool]:
+    def _classify_order_status(name: str) -> tuple[bool, bool, bool, bool]:
         """Return (executed, waiting, rejected, canceled) from the status name.
 
-        eToro status ids are inconsistent across asset types, so classify by the
-        human-readable name and fall back to ids only when the name is unknown.
+        eToro status *ids* are inconsistent across asset types (id 3 was observed
+        meaning "Filled" for crypto yet "Rejected" elsewhere), so classify ONLY by
+        the human-readable name. An unrecognized name is treated as still-waiting
+        (keep polling) rather than guessed terminal.
         """
         text = name.lower()
         if "fill" in text or "execut" in text:
@@ -651,12 +653,7 @@ class EToroClient:
             return False, False, True, False
         if "cancel" in text:
             return False, False, False, True
-        if "wait" in text or "pending" in text:
-            return False, True, False, False
-        mapping = {1: (True, False, False, False), 2: (False, False, False, True),
-                   3: (False, False, True, False), 4: (False, False, True, False),
-                   7: (False, False, False, True), 11: (False, True, False, False)}
-        return mapping.get(int(status_id) if status_id is not None else -1, (False, True, False, False))
+        return False, True, False, False  # waiting / unknown -> keep polling
 
     def get_order_status(self, order_id: str) -> dict[str, Any] | None:
         """Resolve an order's async outcome via the orders:lookup endpoint.
@@ -673,7 +670,7 @@ class EToroClient:
         status = payload.get("status") or {}
         name = str(status.get("name") or "")
         status_id = status.get("id")
-        executed, waiting, rejected, canceled = self._classify_order_status(name, status_id)
+        executed, waiting, rejected, canceled = self._classify_order_status(name)
         position_id = None
         for execution in payload.get("positionExecutions") or []:
             if str(execution.get("state") or "").lower() == "open" and execution.get("positionId") is not None:
