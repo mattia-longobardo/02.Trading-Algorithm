@@ -163,5 +163,44 @@ class AssessTests(unittest.TestCase):
         self.assertTrue(a.low_confidence)
 
 
+class SizingTests(unittest.TestCase):
+    def _svc(self, history=None, **cfg_over):
+        cfg = AppConfig(openai_api_key="k", etoro_api_key="a", etoro_user_key="b",
+                        max_open_trades_stock=3, max_open_trades_crypto=3,
+                        etoro_min_trade_amount=50.0, **cfg_over)
+        history = history or {}
+        return PortfolioRiskService(cfg, logging.getLogger("t"),
+                                    history_provider=lambda s, l: history.get(s, []))
+
+    def test_high_vol_gets_smaller_size(self):
+        calm = _bars([10, 10.05, 9.97, 10.03, 10.0, 10.04, 10.01])
+        wild = _bars([10, 12, 8, 13, 7, 14, 6])
+        svc = self._svc(history={"CALM": calm, "WILD": wild})
+        size_calm = svc.suggest_size({"symbol": "CALM", "category": "STOCK"}, [], 10_000.0, 10_000.0)
+        size_wild = svc.suggest_size({"symbol": "WILD", "category": "STOCK"}, [], 10_000.0, 10_000.0)
+        self.assertGreater(size_calm, size_wild)
+
+    def test_size_clamps_to_max_position_pct_and_cash(self):
+        calm = _bars([10, 10.01, 10.0, 10.02, 10.01, 10.0])
+        svc = self._svc(history={"CALM": calm}, risk_max_position_pct=0.25)
+        size = svc.suggest_size({"symbol": "CALM", "category": "STOCK"}, [], 10_000.0, 10_000.0)
+        self.assertLessEqual(size, 2_500.0 + 1e-6)
+        size2 = svc.suggest_size({"symbol": "CALM", "category": "STOCK"}, [], 10_000.0, 80.0)
+        self.assertLessEqual(size2, 80.0 + 1e-6)
+
+    def test_size_zero_when_cash_below_min(self):
+        svc = self._svc(history={"AAA": _bars([10, 10.1, 9.9, 10.2])})
+        self.assertEqual(svc.suggest_size({"symbol": "AAA", "category": "STOCK"}, [], 10_000.0, 10.0), 0.0)
+
+    def test_project_adds_candidate(self):
+        up = [10, 11, 12.1, 13.31, 14.641, 16.105, 17.716]
+        svc = self._svc(history={"AAA": _bars(up), "BBB": _bars(up)})
+        pos = [{"symbol": "AAA", "category": "STOCK", "value": 5_000.0}]
+        before = svc.assess(pos, 10_000.0)
+        after = svc.project({"symbol": "BBB", "category": "STOCK"}, 4_000.0, pos, 10_000.0)
+        self.assertGreater(after.exposure, before.exposure)
+        self.assertIn("BBB", after.per_position_risk_contribution)
+
+
 if __name__ == "__main__":
     unittest.main()
