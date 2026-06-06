@@ -126,6 +126,7 @@ class EtoroPendingTests(EtoroLifecycleBase):
         self.assertEqual(row["position_id"], "p1")
         self.assertEqual(row["quantity"], 2.0)
         self.assertEqual(row["entry_price"], 100.0)
+        self.assertEqual(row["position_confirmed"], 1)
 
     def test_no_fill_when_price_above_chase(self):
         trade = self._pending(target=100.0)

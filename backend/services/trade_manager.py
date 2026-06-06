@@ -1083,6 +1083,7 @@ class TradeManager:
                     "UPDATE trades SET position_confirmed = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (trade["id"],),
                 )
+            trade["position_confirmed"] = 1
 
         quantity = self._as_float(position.get("units")) or float(trade["quantity"])
         current_price = self._resolve_current_price(
