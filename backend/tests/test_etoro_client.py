@@ -464,136 +464,127 @@ class EToroDiscoverTests(unittest.TestCase):
         client.list_exchanges()
         self.assertEqual(session.request.call_count, 1)
 
-    def _types_resp(self):
-        return make_response(200, {"instrumentTypes": [
-            {"instrumentTypeID": 5, "instrumentTypeDescription": "Stocks"},
-            {"instrumentTypeID": 10, "instrumentTypeDescription": "Crypto"},
-            {"instrumentTypeID": 6, "instrumentTypeDescription": "ETF"},
-        ]})
+    def _discover_page(self, items, page=1, total=None):
+        return make_response(200, {
+            "page": page, "pageSize": 200,
+            "totalItems": total if total is not None else len(items),
+            "items": items,
+        })
+
+    def _stock_row(self, **over):
+        row = {
+            "instrumentId": 101, "symbol": "AAPL", "displayName": "Apple Inc",
+            "isin": "US0378331005", "assetClass": "Stocks", "exchangeName": "Nasdaq",
+            "countryCode": "US", "marketCapInUSD": 4.5e12, "currentRate": 200.0,
+            "popularityUniques": 5000, "isBuyEnabled": True, "isDelisted": False,
+            "daysSinceFirstTrade": 5000, "averageDailyVolumeLast3Months-TTM": 1_000_000.0,
+            "tipranksAllConsensus": "StrongBuy", "tipranksAllUpside": 20.0,
+            "tipranksAllTotalAnalysts": 30,
+            "oneYearAnnualRevenueGrowthRate": 12.0, "netProfitMargin": 25.0,
+            "dailyPriceChange": 1.0, "weeklyPriceChange": 2.0, "monthlyPriceChange": 3.0,
+            "threeMonthPriceChange": 4.0, "sixMonthPriceChange": 5.0,
+        }
+        row.update(over)
+        return row
 
     def test_discover_instruments_normalizes_and_filters_internal(self):
         client, session = make_client()
-        session.request.side_effect = [
-            self._types_resp(),
-            make_response(200, {"page": 1, "pageSize": 200, "totalItems": 2, "items": [
-                {"instrumentId": 101, "displayname": "Apple", "symbol": "AAPL",
-                 "instrumentTypeID": 5, "instrumentType": "Stocks", "exchangeID": 4,
-                 "isCurrentlyTradable": True, "isBuyEnabled": True, "isDelisted": False,
-                 "currentRate": 200.0, "popularityUniques": 5000,
-                 "dailyPriceChange": 1.0, "weeklyPriceChange": 2.0,
-                 "monthlyPriceChange": 3.0, "threeMonthPriceChange": 4.0,
-                 "sixMonthPriceChange": 5.0},
-                {"instrumentId": 999, "displayname": "Hidden", "symbol": "HID",
-                 "isInternalInstrument": True},
-            ]}),
-        ]
+        session.request.side_effect = [self._discover_page([
+            self._stock_row(),
+            {"instrumentId": 999, "symbol": "HID", "isInternalInstrument": True},
+        ])]
         rows = client.discover_instruments("STOCK")
         self.assertEqual(len(rows), 1)
         row = rows[0]
         self.assertEqual(row["symbol"], "AAPL")
         self.assertEqual(row["instrument_id"], 101)
-        self.assertEqual(row["exchange_id"], 4)
+        self.assertEqual(row["name"], "Apple Inc")
+        self.assertEqual(row["isin"], "US0378331005")
+        self.assertEqual(row["country_code"], "US")
+        self.assertEqual(row["market_cap"], 4.5e12)
+        self.assertEqual(row["dollar_volume"], 1_000_000.0 * 200.0)
+        self.assertEqual(row["analyst_consensus"], "StrongBuy")
+        self.assertEqual(row["analyst_count"], 30)
         self.assertTrue(row["tradable"])
-        self.assertEqual(row["popularity"], 5000)
-        self.assertEqual(row["current_rate"], 200.0)
         self.assertEqual(row["price_change_3m"], 4.0)
-        discover_kwargs = session.request.call_args_list[1].kwargs
-        self.assertEqual(discover_kwargs["params"]["sort"], "-popularityUniques")
-        self.assertEqual(discover_kwargs["params"]["instrumentTypeID"], 5)
+        params = session.request.call_args_list[0].kwargs["params"]
+        self.assertEqual(params["assetClass"], "Stocks")
+        self.assertEqual(params["sort"], "-marketCap")
+        self.assertIn("marketCapMin", params)
+        self.assertIn("marketCapInUSD", params["fields"])
 
-    def test_discover_instruments_derives_tradable_false(self):
+    def test_discover_instruments_crypto_uses_crypto_params(self):
         client, session = make_client()
-        session.request.side_effect = [
-            self._types_resp(),
-            make_response(200, {"page": 1, "pageSize": 200, "totalItems": 1, "items": [
-                {"instrumentId": 7, "displayname": "X", "symbol": "X",
-                 "isCurrentlyTradable": True, "isBuyEnabled": False},
-            ]}),
-        ]
+        session.request.side_effect = [self._discover_page([
+            {"instrumentId": 1, "symbol": "BTC", "displayName": "Bitcoin",
+             "assetClass": "Crypto", "isBuyEnabled": True, "currentRate": 60000.0,
+             "marketCapInUSD": 1.2e12, "popularityUniques": 10},
+        ])]
+        rows = client.discover_instruments("CRYPTO")
+        self.assertEqual(rows[0]["symbol"], "BTC")
+        self.assertEqual(rows[0]["asset_class"], "Crypto")
+        params = session.request.call_args_list[0].kwargs["params"]
+        self.assertEqual(params["assetClass"], "Crypto")
+        self.assertEqual(params["sort"], "-popularityUniques")
+        self.assertNotIn("marketCapMin", params)
+
+    def test_discover_instruments_tradable_false_when_delisted(self):
+        client, session = make_client()
+        session.request.side_effect = [self._discover_page([
+            self._stock_row(symbol="X", instrumentId=7, isBuyEnabled=True, isDelisted=True),
+        ])]
         rows = client.discover_instruments("STOCK")
         self.assertFalse(rows[0]["tradable"])
+        self.assertTrue(rows[0]["delisted"])
 
-    def test_discover_instruments_stops_on_short_page(self):
+    def test_discover_instruments_tradable_false_when_not_buy_enabled(self):
         client, session = make_client()
-        session.request.side_effect = [
-            self._types_resp(),
-            make_response(200, {"page": 1, "pageSize": 200, "totalItems": 1, "items": [
-                {"instrumentId": 1, "displayname": "A", "symbol": "A",
-                 "isCurrentlyTradable": True},
-            ]}),
-        ]
-        rows = client.discover_instruments("STOCK")
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(session.request.call_count, 2)
-
-    def test_discover_instruments_tradable_false_when_not_currently_tradable(self):
-        client, session = make_client()
-        session.request.side_effect = [
-            self._types_resp(),
-            make_response(200, {"page": 1, "pageSize": 200, "totalItems": 1, "items": [
-                {"instrumentId": 8, "displayname": "Y", "symbol": "Y",
-                 "isCurrentlyTradable": False, "isBuyEnabled": True},
-            ]}),
-        ]
+        session.request.side_effect = [self._discover_page([
+            self._stock_row(symbol="X", instrumentId=8, isBuyEnabled=False, isDelisted=False),
+        ])]
         rows = client.discover_instruments("STOCK")
         self.assertFalse(rows[0]["tradable"])
 
     def test_discover_instruments_skips_hidden_from_client(self):
         client, session = make_client()
-        session.request.side_effect = [
-            self._types_resp(),
-            make_response(200, {"page": 1, "pageSize": 200, "totalItems": 1, "items": [
-                {"instrumentId": 9, "displayname": "Hidden", "symbol": "HDN",
-                 "isCurrentlyTradable": True, "isHiddenFromClient": True},
-            ]}),
-        ]
+        session.request.side_effect = [self._discover_page([
+            {"instrumentId": 9, "symbol": "HDN", "isHiddenFromClient": True},
+        ])]
         rows = client.discover_instruments("STOCK")
         self.assertEqual(rows, [])
 
+    def test_discover_instruments_stops_on_short_page(self):
+        client, session = make_client()
+        session.request.side_effect = [self._discover_page([self._stock_row()], total=1)]
+        rows = client.discover_instruments("STOCK")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(session.request.call_count, 1)
+
     def test_discover_instruments_paginates_multiple_pages(self):
         client, session = make_client()
-        full_page = [
-            {"instrumentId": i, "displayname": f"S{i}", "symbol": f"S{i}",
-             "isCurrentlyTradable": True}
-            for i in range(client.DISCOVER_PAGE_SIZE)
-        ]
-        second_page = [
-            {"instrumentId": 99001, "displayname": "LAST", "symbol": "LAST",
-             "isCurrentlyTradable": True},
-        ]
+        full_page = [self._stock_row(symbol=f"S{i}", instrumentId=i) for i in range(client.DISCOVER_PAGE_SIZE)]
+        second_page = [self._stock_row(symbol="LAST", instrumentId=99001)]
         session.request.side_effect = [
-            self._types_resp(),
-            make_response(200, {"page": 1, "pageSize": client.DISCOVER_PAGE_SIZE,
-                                "totalItems": client.DISCOVER_PAGE_SIZE + 1, "items": full_page}),
-            make_response(200, {"page": 2, "pageSize": client.DISCOVER_PAGE_SIZE,
-                                "totalItems": client.DISCOVER_PAGE_SIZE + 1, "items": second_page}),
+            self._discover_page(full_page, page=1, total=client.DISCOVER_PAGE_SIZE + 1),
+            self._discover_page(second_page, page=2, total=client.DISCOVER_PAGE_SIZE + 1),
         ]
         rows = client.discover_instruments("STOCK")
         self.assertEqual(len(rows), client.DISCOVER_PAGE_SIZE + 1)
         self.assertIn("LAST", [r["symbol"] for r in rows])
-        # types call + two discover pages
-        self.assertEqual(session.request.call_count, 3)
-        self.assertEqual(session.request.call_args_list[1].kwargs["params"]["page"], 1)
-        self.assertEqual(session.request.call_args_list[2].kwargs["params"]["page"], 2)
-
-    def test_discover_instruments_respects_max_items_cap(self):
-        client, session = make_client()
-        client.DISCOVER_MAX_ITEMS = 2
-        full_page = [
-            {"instrumentId": i, "displayname": f"S{i}", "symbol": f"S{i}",
-             "isCurrentlyTradable": True}
-            for i in range(client.DISCOVER_PAGE_SIZE)
-        ]
-        session.request.side_effect = [
-            self._types_resp(),
-            make_response(200, {"page": 1, "pageSize": client.DISCOVER_PAGE_SIZE,
-                                "totalItems": 9999, "items": full_page}),
-        ]
-        rows = client.discover_instruments("STOCK")
-        # cap stops further pagination; the full first page is processed before
-        # the while condition re-evaluates, so we get the full page not just 2
-        self.assertGreaterEqual(len(rows), 2)
         self.assertEqual(session.request.call_count, 2)
+        self.assertEqual(session.request.call_args_list[0].kwargs["params"]["page"], 1)
+        self.assertEqual(session.request.call_args_list[1].kwargs["params"]["page"], 2)
+
+    def test_discover_instruments_respects_cap(self):
+        client, session = make_client()
+        client._DISCOVER_CAPS = {"STOCK": 2}
+        full_page = [self._stock_row(symbol=f"S{i}", instrumentId=i) for i in range(client.DISCOVER_PAGE_SIZE)]
+        session.request.side_effect = [self._discover_page(full_page, page=1, total=9999)]
+        rows = client.discover_instruments("STOCK")
+        # cap halts further pagination; the full first page is processed before
+        # the while condition re-evaluates, so only one page is fetched
+        self.assertGreaterEqual(len(rows), 2)
+        self.assertEqual(session.request.call_count, 1)
 
 
 if __name__ == "__main__":
