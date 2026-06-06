@@ -349,7 +349,10 @@ class TradeManager:
                 equity = float(broker.get_account_equity())
             except Exception:
                 equity = 0.0
-        positions = self._open_position_values(provider) if broker is not None else []
+        try:
+            positions = self._open_position_values(provider) if broker is not None else []
+        except Exception:
+            positions = []
         assessment = self.risk.assess(positions, equity)
         snapshot = assessment.to_dict()
         snapshot["equity"] = round(equity, 2)
