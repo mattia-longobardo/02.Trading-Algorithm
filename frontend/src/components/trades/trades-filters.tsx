@@ -36,7 +36,7 @@ export function TradesFilters({
       <CardHeader>
         <CardTitle>Filtri</CardTitle>
       </CardHeader>
-      <CardContent className="grid gap-3 md:grid-cols-3">
+      <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <div className="space-y-1">
           <label className="text-xs uppercase text-(--color-muted)">Stato</label>
           <Select
