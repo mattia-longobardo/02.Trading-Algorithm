@@ -19,7 +19,7 @@ export function RiskScoreGauge({ score, budgetVol, hardThreshold }: RiskScoreGau
   const theme = useChartTheme();
   const band = riskBand(score);
   const color =
-    band === "critical" ? theme.negative : band === "warning" ? "#f59e0b" : theme.positive;
+    band === "critical" ? theme.negative : band === "warning" ? theme.warning : theme.positive;
 
   // Semicerchio: 180° → 0°, raggio 80, centro (100,100).
   const R = 80;
