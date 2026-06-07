@@ -156,6 +156,36 @@ class EToroClient:
         last = float(row.get("lastExecution") or 0.0) or None
         return {"ask_price": ask, "bid_price": bid, "last_price": last}
 
+    def is_market_open(self, instrument_id: int, *, max_staleness_minutes: float = 15.0) -> bool:
+        """True if the instrument has a fresh live quote (i.e. its market is open).
+
+        eToro does not expose a reliable per-instrument market-open boolean, but a
+        closed exchange freezes the rate at the last close, so the quote ``date``
+        going stale is a robust, exchange-agnostic proxy (handles holidays/DST on
+        its own). Crypto rates tick 24/7 and are always fresh. Fails *open*
+        (returns True) on any error so a transient quote failure never blocks
+        trading — the gate only suppresses entries when the market is provably
+        closed.
+        """
+        try:
+            payload = self._request(
+                "GET",
+                f"/api/v1/market-data/instruments/rates?instrumentIds={int(instrument_id)}",
+            )
+            rows = payload.get("rates") or []
+            if not rows:
+                return True
+            quote_dt = parse_datetime(rows[0].get("date"))
+            if quote_dt is None:
+                return True
+            age_minutes = (utc_now() - quote_dt).total_seconds() / 60.0
+            return age_minutes <= max_staleness_minutes
+        except Exception:
+            self.logger.debug(
+                "is_market_open: quote check failed for %s; assuming open", instrument_id, exc_info=True
+            )
+            return True
+
     def get_candles_by_instrument(
         self,
         instrument_id: int,

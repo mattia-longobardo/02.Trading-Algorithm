@@ -677,6 +677,21 @@ class TradeManager:
         if not self._signal_has_required_levels(signal):
             return False
 
+        # Don't open trades we can't fund: a 0 free credit only yields broker
+        # ENTRY_REJECTED churn. (Equity can be high while credit is fully
+        # deployed.)
+        min_trade = float(getattr(self.config, "etoro_min_trade_amount", 0.0) or 0.0)
+        try:
+            available_cash = float(broker.get_available_cash())
+        except Exception:
+            available_cash = None
+        if available_cash is not None and available_cash < min_trade:
+            self.logger.info(
+                "Skipping %s because free credit %.2f is below the minimum trade amount %.2f",
+                symbol, available_cash, min_trade,
+            )
+            return False
+
         allocated_capital = self._risk_based_allocation(category, symbol, provider=provider)
         if allocated_capital <= 0:
             self.logger.warning("Skipping %s because allocated capital is zero", symbol)
@@ -684,6 +699,12 @@ class TradeManager:
         instrument_id = broker.instrument_id_for_symbol(symbol)
         if instrument_id is None:
             self.logger.warning("Skipping %s because it is not a tradable %s instrument", symbol, provider)
+            return False
+        # Don't submit stock orders when the exchange is closed: they can't fill
+        # and get abandoned as ORDER_AWAIT_TIMEOUT, then re-proposed → churn.
+        # Crypto trades 24/7, so it is exempt.
+        if str(category).upper() == "STOCK" and not broker.is_market_open(int(instrument_id)):
+            self.logger.info("Skipping %s because its market is closed", symbol)
             return False
         self._save_new_trade(category, symbol, signal, instrument_id, allocated_capital, provider=provider)
         return True
