@@ -195,7 +195,7 @@ ora supporta:
 - Universe separato tra `STOCK` e `CRYPTO`, ricreato una volta a settimana
 - Un solo trade attivo (`PENDING` o `OPEN`) per simbolo/coppia
 - TP, trailing TP, SL e trailing stop sono gestiti internamente dal bot e salvati nel DB trade
-- ETF esclusi nella selezione dell'universo
+- ETF: una allowlist curata (`UNIVERSE_ETF_SYMBOLS`, default SPY/QQQ/VOO/VTI/IWM/DIA/GLD/VWO/EEM) viene tradata come categoria STOCK — condivide gli slot azionari ed eredita il gate mercato-aperto; lista vuota = ETF disabilitati. Gli altri ETF restano esclusi dalla selezione automatica dell'universo
 - Retry automatico su OpenAI ed eToro con backoff esponenziale
 - Tutte le decisioni GPT richiedono web search
 - La selezione settimanale dell'universo usa tutti i candidati eToro, applica un prefilter deterministico con metriche locali di mercato, genera dossier JSON paralleli per i candidati migliori con web search obbligatoria e poi consolida il risultato in una selezione finale

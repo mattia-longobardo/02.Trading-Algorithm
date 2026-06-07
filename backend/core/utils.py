@@ -65,6 +65,14 @@ DEFAULT_UNIVERSE_COUNTRIES: tuple[str, ...] = (
     "SE", "DK", "NO", "FI", "IE", "BE", "AT", "PT", "LU",
 )
 
+# Curated ETF allowlist traded alongside stocks (stored as STOCK category).
+# ETFs are a separate eToro assetClass without the fundamentals the stock
+# selection filter needs, so they are force-included rather than discovered.
+# Override via the UNIVERSE_ETF_SYMBOLS env var (empty disables ETF trading).
+DEFAULT_UNIVERSE_ETFS: tuple[str, ...] = (
+    "SPY", "QQQ", "VOO", "VTI", "IWM", "DIA", "GLD", "VWO", "EEM",
+)
+
 
 @dataclass(slots=True)
 class AppConfig:
@@ -81,6 +89,7 @@ class AppConfig:
     weekly_universe_crypto: int = 5
     risk_tolerance: int = 5
     universe_countries: tuple[str, ...] = DEFAULT_UNIVERSE_COUNTRIES
+    universe_etf_symbols: tuple[str, ...] = DEFAULT_UNIVERSE_ETFS
     universe_stock_min_market_cap: float = 2_000_000_000.0
     universe_stock_min_dollar_volume: float = 5_000_000.0
     universe_crypto_min_market_cap: float = 100_000_000.0
@@ -205,6 +214,15 @@ def load_config() -> AppConfig:
             for code in os.getenv("UNIVERSE_COUNTRIES", "").split(",")
             if code.strip()
         ) or DEFAULT_UNIVERSE_COUNTRIES,
+        universe_etf_symbols=(
+            tuple(
+                s.strip().upper()
+                for s in os.getenv("UNIVERSE_ETF_SYMBOLS", "").split(",")
+                if s.strip()
+            )
+            if os.getenv("UNIVERSE_ETF_SYMBOLS") is not None
+            else DEFAULT_UNIVERSE_ETFS
+        ),
         universe_stock_min_market_cap=max(0.0, float(os.getenv("UNIVERSE_STOCK_MIN_MARKET_CAP", "2000000000"))),
         universe_stock_min_dollar_volume=max(0.0, float(os.getenv("UNIVERSE_STOCK_MIN_DOLLAR_VOLUME", "5000000"))),
         universe_crypto_min_market_cap=max(0.0, float(os.getenv("UNIVERSE_CRYPTO_MIN_MARKET_CAP", "100000000"))),

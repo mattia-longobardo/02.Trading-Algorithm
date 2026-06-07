@@ -882,6 +882,38 @@ class UniverseManager:
             }
         return {"STOCK": stocks, "CRYPTO": crypto}
 
+    def _inject_etf_allowlist(self, stocks: list[str]) -> list[str]:
+        """Force-include the curated ETF allowlist in the STOCK universe.
+
+        ETFs are a separate eToro assetClass without the fundamentals the stock
+        cheap filter needs, so they bypass discovery/selection and are added
+        here. Stored as STOCK (DB category) → they share stock slots and inherit
+        the market-open gate. Only symbols that resolve on eToro are kept.
+        """
+        allow = [
+            s for s in (self._normalize_symbol(x) for x in (self.config.universe_etf_symbols or ())) if s
+        ]
+        if not allow:
+            return stocks
+        broker = self.broker(PROVIDER_ETORO)
+        seen = {self._normalize_symbol(s) for s in stocks}
+        out = list(stocks)
+        for sym in allow:
+            if sym in seen:
+                continue
+            try:
+                if broker is not None and broker.instrument_id_for_symbol(sym) is None:
+                    self.logger.info("ETF allowlist: %s does not resolve on eToro; skipping", sym)
+                    continue
+            except Exception:
+                self.logger.debug("ETF allowlist: resolve failed for %s; including anyway", sym, exc_info=True)
+            out.append(sym)
+            seen.add(sym)
+        added = len(out) - len(stocks)
+        if added:
+            self.logger.info("ETF allowlist: added %s ETF(s) to the STOCK universe", added)
+        return out
+
     # -- public entry points ---------------------------------------------
 
     def select_trading_universe(self) -> ProviderUniverse:
@@ -892,6 +924,10 @@ class UniverseManager:
             result[PROVIDER_ETORO] = self._select_etoro_universe(current_universe)
         else:
             result[PROVIDER_ETORO] = {"STOCK": [], "CRYPTO": []}
+
+        result[PROVIDER_ETORO]["STOCK"] = self._inject_etf_allowlist(
+            result[PROVIDER_ETORO].get("STOCK", [])
+        )
 
         write_universe_file(result)
         self.logger.info("Selected trading universe: %s", result)

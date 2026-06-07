@@ -493,7 +493,7 @@ class GPTClient:
             "constraints": {
                 "direction": "LONG",
                 "web_search_required": True,
-                "no_etf": True,
+                "no_etf": not bool(self.config.universe_etf_symbols),
                 "currency": self._provider_currency(provider),
                 "provider": provider,
                 "risk_tolerance": self.config.risk_tolerance,

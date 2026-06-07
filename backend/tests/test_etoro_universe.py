@@ -349,5 +349,34 @@ class SelectEtoroUniverseWiringTests(unittest.TestCase):
         self.assertEqual(stock_legacy_calls, [])
 
 
+class EtfAllowlistTests(unittest.TestCase):
+    def _manager(self, etfs):
+        from services.universe_manager import UniverseManager
+        config = AppConfig(
+            openai_api_key="k", etoro_api_key="a", etoro_user_key="b",
+            etoro_account_type="demo", universe_etf_symbols=tuple(etfs),
+        )
+        broker = Mock()
+        broker.instrument_id_for_symbol.return_value = 3000
+        return UniverseManager(config, logging.getLogger("t"), {PE: broker}, Mock()), broker
+
+    def test_injects_allowlist_etfs_as_stock(self):
+        m, _ = self._manager(["SPY", "QQQ"])
+        self.assertEqual(m._inject_etf_allowlist(["AAPL"]), ["AAPL", "SPY", "QQQ"])
+
+    def test_dedupes_already_present(self):
+        m, _ = self._manager(["SPY", "QQQ"])
+        self.assertEqual(m._inject_etf_allowlist(["SPY"]), ["SPY", "QQQ"])
+
+    def test_skips_unresolvable_etf(self):
+        m, broker = self._manager(["SPY", "NOPE"])
+        broker.instrument_id_for_symbol.side_effect = lambda s: None if s == "NOPE" else 3000
+        self.assertEqual(m._inject_etf_allowlist([]), ["SPY"])
+
+    def test_empty_allowlist_is_noop(self):
+        m, _ = self._manager([])
+        self.assertEqual(m._inject_etf_allowlist(["AAPL"]), ["AAPL"])
+
+
 if __name__ == "__main__":
     unittest.main()
