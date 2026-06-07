@@ -677,21 +677,6 @@ class TradeManager:
         if not self._signal_has_required_levels(signal):
             return False
 
-        # Don't open trades we can't fund: a 0 free credit only yields broker
-        # ENTRY_REJECTED churn. (Equity can be high while credit is fully
-        # deployed.)
-        min_trade = float(getattr(self.config, "etoro_min_trade_amount", 0.0) or 0.0)
-        try:
-            available_cash = float(broker.get_available_cash())
-        except Exception:
-            available_cash = None
-        if available_cash is not None and available_cash < min_trade:
-            self.logger.info(
-                "Skipping %s because free credit %.2f is below the minimum trade amount %.2f",
-                symbol, available_cash, min_trade,
-            )
-            return False
-
         allocated_capital = self._risk_based_allocation(category, symbol, provider=provider)
         if allocated_capital <= 0:
             self.logger.warning("Skipping %s because allocated capital is zero", symbol)
