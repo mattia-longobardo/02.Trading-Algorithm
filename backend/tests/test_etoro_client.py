@@ -5,7 +5,7 @@ import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 dotenv_stub = ModuleType("dotenv")
 dotenv_stub.load_dotenv = lambda: None
@@ -204,6 +204,18 @@ class EToroAccountTests(unittest.TestCase):
         equity = client.get_account_equity()
         # poison row skipped; credit 1000 + 2 units * 55.0 bid = 1110
         self.assertEqual(equity, 1110.0)
+
+    def test_account_equity_falls_back_to_open_rate_when_rates_fail(self):
+        """If the rates endpoint fails (e.g. eToro 500), equity must fall back to
+        openRate instead of raising — otherwise the failure propagates and the
+        risk score is zeroed. Mirrors the live snapshot's rate-failure tolerance.
+        """
+        client, session = make_client()
+        session.request.return_value = self._portfolio_response()
+        with patch.object(client, "get_rates_by_instruments", side_effect=EToroAPIError(500, "boom")):
+            equity = client.get_account_equity()
+        # rates failed → openRate 50.0: credit 1000 + 2 units * 50.0 = 1100
+        self.assertEqual(equity, 1100.0)
 
 
 class EToroOrderTests(unittest.TestCase):
