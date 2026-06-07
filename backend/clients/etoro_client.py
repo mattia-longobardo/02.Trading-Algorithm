@@ -559,21 +559,26 @@ class EToroClient:
     def get_account_equity(self) -> float:
         portfolio = self._portfolio()
         credit = float(portfolio.get("credit") or 0.0)
-        positions = [self._normalize_position(p) for p in (portfolio.get("positions") or [])]
-        if not positions:
+        positions = portfolio.get("positions") or []
+        # Use the hardened batched-rates helper (it skips rows with a null
+        # instrumentID and floats bid/ask/last). Mirrors ``live_snapshot._build``
+        # so equity here matches the live snapshot the rest of the app shows.
+        instrument_ids = [
+            int(p["instrumentID"]) for p in positions if p.get("instrumentID") is not None
+        ]
+        if not instrument_ids:
             return credit
-        instrument_ids = ",".join(str(p["instrument_id"]) for p in positions)
-        rates_payload = self._request(
-            "GET",
-            "/api/v1/market-data/instruments/rates",
-            params={"instrumentIds": instrument_ids},
-        )
-        by_id = {int(r.get("instrumentID")): r for r in (rates_payload.get("rates") or [])}
+        rate_map = self.get_rates_by_instruments(instrument_ids)
         market_value = 0.0
         for position in positions:
-            rate = by_id.get(position["instrument_id"], {})
-            price = float(rate.get("bid") or rate.get("lastExecution") or position["open_rate"])
-            market_value += position["units"] * price
+            iid = position.get("instrumentID")
+            if iid is None:
+                continue
+            units = float(position.get("units") or 0.0)
+            open_rate = float(position.get("openRate") or 0.0)
+            rate = rate_map.get(int(iid), {})
+            price = rate.get("bid") or rate.get("lastExecution") or open_rate
+            market_value += units * float(price or open_rate)
         return credit + market_value
 
     def get_open_position(self, symbol: str) -> dict[str, Any] | None:
