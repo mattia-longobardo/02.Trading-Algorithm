@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+/* Dark is the default theme. Tokens are declared in @theme so Tailwind
+   generates the `*-(--color-*)` utilities, with dark values as the base. */
+@theme {
+  --color-bg: #0b0e14;
+  --color-elevated: #0c1018;
+  --color-field: #0b0f17;
+  --color-hover: #1b2230;
+  --color-panel: #121722;
+  --color-line: #1f2632;
+  --color-text: #dfe6ee;
+  --color-muted: #6b7484;
+  --color-accent: #22d37f;
+  --color-danger: #f06868;
+  --color-warning: #f59e0b;
+  --color-info: #58a6ff;
+}
+
+/* Light theme overrides. next-themes sets `class="light"` on <html>;
+   re-declaring the same CSS variables in that scope flips every
+   `*-(--color-*)` utility at runtime without rebuilding. */
+:root.light {
+  --color-bg: #f6f7f9;
+  --color-elevated: #ffffff;
+  --color-field: #ffffff;
+  --color-hover: #eceef2;
+  --color-panel: #ffffff;
+  --color-line: #e4e7ec;
+  --color-text: #1a1f29;
+  --color-muted: #525c6e;
+  --color-accent: #12a150;
+  --color-danger: #e5484d;
+  --color-warning: #d98300;
+  --color-info: #2f6feb;
+}
+
+html,
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  min-height: 100vh;
+}
+
+* {
+  border-color: var(--color-line);
+}
+
+/* Tabular, monospace numerals for prices/PnL/quantities so columns align.
+   Apply with the `.tnum` class on numeric cells. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Hide arrows on number inputs in WebKit / Firefox so the trade editor
+   stays clean — operators paste / type values, no need for spinners. */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* Mobile safe-area helpers (iOS notch / home indicator). */
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.h-bottom-nav { height: 3.5rem; }
+.pb-bottom-nav { padding-bottom: calc(3.5rem + env(safe-area-inset-bottom)); }

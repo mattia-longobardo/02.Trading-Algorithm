@@ -1,4 +1,4 @@
-# Ignore Python virtual environment and compiled files
+# Python virtual environment and compiled files
 .env
 .venv
 __pycache__/
@@ -6,9 +6,27 @@ __pycache__/
 *.pyo
 *.pyd
 
-# Ignore data and logs directories
-data/*
-logs/*
+# Backend runtime data
+backend/data/*
+backend/logs/*
+backend/run/*
+!backend/data/.gitkeep
+!backend/logs/.gitkeep
+!backend/run/.gitkeep
 
-# Others
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env
+frontend/.env.local
+frontend/*.tsbuildinfo
+
+# Editors / OS
 .vscode
+.idea
+.DS_Store
+
+# AI tooling
+.claude/
+.superpowers/

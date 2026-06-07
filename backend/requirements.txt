@@ -1,0 +1,15 @@
+openai
+apscheduler
+python-dotenv
+pandas
+numpy
+requests
+filelock
+pytz
+reportlab
+toon-format @ git+https://github.com/toon-format/toon-python.git
+fastapi
+uvicorn[standard]
+bcrypt
+pydantic
+cryptography

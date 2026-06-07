@@ -1,7 +1,7 @@
 services:
-  trading:
-    build: .
-    container_name: trading
+  backend:
+    build: ./backend
+    container_name: trading-backend
     user: 1000:1000
     init: true
     restart: always
@@ -10,21 +10,52 @@ services:
     stop_signal: SIGTERM
     stop_grace_period: 20s
     volumes:
-      - ./logs:/app/logs
-      - ./data:/app/data
-      - ./run:/app/run
-      - ./.env:/app/.env
+      - ./backend/logs:/app/logs
+      - ./backend/data:/app/data
+      - ./backend/run:/app/run
+      - ./backend/.env:/app/.env
     environment:
       - TZ=Europe/Rome
+    # The backend lives only on the private internal network. The frontend
+    # service reaches it as http://backend:8000 (Docker DNS) and the browser
+    # never sees this host directly.
+    networks:
+      - trading_internal
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: trading-frontend
+    user: 1000:1000
+    init: true
+    restart: always
+    mem_limit: 512m
+    cpus: "0.5"
+    depends_on:
+      - backend
+    environment:
+      - TZ=Europe/Rome
+      - NODE_ENV=production
+      # Next.js Route Handlers proxy all /api/proxy/* calls here.
+      - BACKEND_INTERNAL_URL=http://backend:8000
+    # Frontend is on both networks: trading_internal to talk to the backend,
+    # proxy_public so Traefik can expose it at trading.local. The browser
+    # only ever talks to this service.
     networks:
       - proxy_public
+      - trading_internal
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy_public"
-      - "traefik.http.routers.log-trading-router.rule=Host(`trading.local`)"
-      - "traefik.http.routers.log-trading-router.entrypoints=web"
-      - "traefik.http.services.log-trading-service.loadbalancer.server.port=8000"
+      - "traefik.http.routers.trading-frontend-router.rule=Host(`trading.longobardo.me`)"
+      - "traefik.http.routers.trading-frontend-router.entrypoints=web"
+      - "traefik.http.services.trading-frontend-service.loadbalancer.server.port=3000"
 
 networks:
+  # Public Traefik network — only the user-facing frontend is attached.
   proxy_public:
     external: true
+  # Private network for backend ⇄ frontend traffic. Bridge driver, not
+  # external: docker compose creates and destroys it with the stack.
+  trading_internal:
+    driver: bridge
