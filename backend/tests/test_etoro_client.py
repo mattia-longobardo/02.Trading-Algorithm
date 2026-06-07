@@ -128,6 +128,34 @@ class EToroMarketDataTests(unittest.TestCase):
         self.assertLess(bars[0]["timestamp"], bars[1]["timestamp"])
 
 
+class EToroMarketOpenTests(unittest.TestCase):
+    def _rates(self, date_iso):
+        return make_response(200, {"rates": [
+            {"instrumentID": 101, "bid": 10.0, "ask": 10.1, "lastExecution": 10.0, "date": date_iso}
+        ]})
+
+    def test_market_open_when_quote_is_fresh(self):
+        from core.utils import utc_now, isoformat_utc
+        client, session = make_client()
+        session.request.return_value = self._rates(isoformat_utc(utc_now()))
+        self.assertTrue(client.is_market_open(101))
+
+    def test_market_closed_when_quote_is_stale(self):
+        client, session = make_client()
+        session.request.return_value = self._rates("2020-01-01T00:00:00Z")
+        self.assertFalse(client.is_market_open(101))
+
+    def test_fails_open_on_error(self):
+        client, session = make_client()
+        session.request.side_effect = EToroAPIError(500, "boom")
+        self.assertTrue(client.is_market_open(101))  # don't block trading on a transient error
+
+    def test_fails_open_when_no_rate_row(self):
+        client, session = make_client()
+        session.request.return_value = make_response(200, {"rates": []})
+        self.assertTrue(client.is_market_open(101))
+
+
 class EToroInstrumentTests(unittest.TestCase):
     def test_resolve_instrument_by_symbol(self):
         client, session = make_client()

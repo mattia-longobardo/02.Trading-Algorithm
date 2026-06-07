@@ -42,6 +42,7 @@ class EtoroLifecycleBase(unittest.TestCase):
         self.broker.instrument_id_for_symbol.return_value = 101
         self.broker.get_open_position.return_value = None
         self.broker.get_available_cash.return_value = 1000.0
+        self.broker.is_market_open.return_value = True
         self.data_manager = Mock()
         self.gpt = Mock()
         self.manager = TradeManager(
@@ -84,6 +85,28 @@ class EtoroEntryTests(EtoroLifecycleBase):
     def test_open_skips_when_instrument_unknown(self):
         self.broker.instrument_id_for_symbol.return_value = None
         ok = self.manager._open_trade_from_signal("STOCK", "NOPE", self._signal(symbol="NOPE"), provider=PROVIDER_ETORO)
+        self.assertFalse(ok)
+        self.assertEqual(self._rows(), [])
+
+    def test_open_skips_when_stock_market_closed(self):
+        self.broker.is_market_open.return_value = False
+        ok = self.manager._open_trade_from_signal("STOCK", "AAPL", self._signal(), provider=PROVIDER_ETORO)
+        self.assertFalse(ok)
+        self.assertEqual(self._rows(), [])  # no PENDING created → no order → no churn
+
+    def test_open_proceeds_for_crypto_without_market_check(self):
+        # Even if the market-open check would say "closed", crypto trades 24/7
+        # and must not consult it.
+        self.broker.is_market_open.return_value = False
+        ok = self.manager._open_trade_from_signal("CRYPTO", "BTC", self._signal(symbol="BTC"), provider=PROVIDER_ETORO)
+        self.assertTrue(ok)
+        self.broker.is_market_open.assert_not_called()
+        self.assertEqual(len(self._rows("PENDING")), 1)
+
+    def test_open_skips_when_credit_below_minimum(self):
+        self.config.etoro_min_trade_amount = 50.0
+        self.broker.get_available_cash.return_value = 10.0  # below the 50 minimum
+        ok = self.manager._open_trade_from_signal("STOCK", "AAPL", self._signal(), provider=PROVIDER_ETORO)
         self.assertFalse(ok)
         self.assertEqual(self._rows(), [])
 
