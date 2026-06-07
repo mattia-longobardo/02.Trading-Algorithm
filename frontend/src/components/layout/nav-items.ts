@@ -5,6 +5,7 @@ import {
   Globe,
   LineChart,
   Settings,
+  ShieldAlert,
   Terminal,
 } from "lucide-react";
 import type { ComponentType } from "react";
@@ -20,6 +21,7 @@ export interface NavItem {
 export const NAV: NavItem[] = [
   { href: "/", label: "Dashboard", icon: LineChart },
   { href: "/positions", label: "Posizioni", icon: Activity },
+  { href: "/risk", label: "Rischio", icon: ShieldAlert },
   { href: "/trades", label: "Trade", icon: ClipboardList },
   { href: "/ops", label: "Operazioni", icon: Terminal },
   { href: "/universe", label: "Universe", icon: Globe },
