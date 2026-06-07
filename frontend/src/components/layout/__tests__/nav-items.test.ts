@@ -18,3 +18,14 @@ describe("nav-items", () => {
     expect(new Set(hrefs).size).toBe(hrefs.length);
   });
 });
+
+describe("NAV — voce Rischio", () => {
+  it("include /risk con label Rischio, tra Posizioni e Trade", () => {
+    const hrefs = NAV.map((i) => i.href);
+    expect(hrefs).toContain("/risk");
+    const risk = NAV.find((i) => i.href === "/risk");
+    expect(risk?.label).toBe("Rischio");
+    expect(hrefs.indexOf("/risk")).toBeGreaterThan(hrefs.indexOf("/positions"));
+    expect(hrefs.indexOf("/risk")).toBeLessThan(hrefs.indexOf("/trades"));
+  });
+});
