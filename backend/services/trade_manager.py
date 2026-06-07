@@ -359,6 +359,76 @@ class TradeManager:
         snapshot["positions"] = len(positions)
         return snapshot
 
+    def portfolio_risk_projection(
+        self,
+        symbol: str | None,
+        category: str = "STOCK",
+        value: float | None = None,
+        close_symbols: list[str] | None = None,
+        provider: str = PROVIDER_ETORO,
+    ) -> dict[str, Any]:
+        """What-if: assess current vs. projected risk after opening/closing.
+
+        Thin wrapper over the pure ``PortfolioRiskService``. Always returns a
+        dict (degrades to empty assessments when equity/broker are unavailable).
+        """
+        broker = self.broker(provider)
+        equity = 0.0
+        cash = 0.0
+        if broker is not None:
+            try:
+                equity = float(broker.get_account_equity())
+            except Exception:
+                equity = 0.0
+            try:
+                cash = float(broker.get_available_cash())
+            except Exception:
+                cash = 0.0
+        try:
+            positions = self._open_position_values(provider) if broker is not None else []
+        except Exception:
+            positions = []
+
+        current = self.risk.assess(positions, equity)
+
+        drop = {str(s).upper() for s in (close_symbols or [])}
+        base = [p for p in positions if str(p.get("symbol") or "").upper() not in drop]
+
+        suggested = 0.0
+        sym = str(symbol).upper() if symbol else ""
+        if sym:
+            candidate = {"symbol": sym, "category": str(category or "STOCK")}
+            size = value
+            if size is None:
+                suggested = self.risk.suggest_size(candidate, base, equity, cash)
+                size = suggested
+            if size and size > 0:
+                projected = self.risk.project(candidate, float(size), base, equity)
+            else:
+                projected = self.risk.assess(base, equity)
+        else:
+            projected = self.risk.assess(base, equity)
+
+        cur = current.to_dict()
+        cur["equity"] = round(equity, 2)
+        cur["positions"] = len(positions)
+
+        proj = projected.to_dict()
+        proj["equity"] = round(equity, 2)
+        proj["positions"] = len(base) + (1 if sym and (value or suggested) else 0)
+
+        return {
+            "current": cur,
+            "projected": proj,
+            "suggested_size": round(float(suggested), 2),
+            "delta": {
+                "score": round(proj["score"] - cur["score"], 2),
+                "exposure": round(proj["exposure"] - cur["exposure"], 4),
+                "portfolio_vol": round(proj["portfolio_vol"] - cur["portfolio_vol"], 4),
+                "n_eff": round(proj["n_eff"] - cur["n_eff"], 2),
+            },
+        }
+
     def _risk_context(self, provider: str = PROVIDER_ETORO) -> dict[str, Any] | None:
         """Compact portfolio-risk block for GPT prompts, or None if unavailable."""
         broker = self.broker(provider)
