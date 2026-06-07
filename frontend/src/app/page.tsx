@@ -1,7 +1,8 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMinuteRefresh } from "@/lib/use-minute-refresh";
 import { TimeframeSelector, type Timeframe } from "@/components/timeframe-selector";
 import { EquityBalanceChart } from "@/components/equity-balance-chart";
 import { KpiStrip } from "@/components/dashboard/kpi-strip";
@@ -34,7 +35,7 @@ import type {
 import { useChartTheme } from "@/components/charts/use-chart-theme";
 
 // Query keys the dashboard reads. We refresh them as a group on a single
-// wall-clock-aligned tick (see ``useDashboardAutoRefresh`` below).
+// wall-clock-aligned tick via ``useMinuteRefresh``.
 const DASHBOARD_QUERY_KEYS = [
   "metrics",
   "equity",
@@ -45,44 +46,10 @@ const DASHBOARD_QUERY_KEYS = [
   "account-balance",
 ] as const;
 
-// The backend's ``monitor_trades`` cron job fires every minute at ``:XX:00``
-// UTC and refreshes broker prices / PnL in SQLite. We want the dashboard to
-// re-fetch *after* that job completes so the new market data is visible —
-// so we align the client tick to ``:XX:30``: 30 s past the cron mark gives
-// the job enough headroom while keeping the lag small.
-const REFRESH_OFFSET_SECONDS = 30;
-
-function useDashboardAutoRefresh(): Date | null {
-  const qc = useQueryClient();
-  const [lastTick, setLastTick] = useState<Date | null>(null);
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    function scheduleNext() {
-      const now = new Date();
-      const next = new Date(now);
-      next.setSeconds(REFRESH_OFFSET_SECONDS, 0);
-      if (next <= now) next.setMinutes(next.getMinutes() + 1);
-      const delayMs = next.getTime() - now.getTime();
-      timer = setTimeout(() => {
-        for (const key of DASHBOARD_QUERY_KEYS) {
-          qc.invalidateQueries({ queryKey: [key] });
-        }
-        setLastTick(new Date());
-        scheduleNext();
-      }, delayMs);
-    }
-    scheduleNext();
-    return () => {
-      if (timer) clearTimeout(timer);
-    };
-  }, [qc]);
-  return lastTick;
-}
-
 export default function DashboardPage() {
   const theme = useChartTheme();
   const [timeframe, setTimeframe] = useState<Timeframe>("3M");
-  const lastAutoRefresh = useDashboardAutoRefresh();
+  const lastAutoRefresh = useMinuteRefresh(DASHBOARD_QUERY_KEYS);
   const { status: liveStatus } = useLiveStream();
 
   const metrics = useQuery({

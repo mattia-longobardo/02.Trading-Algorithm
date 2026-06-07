@@ -99,5 +99,49 @@ class RiskSnapshotTests(unittest.TestCase):
         self.assertTrue(snap["low_confidence"])
 
 
+class RiskProjectionTests(unittest.TestCase):
+    OPEN = [{"symbol": "AAA", "category": "STOCK", "status": "OPEN",
+             "quantity": 10, "current_price": 100.0,
+             "allocated_capital": 1000.0, "provider": "etoro"}]
+    HIST = {"AAA": _bars([10, 10.1, 9.9, 10.2, 10.0, 10.3]),
+            "BBB": _bars([20, 20.4, 19.6, 20.8, 19.9, 20.5])}
+
+    def test_projection_shape(self):
+        tm, _ = _manager(history=self.HIST, open_trades=self.OPEN)
+        out = tm.portfolio_risk_projection("BBB", "STOCK", 1000.0, None)
+        self.assertEqual(set(out.keys()), {"current", "projected", "suggested_size", "delta"})
+        for snap in (out["current"], out["projected"]):
+            self.assertIn("score", snap)
+            self.assertIn("exposure", snap)
+            self.assertIn("equity", snap)
+        self.assertEqual(set(out["delta"].keys()), {"score", "exposure", "portfolio_vol", "n_eff"})
+
+    def test_opening_raises_exposure(self):
+        tm, _ = _manager(history=self.HIST, open_trades=self.OPEN)
+        out = tm.portfolio_risk_projection("BBB", "STOCK", 1000.0, None)
+        self.assertGreater(out["projected"]["exposure"], out["current"]["exposure"])
+
+    def test_value_absent_returns_suggested_size(self):
+        tm, _ = _manager(history=self.HIST, open_trades=self.OPEN)
+        out = tm.portfolio_risk_projection("BBB", "STOCK", None, None)
+        self.assertGreater(out["suggested_size"], 0.0)
+
+    def test_close_symbols_lowers_exposure(self):
+        tm, _ = _manager(history=self.HIST, open_trades=self.OPEN)
+        out = tm.portfolio_risk_projection(None, "STOCK", None, ["AAA"])
+        self.assertLess(out["projected"]["exposure"], out["current"]["exposure"])
+
+    def test_empty_when_no_equity(self):
+        tm, _ = _manager(equity=0.0)
+        out = tm.portfolio_risk_projection("BBB", "STOCK", 100.0, None)
+        self.assertEqual(out["projected"]["score"], 0.0)
+
+    def test_close_only_no_symbol(self):
+        tm, _ = _manager(history=self.HIST, open_trades=self.OPEN)
+        out = tm.portfolio_risk_projection(None, "STOCK", None, ["AAA"])
+        self.assertEqual(out["suggested_size"], 0.0)
+        self.assertIn("score", out["projected"])
+
+
 if __name__ == "__main__":
     unittest.main()
