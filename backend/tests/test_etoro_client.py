@@ -92,6 +92,23 @@ class EToroMarketDataTests(unittest.TestCase):
         self.assertEqual(quote["bid_price"], 10.4)
         self.assertEqual(quote["last_price"], 10.45)
 
+    def test_get_rates_by_instruments_sends_literal_commas(self):
+        """Regression: eToro's rates endpoint returns 500 for %2C-encoded commas.
+
+        Passing a comma-joined value via requests' ``params`` percent-encodes the
+        commas (``instrumentIds=1%2C2%2C3``), which eToro rejects with a 500. A
+        live probe confirmed literal commas (``instrumentIds=1,2,3``) return 200.
+        The query must therefore reach requests with literal commas (embedded in
+        the URL), not as an encodable ``params`` dict.
+        """
+        client, session = make_client()
+        session.request.return_value = make_response(200, {"rates": []})
+        client.get_rates_by_instruments([1, 2, 3])
+        args, kwargs = session.request.call_args
+        url = args[1] if len(args) > 1 else kwargs.get("url", "")
+        self.assertIn("instrumentIds=1,2,3", url)
+        self.assertNotIn("instrumentIds", str(kwargs.get("params") or ""))
+
     def test_get_candles_normalizes_bars(self):
         client, session = make_client()
         session.request.return_value = make_response(200, {
