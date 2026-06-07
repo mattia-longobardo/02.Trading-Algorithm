@@ -208,3 +208,34 @@ export interface LiveSnapshot {
 export type LiveStatus = "connecting" | "live" | "stale" | "reconnecting";
 
 export interface Candle { t: string; o: number; h: number; l: number; c: number; v: number | null; }
+
+export interface RiskComponents {
+  vol: number;
+  concentration: number;
+  correlation: number;
+  exposure: number;
+}
+
+export interface RiskSnapshot {
+  score: number;
+  portfolio_vol: number;
+  budget_vol: number;
+  components: RiskComponents;
+  hhi: number;
+  n_eff: number;
+  avg_correlation: number;
+  exposure: number;
+  per_position_risk_contribution: Record<string, number>;
+  equity: number;
+  positions: number;
+  low_confidence: boolean;
+  over_alert: boolean;
+  over_hard: boolean;
+}
+
+export interface RiskProjection {
+  current: RiskSnapshot;
+  projected: RiskSnapshot;
+  suggested_size: number;
+  delta: { score: number; exposure: number; portfolio_vol: number; n_eff: number };
+}
