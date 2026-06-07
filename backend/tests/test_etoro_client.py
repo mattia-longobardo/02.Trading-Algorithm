@@ -184,6 +184,27 @@ class EToroAccountTests(unittest.TestCase):
         # credit 1000 + 2 units * 55.0 bid = 1110
         self.assertEqual(equity, 1110.0)
 
+    def test_account_equity_ignores_null_instrument_id_rate_rows(self):
+        """Regression: a rates row with null instrumentID must not crash equity.
+
+        The eToro rates endpoint can return rows without an instrumentID. The
+        hardened ``get_rates_by_instruments`` skips them, but ``get_account_equity``
+        used to do ``int(None)`` and raise — which ``portfolio_risk_snapshot``
+        swallowed into equity=0, zeroing the entire risk score despite open
+        positions. Equity must be computed via the same hardened path.
+        """
+        client, session = make_client()
+        session.request.side_effect = [
+            self._portfolio_response(),
+            make_response(200, {"rates": [
+                {"instrumentID": None, "bid": None, "ask": None, "lastExecution": None},
+                {"instrumentID": 101, "bid": 55.0, "ask": 55.2, "lastExecution": 55.1},
+            ]}),
+        ]
+        equity = client.get_account_equity()
+        # poison row skipped; credit 1000 + 2 units * 55.0 bid = 1110
+        self.assertEqual(equity, 1110.0)
+
 
 class EToroOrderTests(unittest.TestCase):
     def test_open_market_position_builds_correct_body(self):

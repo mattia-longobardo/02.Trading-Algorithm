@@ -348,6 +348,12 @@ class TradeManager:
             try:
                 equity = float(broker.get_account_equity())
             except Exception:
+                # A zero equity zeroes the whole risk score, so make the failure
+                # visible instead of silently degrading.
+                self.logger.warning(
+                    "portfolio_risk_snapshot: get_account_equity failed; risk score will be 0",
+                    exc_info=True,
+                )
                 equity = 0.0
         try:
             positions = self._open_position_values(provider) if broker is not None else []
