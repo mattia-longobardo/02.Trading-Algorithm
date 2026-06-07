@@ -96,11 +96,6 @@ export function ReportFolderTree({
         active={selected === "ALL"}
         onClick={() => onSelect("ALL")}
       />
-      <FolderRow
-        label="Senza cartella"
-        active={selected === null}
-        onClick={() => onSelect(null)}
-      />
       <FolderTree
         folders={folders}
         activeId={selected}
