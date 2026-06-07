@@ -142,6 +142,28 @@ class TradePatchPayload(BaseModel):
     high_water_mark: float | None = None
 
 
+class RiskProjectPayload(BaseModel):
+    symbol: str | None = None
+    category: str = "STOCK"
+    value: float | None = None
+    close_symbols: list[str] | None = None
+
+    @field_validator("category")
+    @classmethod
+    def _valid_category(cls, v: str) -> str:
+        up = str(v or "STOCK").upper()
+        if up not in {"STOCK", "CRYPTO"}:
+            raise ValueError("category must be STOCK or CRYPTO")
+        return up
+
+    @field_validator("value")
+    @classmethod
+    def _positive_value(cls, v: float | None) -> float | None:
+        if v is not None and v <= 0:
+            raise ValueError("value must be > 0")
+        return v
+
+
 class PromptSavePayload(BaseModel):
     content: str = Field(min_length=1)
     comment: str | None = None
@@ -686,6 +708,20 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
     @app.get("/api/risk")
     def get_risk(_user: auth_lib.AuthenticatedUser = Depends(get_current_user)) -> dict[str, Any]:
         return scheduler.trade_manager.portfolio_risk_snapshot()
+
+    @app.post("/api/risk/project")
+    def post_risk_project(
+        payload: RiskProjectPayload,
+        _user: auth_lib.AuthenticatedUser = Depends(get_current_user),
+    ) -> dict[str, Any]:
+        if not payload.symbol and not payload.close_symbols:
+            raise HTTPException(status_code=400, detail="symbol or close_symbols required")
+        return scheduler.trade_manager.portfolio_risk_projection(
+            symbol=payload.symbol,
+            category=payload.category,
+            value=payload.value,
+            close_symbols=payload.close_symbols,
+        )
 
     @app.get("/api/fx/rate")
     def get_fx_rate(
