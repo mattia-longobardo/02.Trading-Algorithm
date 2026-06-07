@@ -9,6 +9,7 @@ export interface ChartTheme {
   up: string;
   down: string;
   info: string;
+  warning: string;
   positive: string;
   negative: string;
   tooltipBg: string;
@@ -23,6 +24,7 @@ const DARK: ChartTheme = {
   up: "#22d37f",
   down: "#f06868",
   info: "#58a6ff",
+  warning: "#f59e0b",
   positive: "#22d37f",
   negative: "#f06868",
   tooltipBg: "#121722",
@@ -37,6 +39,7 @@ const LIGHT: ChartTheme = {
   up: "#12a150",
   down: "#e5484d",
   info: "#2f6feb",
+  warning: "#d98300",
   positive: "#12a150",
   negative: "#e5484d",
   tooltipBg: "#ffffff",
