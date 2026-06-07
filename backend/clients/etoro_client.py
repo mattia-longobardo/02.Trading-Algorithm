@@ -568,7 +568,14 @@ class EToroClient:
         ]
         if not instrument_ids:
             return credit
-        rate_map = self.get_rates_by_instruments(instrument_ids)
+        # Tolerate a rates-fetch failure (e.g. an eToro 500): fall back to
+        # openRate so equity stays a usable figure instead of raising and being
+        # collapsed to 0 by callers. Mirrors ``live_snapshot._build``.
+        try:
+            rate_map = self.get_rates_by_instruments(instrument_ids)
+        except Exception as exc:
+            self.logger.debug("get_account_equity: rates fetch failed, using openRate: %s", exc)
+            rate_map = {}
         market_value = 0.0
         for position in positions:
             iid = position.get("instrumentID")
