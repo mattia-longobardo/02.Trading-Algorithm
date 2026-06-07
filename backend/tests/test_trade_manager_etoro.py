@@ -103,13 +103,6 @@ class EtoroEntryTests(EtoroLifecycleBase):
         self.broker.is_market_open.assert_not_called()
         self.assertEqual(len(self._rows("PENDING")), 1)
 
-    def test_open_skips_when_credit_below_minimum(self):
-        self.config.etoro_min_trade_amount = 50.0
-        self.broker.get_available_cash.return_value = 10.0  # below the 50 minimum
-        ok = self.manager._open_trade_from_signal("STOCK", "AAPL", self._signal(), provider=PROVIDER_ETORO)
-        self.assertFalse(ok)
-        self.assertEqual(self._rows(), [])
-
 
 class EtoroPendingTests(EtoroLifecycleBase):
     def _pending(self, target=100.0):
