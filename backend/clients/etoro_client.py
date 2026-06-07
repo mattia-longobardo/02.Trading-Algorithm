@@ -514,11 +514,15 @@ class EToroClient:
         """
         if not instrument_ids:
             return {}
+        # eToro's gateway returns 500 for %2C-encoded commas, and requests
+        # percent-encodes a comma-joined ``params`` value. Embed the query in the
+        # path so the commas reach eToro literally (``instrumentIds=1,2,3``).
+        # A single id has no comma, which is why this only surfaced with >=2
+        # open positions. (``requote_uri`` keeps literal commas intact.)
         ids_param = ",".join(str(int(i)) for i in instrument_ids)
         payload = self._request(
             "GET",
-            "/api/v1/market-data/instruments/rates",
-            params={"instrumentIds": ids_param},
+            f"/api/v1/market-data/instruments/rates?instrumentIds={ids_param}",
         )
         result: dict[int, dict] = {}
         for row in payload.get("rates") or []:
