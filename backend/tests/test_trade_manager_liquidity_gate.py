@@ -78,6 +78,12 @@ class BatchGateTests(unittest.TestCase):
         tm._evaluate_provider_category(PROVIDER_ETORO, "STOCK", ["AAA"])
         gpt.request_batch_trade_signals.assert_called_once()
 
+    def test_calls_gpt_when_cash_lookup_raises(self):
+        tm, broker, gpt = self._ready_manager(cash=10_000.0)
+        broker.get_available_cash.side_effect = Exception("api down")
+        tm._evaluate_provider_category(PROVIDER_ETORO, "STOCK", ["AAA"])
+        gpt.request_batch_trade_signals.assert_called_once()
+
     def test_categories_evaluated_independently(self):
         # STOCK slots exhausted, CRYPTO funded with free slots: STOCK must skip,
         # CRYPTO must call GPT — verified through the per-category loop.
