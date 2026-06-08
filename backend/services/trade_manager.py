@@ -607,6 +607,29 @@ class TradeManager:
             max_trades = int(self.config.max_open_trades_crypto)
         return max(max_trades - self.count_active_trades(category, provider=provider), 0)
 
+    def _has_liquidity_for_new_trade(self, provider: str = PROVIDER_ETORO) -> bool:
+        """True when *provider* has enough cash to open at least the smallest trade.
+
+        Pre-LLM gate so we never ask GPT for orders we could not fund. Permissive
+        by design: returns True when no minimum is configured or when the cash
+        lookup fails, so a transient broker blip never silently halts trading
+        (downstream sizing still guards against over-allocation).
+        """
+        broker = self.broker(provider)
+        if broker is None:
+            return False
+        minimum = float(getattr(self.config, "etoro_min_trade_amount", 0.0) or 0.0)
+        if minimum <= 0:
+            return True
+        try:
+            cash = float(broker.get_available_cash())
+        except Exception:
+            self.logger.warning(
+                "Cash lookup failed for %s; allowing GPT cycle", provider, exc_info=True
+            )
+            return True
+        return cash >= minimum
+
     def _build_batch_payloads(
         self,
         category: str,
@@ -717,6 +740,13 @@ class TradeManager:
                 symbol,
                 provider,
                 category,
+            )
+            return
+
+        if not self._has_liquidity_for_new_trade(provider):
+            self.logger.info(
+                "Skipping %s because available cash is below the minimum trade amount",
+                symbol,
             )
             return
 
@@ -1241,6 +1271,15 @@ class TradeManager:
             if available_slots <= 0:
                 self.logger.debug(
                     "Skipping %s/%s batch evaluation because no slots are available",
+                    provider,
+                    category,
+                )
+                return
+
+            if not self._has_liquidity_for_new_trade(provider):
+                self.logger.info(
+                    "Skipping %s/%s batch evaluation because available cash is below "
+                    "the minimum trade amount",
                     provider,
                     category,
                 )
