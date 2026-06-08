@@ -31,6 +31,8 @@ class LiquidityHelperTests(unittest.TestCase):
     def test_true_when_cash_at_or_above_minimum(self):
         tm, _, _ = _manager(cash=50.0, min_trade=50.0)
         self.assertTrue(tm._has_liquidity_for_new_trade(PROVIDER_ETORO))
+        tm_above, _, _ = _manager(cash=100.0, min_trade=50.0)
+        self.assertTrue(tm_above._has_liquidity_for_new_trade(PROVIDER_ETORO))
 
     def test_false_when_cash_below_minimum(self):
         tm, _, _ = _manager(cash=49.99, min_trade=50.0)
