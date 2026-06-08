@@ -115,6 +115,13 @@ def get_universe_with_metadata(
 
     Returned shape:
     ``{"etoro": {"STOCK": [entry, ...], "CRYPTO": [...]}}``
+
+    Quotes are fetched in a single batched call per provider when the broker
+    exposes the batch API (``instrument_id_for_symbol`` +
+    ``get_rates_by_instruments``). This collapses what used to be one HTTP
+    round-trip per symbol — the dominant cost behind the universe page's slow
+    load — into one request for the whole provider. Brokers without the batch
+    API fall back to the per-symbol path.
     """
 
     universe = read_universe_file()
@@ -124,33 +131,104 @@ def get_universe_with_metadata(
     }
     for provider, categories in VALID_CATEGORIES_BY_PROVIDER.items():
         broker = brokers.get(provider)
-        for category in categories:
-            symbols = universe.get(provider, {}).get(category, []) or []
+        symbols_by_category = {
+            category: (universe.get(provider, {}).get(category, []) or [])
+            for category in categories
+        }
+        out[provider] = _quote_universe_provider(broker, provider, symbols_by_category, logger)
+    return out
+
+
+def _quote_universe_provider(
+    broker: Any,
+    provider: str,
+    symbols_by_category: Mapping[str, list[str]],
+    logger: logging.Logger,
+) -> dict[str, list[dict[str, Any]]]:
+    """Decorate every symbol of one provider with a live price.
+
+    When the broker exposes the batched-rates API, all symbols across every
+    category are resolved and quoted in a *single* HTTP round-trip; otherwise
+    we fall back to the per-symbol path.
+    """
+
+    def _entry(symbol: str, category: str, **extra: Any) -> dict[str, Any]:
+        return {"symbol": symbol, "category": category, "provider": provider, **extra}
+
+    if broker is None:
+        return {
+            category: [
+                _entry(symbol, category, last_price=None,
+                       quote_error=f"{provider} client not configured")
+                for symbol in symbols
+            ]
+            for category, symbols in symbols_by_category.items()
+        }
+
+    supports_batch = callable(getattr(broker, "instrument_id_for_symbol", None)) and callable(
+        getattr(broker, "get_rates_by_instruments", None)
+    )
+    if not supports_batch:
+        out: dict[str, list[dict[str, Any]]] = {}
+        for category, symbols in symbols_by_category.items():
+            rows: list[dict[str, Any]] = []
             for symbol in symbols:
-                entry: dict[str, Any] = {
-                    "symbol": symbol,
-                    "category": category,
-                    "provider": provider,
-                }
-                if broker is None:
-                    entry["last_price"] = None
-                    entry["quote_error"] = f"{provider} client not configured"
-                else:
-                    try:
-                        price = broker.get_latest_price(symbol, category)
-                        entry["last_price"] = float(price) if price is not None else None
-                        entry["quote_error"] = None
-                    except Exception as exc:
-                        logger.debug(
-                            "Universe quote failed for %s/%s/%s: %s",
-                            provider,
-                            category,
-                            symbol,
-                            exc,
-                        )
-                        entry["last_price"] = None
-                        entry["quote_error"] = str(exc)
-                out[provider][category].append(entry)
+                try:
+                    price = broker.get_latest_price(symbol, category)
+                    rows.append(_entry(symbol, category,
+                                       last_price=float(price) if price is not None else None,
+                                       quote_error=None))
+                except Exception as exc:
+                    logger.debug("Universe quote failed for %s/%s/%s: %s",
+                                 provider, category, symbol, exc)
+                    rows.append(_entry(symbol, category, last_price=None, quote_error=str(exc)))
+            out[category] = rows
+        return out
+
+    # --- batched fast path: one resolve sweep + one rates GET for the provider
+    instrument_ids: dict[tuple[str, str], int] = {}
+    resolve_errors: dict[tuple[str, str], str] = {}
+    for category, symbols in symbols_by_category.items():
+        for symbol in symbols:
+            try:
+                iid = broker.instrument_id_for_symbol(symbol)
+            except Exception as exc:  # a bad resolve shouldn't sink the whole page
+                logger.debug("Universe resolve failed for %s/%s/%s: %s",
+                             provider, category, symbol, exc)
+                resolve_errors[(category, symbol)] = str(exc)
+                continue
+            if iid is None:
+                resolve_errors[(category, symbol)] = "unknown instrument"
+            else:
+                instrument_ids[(category, symbol)] = int(iid)
+
+    batch_error: str | None = None
+    rate_map: dict[int, dict] = {}
+    if instrument_ids:
+        try:
+            rate_map = broker.get_rates_by_instruments(sorted(set(instrument_ids.values())))
+        except Exception as exc:  # whole-batch failure: degrade to no prices, not a 500
+            logger.debug("Universe batch rates failed for %s: %s", provider, exc)
+            batch_error = str(exc)
+
+    out = {}
+    for category, symbols in symbols_by_category.items():
+        rows = []
+        for symbol in symbols:
+            key = (category, symbol)
+            if key in resolve_errors:
+                rows.append(_entry(symbol, category, last_price=None,
+                                   quote_error=resolve_errors[key]))
+                continue
+            rate = rate_map.get(instrument_ids[key], {})
+            # Mirror get_latest_price's preference: last → ask → bid.
+            price = rate.get("lastExecution") or rate.get("ask") or rate.get("bid")
+            if price:
+                rows.append(_entry(symbol, category, last_price=float(price), quote_error=None))
+            else:
+                rows.append(_entry(symbol, category, last_price=None,
+                                   quote_error=batch_error or "no rate"))
+        out[category] = rows
     return out
 
 

@@ -378,5 +378,81 @@ class EtfAllowlistTests(unittest.TestCase):
         self.assertEqual(m._inject_etf_allowlist(["AAPL"]), ["AAPL"])
 
 
+class UniverseMetadataQuoteTests(unittest.TestCase):
+    """get_universe_with_metadata should batch quotes via the broker's rates API."""
+
+    def setUp(self):
+        from unittest.mock import patch
+        from services import universe_admin
+        self.universe_admin = universe_admin
+        self._patch = patch.object(
+            universe_admin,
+            "read_universe_file",
+            return_value={PE: {"STOCK": ["AAPL", "MSFT"], "CRYPTO": ["BTC"]}},
+        )
+        self._patch.start()
+        self.addCleanup(self._patch.stop)
+
+    def _batch_broker(self):
+        broker = Mock(spec=["instrument_id_for_symbol", "get_rates_by_instruments"])
+        ids = {"AAPL": 1, "MSFT": 2, "BTC": 3}
+        broker.instrument_id_for_symbol.side_effect = lambda s: ids.get(s)
+        broker.get_rates_by_instruments.return_value = {
+            1: {"bid": 100.0, "ask": 101.0, "lastExecution": 100.5},
+            2: {"bid": 200.0, "ask": 201.0, "lastExecution": None},
+            3: {"bid": 60000.0, "ask": 60010.0, "lastExecution": 60005.0},
+        }
+        return broker
+
+    def test_batches_into_single_rates_call(self):
+        broker = self._batch_broker()
+        out = self.universe_admin.get_universe_with_metadata({PE: broker}, logging.getLogger("t"))
+        # One batched GET total — not one per symbol.
+        broker.get_rates_by_instruments.assert_called_once()
+        ids_arg = sorted(broker.get_rates_by_instruments.call_args[0][0])
+        self.assertEqual(ids_arg, [1, 2, 3])
+
+    def test_prices_decorated_with_last_ask_bid_preference(self):
+        broker = self._batch_broker()
+        out = self.universe_admin.get_universe_with_metadata({PE: broker}, logging.getLogger("t"))
+        stock = {e["symbol"]: e for e in out[PE]["STOCK"]}
+        self.assertEqual(stock["AAPL"]["last_price"], 100.5)   # lastExecution wins
+        self.assertEqual(stock["MSFT"]["last_price"], 201.0)   # falls back to ask
+        self.assertIsNone(stock["AAPL"]["quote_error"])
+        self.assertEqual(out[PE]["CRYPTO"][0]["last_price"], 60005.0)
+
+    def test_unresolved_symbol_reports_error_without_price(self):
+        broker = self._batch_broker()
+        broker.instrument_id_for_symbol.side_effect = lambda s: None if s == "MSFT" else {"AAPL": 1, "BTC": 3}.get(s)
+        out = self.universe_admin.get_universe_with_metadata({PE: broker}, logging.getLogger("t"))
+        msft = next(e for e in out[PE]["STOCK"] if e["symbol"] == "MSFT")
+        self.assertIsNone(msft["last_price"])
+        self.assertEqual(msft["quote_error"], "unknown instrument")
+        # The unresolved id must not be sent to the rates batch.
+        self.assertEqual(sorted(broker.get_rates_by_instruments.call_args[0][0]), [1, 3])
+
+    def test_batch_rates_failure_degrades_gracefully(self):
+        broker = self._batch_broker()
+        broker.get_rates_by_instruments.side_effect = RuntimeError("etoro 500")
+        out = self.universe_admin.get_universe_with_metadata({PE: broker}, logging.getLogger("t"))
+        aapl = next(e for e in out[PE]["STOCK"] if e["symbol"] == "AAPL")
+        self.assertIsNone(aapl["last_price"])
+        self.assertEqual(aapl["quote_error"], "etoro 500")
+
+    def test_falls_back_to_per_symbol_when_no_batch_api(self):
+        broker = Mock(spec=["get_latest_price"])
+        broker.get_latest_price.side_effect = lambda s, c: {"AAPL": 1.0, "MSFT": 2.0, "BTC": 3.0}[s]
+        out = self.universe_admin.get_universe_with_metadata({PE: broker}, logging.getLogger("t"))
+        stock = {e["symbol"]: e["last_price"] for e in out[PE]["STOCK"]}
+        self.assertEqual(stock, {"AAPL": 1.0, "MSFT": 2.0})
+        self.assertEqual(broker.get_latest_price.call_count, 3)
+
+    def test_missing_broker_marks_not_configured(self):
+        out = self.universe_admin.get_universe_with_metadata({}, logging.getLogger("t"))
+        aapl = next(e for e in out[PE]["STOCK"] if e["symbol"] == "AAPL")
+        self.assertIsNone(aapl["last_price"])
+        self.assertIn("not configured", aapl["quote_error"])
+
+
 if __name__ == "__main__":
     unittest.main()
