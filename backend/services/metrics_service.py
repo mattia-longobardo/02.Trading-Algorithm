@@ -6,9 +6,13 @@ open trades drive unrealized PnL using the current price kept up to
 date by the script-managed lifecycle every minute.
 
 Multi-provider aware: each trade carries its own ``provider`` and
-``account_currency``. Monetary fields are converted to the user's
-display currency at API edge using the trade's own native currency,
-so the dashboard reports every trade in the same display number.
+``account_currency``. Dashboard *aggregates* (equity, KPIs, allocation)
+convert each trade's monetary values from its native currency into the
+operator's display currency before summing, so cross-broker totals add
+up in one number. Per-trade rows (``_decorate``: Trade tab, Positions
+tab, single-trade detail) instead stay in the trade's native currency,
+matching the live "last" price the broker reports and the currency the
+trade engine compares against.
 """
 
 from __future__ import annotations
@@ -26,27 +30,6 @@ from core.utils import (
     AppConfig,
     parse_datetime,
     utc_now,
-)
-
-
-# Trade columns whose stored value is a *monetary amount* (price, capital,
-# PnL) in the broker's account currency. They get converted to the display
-# currency at the API edge. Quantity / percentage / score columns are not
-# in this set because they are not currency-denominated.
-_MONETARY_TRADE_FIELDS: tuple[str, ...] = (
-    "entry_price",
-    "target_entry_price",
-    "take_profit",
-    "trailing_take_profit_distance",
-    "stop_loss",
-    "trailing_stop_distance",
-    "trailing_take_profit_price",
-    "trailing_stop_price",
-    "high_water_mark",
-    "current_price",
-    "close_price",
-    "allocated_capital",
-    "pnl",
 )
 
 
@@ -206,17 +189,18 @@ class MetricsService:
     def _decorate(self, row: dict[str, Any]) -> dict[str, Any]:
         out = dict(row)
         native = self._trade_native_currency(row)
-        # Compute realized / unrealized PnL on the broker-native values
-        # FIRST, then convert everything monetary into the display currency.
-        realized_native = _realized_pnl(row)
-        unrealized_native = _unrealized_pnl(row)
-        out["realized_pnl"] = self._fx_convert(realized_native, source_currency=native) or 0.0
-        out["unrealized_pnl"] = self._fx_convert(unrealized_native, source_currency=native) or 0.0
-        for field in _MONETARY_TRADE_FIELDS:
-            if field in out and out[field] is not None:
-                converted = self._fx_convert(out[field], source_currency=native)
-                if converted is not None:
-                    out[field] = converted
+        # Per-trade views (the Trade tab, the Positions tab via live_snapshot,
+        # and single-trade detail) render in the trade's *native* broker
+        # currency — NOT the dashboard display currency. The live "last" price
+        # shown next to entry/TP/SL comes straight from the broker in native
+        # currency (USD), so FX-converting only the stored fields would mix
+        # currencies and make a position look like it had crossed its take
+        # profit when it had not. Keeping everything native also matches the
+        # currency the trade engine actually compares against. Dashboard
+        # aggregates (equity, KPIs) still convert via the separate
+        # ``_fx_convert`` path.
+        out["realized_pnl"] = _realized_pnl(row)
+        out["unrealized_pnl"] = _unrealized_pnl(row)
         # Surface the originating provider so the UI can group / badge.
         out.setdefault("provider", str(row.get("provider") or PROVIDER_ETORO))
         out.setdefault("account_currency", native)
