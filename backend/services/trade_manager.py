@@ -1269,6 +1269,15 @@ class TradeManager:
                 )
                 return
 
+            if not self._has_liquidity_for_new_trade(provider):
+                self.logger.info(
+                    "Skipping %s/%s batch evaluation because available cash is below "
+                    "the minimum trade amount",
+                    provider,
+                    category,
+                )
+                return
+
             symbol_payloads = self._build_batch_payloads(category, list(symbols), provider=provider)
             if not symbol_payloads:
                 return

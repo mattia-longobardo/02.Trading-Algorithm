@@ -53,5 +53,43 @@ class LiquidityHelperTests(unittest.TestCase):
         self.assertFalse(tm._has_liquidity_for_new_trade(PROVIDER_ETORO))
 
 
+class BatchGateTests(unittest.TestCase):
+    def _ready_manager(self, cash):
+        """Manager wired so only the liquidity gate can stop the GPT call:
+        slots always free, payloads always non-empty, GPT returns no signals."""
+        tm, broker, gpt = _manager(cash=cash, min_trade=50.0)
+        tm._available_trade_slots = Mock(return_value=3)
+        tm._build_batch_payloads = Mock(return_value=[{"symbol": "AAA"}])
+        gpt.request_batch_trade_signals.return_value = {"signals": []}
+        return tm, broker, gpt
+
+    def test_skips_gpt_for_stock_when_cash_below_min(self):
+        tm, _, gpt = self._ready_manager(cash=10.0)
+        tm._evaluate_provider_category(PROVIDER_ETORO, "STOCK", ["AAA"])
+        gpt.request_batch_trade_signals.assert_not_called()
+
+    def test_skips_gpt_for_crypto_when_cash_below_min(self):
+        tm, _, gpt = self._ready_manager(cash=10.0)
+        tm._evaluate_provider_category(PROVIDER_ETORO, "CRYPTO", ["BTC"])
+        gpt.request_batch_trade_signals.assert_not_called()
+
+    def test_calls_gpt_when_cash_sufficient(self):
+        tm, _, gpt = self._ready_manager(cash=10_000.0)
+        tm._evaluate_provider_category(PROVIDER_ETORO, "STOCK", ["AAA"])
+        gpt.request_batch_trade_signals.assert_called_once()
+
+    def test_categories_evaluated_independently(self):
+        # STOCK slots exhausted, CRYPTO funded with free slots: STOCK must skip,
+        # CRYPTO must call GPT — verified through the per-category loop.
+        tm, _, gpt = self._ready_manager(cash=10_000.0)
+        tm._available_trade_slots = Mock(
+            side_effect=lambda category, provider=PROVIDER_ETORO: 0 if category == "STOCK" else 3
+        )
+        tm.evaluate_cycle({PROVIDER_ETORO: {"STOCK": ["AAA"], "CRYPTO": ["BTC"]}})
+        self.assertEqual(gpt.request_batch_trade_signals.call_count, 1)
+        called_category = gpt.request_batch_trade_signals.call_args.kwargs["category"]
+        self.assertEqual(called_category, "CRYPTO")
+
+
 if __name__ == "__main__":
     unittest.main()
