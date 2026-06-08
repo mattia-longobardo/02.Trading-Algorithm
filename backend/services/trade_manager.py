@@ -743,6 +743,13 @@ class TradeManager:
             )
             return
 
+        if not self._has_liquidity_for_new_trade(provider):
+            self.logger.info(
+                "Skipping %s because available cash is below the minimum trade amount",
+                symbol,
+            )
+            return
+
         candles = self.data_manager.get_symbol_history(symbol)
         if not candles:
             self.logger.warning("No market data found for %s, skipping new trade decision", symbol)

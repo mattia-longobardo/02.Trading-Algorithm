@@ -91,5 +91,27 @@ class BatchGateTests(unittest.TestCase):
         self.assertEqual(called_category, "CRYPTO")
 
 
+class SingleSymbolGateTests(unittest.TestCase):
+    def _ready_manager(self, cash):
+        tm, broker, gpt = _manager(cash=cash, min_trade=50.0)
+        # Clear the earlier guards so only the liquidity gate can block GPT.
+        tm.get_symbol_trades = Mock(return_value=[])
+        broker.get_open_position.return_value = None
+        tm._available_trade_slots = Mock(return_value=3)
+        return tm, broker, gpt
+
+    def test_skips_gpt_when_cash_below_min(self):
+        tm, _, gpt = self._ready_manager(cash=10.0)
+        tm.maybe_open_trade("STOCK", "AAA", provider=PROVIDER_ETORO)
+        gpt.request_new_signal.assert_not_called()
+
+    def test_calls_gpt_when_cash_sufficient(self):
+        tm, _, gpt = self._ready_manager(cash=10_000.0)
+        tm.data_manager.get_symbol_history.return_value = [{"timestamp": "0001", "close": 10.0}]
+        gpt.request_new_signal.return_value = {"action": "HOLD"}
+        tm.maybe_open_trade("STOCK", "AAA", provider=PROVIDER_ETORO)
+        gpt.request_new_signal.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
