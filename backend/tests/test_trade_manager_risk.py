@@ -61,6 +61,38 @@ class RiskAllocationTests(unittest.TestCase):
         self.assertAlmostEqual(alloc, round(10_000.0 / 6, 2), places=2)
 
 
+class LiquiditySpreadTests(unittest.TestCase):
+    """Liquidity must spread across all slots and shrink for in-flight PENDING."""
+
+    # Near-flat series -> tiny vol -> risk-parity size pegged at the 25%/equity
+    # cap (2500 on 10k equity), well above the uniform per-slot share.
+    FLAT = {"CALM": _bars([10, 10.02, 9.99, 10.01, 10.0, 10.02, 10.0])}
+
+    def test_caps_allocation_at_uniform_share(self):
+        # 6 slots, 10k cash, no positions -> no single trade may exceed 10k/6.
+        tm, _ = _manager(history=self.FLAT)
+        alloc = tm._risk_based_allocation("STOCK", "CALM", provider=PROVIDER_ETORO)
+        self.assertLessEqual(alloc, round(10_000.0 / 6, 2) + 0.01)
+
+    def test_pending_trades_reduce_available_cash(self):
+        # 9k already committed to a DB-PENDING order the broker doesn't yet see;
+        # only 1k is truly free across the 5 remaining slots -> cap at 1k/5.
+        pending = [{"symbol": "ZZZ", "category": "STOCK", "status": "PENDING",
+                    "allocated_capital": 9000.0, "provider": "etoro"}]
+        tm, _ = _manager(history=self.FLAT, open_trades=pending)
+        alloc = tm._risk_based_allocation("STOCK", "CALM", provider=PROVIDER_ETORO)
+        self.assertLessEqual(alloc, round(1000.0 / 5, 2) + 0.01)
+
+    def test_fallback_subtracts_pending_capital(self):
+        # equity=0 forces the equal-slot fallback; 4k of 10k is pending, leaving
+        # 6k over 5 remaining slots -> 1200 per slot, not 10k/5=2000.
+        pending = [{"symbol": "ZZZ", "category": "STOCK", "status": "PENDING",
+                    "allocated_capital": 4000.0, "provider": "etoro"}]
+        tm, _ = _manager(equity=0.0, open_trades=pending)
+        alloc = tm._risk_based_allocation("STOCK", "AAA", provider=PROVIDER_ETORO)
+        self.assertAlmostEqual(alloc, 1200.0, places=2)
+
+
 class RiskContextTests(unittest.TestCase):
     def test_build_risk_context_shape(self):
         tm, _ = _manager(history={"AAA": _bars([10, 10.1, 9.9, 10.2, 10.0, 10.3])},
