@@ -1,6 +1,6 @@
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatCurrency, formatNumber, formatPercent } from "@/lib/format";
+import { formatCurrency, formatNumber, formatPercent, formatSignedPercent } from "@/lib/format";
 import type { Metrics } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -11,11 +11,14 @@ function Kpi({
   value,
   subtitle,
   accent,
+  subtitleProminent,
 }: {
   title: string;
   value: string;
   subtitle?: string;
   accent?: "positive" | "negative";
+  /** Render the subtitle (e.g. a percentage) large, bold and accent-colored. */
+  subtitleProminent?: boolean;
 }) {
   const tone =
     accent === "positive"
@@ -23,11 +26,14 @@ function Kpi({
       : accent === "negative"
       ? "text-(--color-danger)"
       : "text-(--color-text)";
+  const subtitleClass = subtitleProminent
+    ? `tnum mt-1 text-lg font-semibold tabular-nums ${tone}`
+    : "tnum mt-1 text-xs tabular-nums text-(--color-muted)";
   return (
     <Card className="p-3 sm:p-4">
       <p className="text-xs uppercase tracking-wide text-(--color-muted)">{title}</p>
       <p className={`tnum mt-1 text-xl font-semibold tabular-nums ${tone}`}>{value}</p>
-      {subtitle && <p className="tnum mt-1 text-xs tabular-nums text-(--color-muted)">{subtitle}</p>}
+      {subtitle && <p className={subtitleClass}>{subtitle}</p>}
     </Card>
   );
 }
@@ -60,7 +66,8 @@ export function KpiStrip({ metrics: m, loading }: KpiStripProps) {
         title="PnL totale"
         value={formatCurrency(m?.total_pnl_abs, m?.currency ?? "EUR")}
         accent={(m?.total_pnl_abs ?? 0) >= 0 ? "positive" : "negative"}
-        subtitle={formatPercent(m?.total_pnl_pct)}
+        subtitle={formatSignedPercent(m?.total_pnl_pct)}
+        subtitleProminent
       />
       <Kpi title="Win rate" value={formatPercent((m?.win_rate ?? 0) * 100)} />
       <Kpi

@@ -50,8 +50,8 @@ describe("KpiStrip", () => {
 
   it("renders subtitles for total PnL percentage", () => {
     render(<KpiStrip metrics={SAMPLE_METRICS} />);
-    // total_pnl_pct=12.34 → formatPercent(12.34) = "12.34%"
-    expect(screen.getByText("12.34%")).toBeInTheDocument();
+    // total_pnl_pct=12.34 → formatSignedPercent(12.34) = "+12.34%" (signed, prominent)
+    expect(screen.getByText("+12.34%")).toBeInTheDocument();
   });
 
   it("shows dashes for all values when metrics is undefined", () => {

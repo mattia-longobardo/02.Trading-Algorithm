@@ -3,8 +3,19 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatCurrency, formatDateTime, formatNumber } from "@/lib/format";
+import { formatCurrency, formatDateTime, formatNumber, formatSignedPercent } from "@/lib/format";
 import { type Trade } from "@/lib/types";
+
+/** Total PnL (realized + unrealized) for a trade. */
+export function tradePnl(t: Trade): number {
+  return (t.realized_pnl ?? 0) + (t.unrealized_pnl ?? 0);
+}
+
+/** Gain/loss as a percentage of allocated capital, or null when not computable. */
+export function tradePnlPct(t: Trade): number | null {
+  if (!t.allocated_capital) return null;
+  return (tradePnl(t) / t.allocated_capital) * 100;
+}
 
 export function statusVariant(
   status: string
@@ -38,7 +49,8 @@ interface TradeRowProps {
 export function TradeRow({ trade: t, onEdit, onClose }: TradeRowProps) {
   const ttpArmed = t.trailing_take_profit_price != null && t.high_water_mark != null;
   const tsArmed = t.trailing_stop_price != null;
-  const pnl = (t.realized_pnl ?? 0) + (t.unrealized_pnl ?? 0);
+  const pnl = tradePnl(t);
+  const pnlPct = tradePnlPct(t);
 
   return (
     <tr className="bg-(--color-panel)/40 transition-colors hover:bg-(--color-hover)/60 [&>td]:border-y [&>td]:border-(--color-line)">
@@ -92,6 +104,11 @@ export function TradeRow({ trade: t, onEdit, onClose }: TradeRowProps) {
       <td className="tnum px-2 py-2 text-right">{formatNumber(t.current_price)}</td>
       <td className={`tnum px-2 py-2 text-right ${pnlClass(pnl)}`}>
         {formatCurrency(pnl, t.account_currency || "EUR")}
+      </td>
+      <td
+        className={`tnum px-2 py-2 text-right ${pnlPct == null ? "text-(--color-muted)" : pnlClass(pnlPct)}`}
+      >
+        {pnlPct == null ? "—" : formatSignedPercent(pnlPct)}
       </td>
       <td className="px-2 py-2 text-(--color-muted)">{t.close_reason ?? "—"}</td>
       <td className="px-2 py-2 text-(--color-muted)">

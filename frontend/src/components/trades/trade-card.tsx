@@ -4,9 +4,9 @@ import { useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatCurrency, formatDateTime, formatNumber } from "@/lib/format";
+import { formatCurrency, formatDateTime, formatNumber, formatSignedPercent } from "@/lib/format";
 import { type Trade } from "@/lib/types";
-import { pnlClass, statusVariant } from "./trade-row";
+import { pnlClass, statusVariant, tradePnl, tradePnlPct } from "./trade-row";
 
 export interface TradeCardProps {
   trade: Trade;
@@ -19,7 +19,8 @@ export function TradeCard({ trade: t, onEdit, onClose }: TradeCardProps) {
 
   const ttpArmed = t.trailing_take_profit_price != null && t.high_water_mark != null;
   const tsArmed = t.trailing_stop_price != null;
-  const pnl = (t.realized_pnl ?? 0) + (t.unrealized_pnl ?? 0);
+  const pnl = tradePnl(t);
+  const pnlPct = tradePnlPct(t);
 
   const isActionable = t.status === "PENDING" || t.status === "OPEN";
 
@@ -37,8 +38,11 @@ export function TradeCard({ trade: t, onEdit, onClose }: TradeCardProps) {
           <Badge variant={statusVariant(t.status)}>{t.status}</Badge>
           <span className="text-xs text-(--color-muted)">{t.category}</span>
         </div>
-        <span className={`tnum shrink-0 font-medium ${pnlClass(pnl)}`}>
-          {formatCurrency(pnl, t.account_currency || "EUR")}
+        <span className={`tnum flex shrink-0 flex-col items-end font-medium ${pnlClass(pnl)}`}>
+          <span>{formatCurrency(pnl, t.account_currency || "EUR")}</span>
+          {pnlPct != null && (
+            <span className="text-xs">{formatSignedPercent(pnlPct)}</span>
+          )}
         </span>
       </div>
 
