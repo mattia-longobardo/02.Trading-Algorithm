@@ -13,6 +13,9 @@ export function tradePnl(t: Trade): number {
 
 /** Gain/loss as a percentage of allocated capital, or null when not computable. */
 export function tradePnlPct(t: Trade): number | null {
+  if (t.status === "OPEN" && t.unrealized_pnl_pct !== undefined) {
+    return t.unrealized_pnl_pct;
+  }
   if (!t.allocated_capital) return null;
   return (tradePnl(t) / t.allocated_capital) * 100;
 }

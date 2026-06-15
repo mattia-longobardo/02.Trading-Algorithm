@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { TradeRow } from "@/components/trades/trade-row";
+import { TradeRow, tradePnlPct } from "@/components/trades/trade-row";
 import type { Trade } from "@/lib/types";
 
 const OPEN_TRADE: Trade = {
@@ -153,5 +153,9 @@ describe("TradeRow", () => {
       cell.className.includes("--color-danger")
     );
     expect(pnlCells.length).toBeGreaterThan(0);
+  });
+
+  it("uses the live position PnL percentage when present", () => {
+    expect(tradePnlPct({ ...OPEN_TRADE, unrealized_pnl_pct: 8.33 })).toBe(8.33);
   });
 });

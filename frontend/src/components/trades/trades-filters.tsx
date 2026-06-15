@@ -76,11 +76,11 @@ export function TradesFilters({
           </Select>
         </div>
         <div className="space-y-1">
-          <label className="text-xs uppercase text-(--color-muted)">Cerca simbolo</label>
+          <label className="text-xs uppercase text-(--color-muted)">Cerca</label>
           <Input
             value={symbolFilter}
             onChange={(e) => onSymbolChange(e.target.value)}
-            placeholder="es. AAPL, BTC/USD, LINK/EUR"
+            placeholder="Simbolo o nome, anche parziale"
           />
         </div>
       </CardContent>

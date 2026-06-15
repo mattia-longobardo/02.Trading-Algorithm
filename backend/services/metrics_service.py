@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from collections import Counter
 from datetime import UTC, datetime, timedelta
+from difflib import SequenceMatcher
 from typing import Any, Mapping
 
 from core import fx
@@ -48,6 +50,46 @@ def _trade_close_dt(row: dict[str, Any]) -> datetime | None:
 
 def _trade_open_dt(row: dict[str, Any]) -> datetime | None:
     return parse_datetime(row.get("open_timestamp")) or parse_datetime(row.get("created_at"))
+
+
+_SEARCH_TOKEN_RE = re.compile(r"[A-Z0-9]+")
+
+
+def _search_fold(value: Any) -> str:
+    return str(value or "").strip().upper()
+
+
+def _search_compact(value: Any) -> str:
+    return re.sub(r"[^A-Z0-9]", "", _search_fold(value))
+
+
+def _search_tokens(value: Any) -> list[str]:
+    return [token for token in _SEARCH_TOKEN_RE.findall(_search_fold(value)) if token]
+
+
+def _matches_trade_search(query: str, texts: list[str]) -> bool:
+    folded_query = _search_fold(query)
+    compact_query = _search_compact(query)
+    if not compact_query:
+        return True
+
+    for text in texts:
+        folded_text = _search_fold(text)
+        compact_text = _search_compact(text)
+        if not compact_text:
+            continue
+        if folded_query in folded_text or compact_query in compact_text:
+            return True
+
+        if len(compact_query) < 3:
+            continue
+
+        candidates = {compact_text, *_search_tokens(text)}
+        for candidate in candidates:
+            if len(candidate) >= 3 and SequenceMatcher(None, compact_query, candidate).ratio() >= 0.72:
+                return True
+
+    return False
 
 
 def _within(row: dict[str, Any], from_dt: datetime | None, to_dt: datetime | None) -> bool:
@@ -133,6 +175,33 @@ class MetricsService:
     def all_trades(self) -> list[dict[str, Any]]:
         return fetch_all(self.config.db_trades, "SELECT * FROM trades ORDER BY created_at")
 
+    def _instrument_search_texts(self) -> dict[str, tuple[str, ...]]:
+        """Return cached instrument labels keyed by both raw and compact symbol."""
+
+        try:
+            rows = fetch_all(
+                self.config.db_market_data,
+                "SELECT symbol, display_name FROM instrument_map",
+            )
+        except Exception:
+            self.logger.debug("Unable to load instrument search labels", exc_info=True)
+            return {}
+
+        labels: dict[str, set[str]] = {}
+        for row in rows:
+            symbol = _search_fold(row.get("symbol"))
+            if not symbol:
+                continue
+            texts = {symbol}
+            display_name = str(row.get("display_name") or "").strip()
+            if display_name:
+                texts.add(display_name)
+            for key in {symbol, _search_compact(symbol)}:
+                if key:
+                    labels.setdefault(key, set()).update(texts)
+
+        return {key: tuple(sorted(values)) for key, values in labels.items()}
+
     def list_trades(
         self,
         *,
@@ -153,8 +222,16 @@ class MetricsService:
             wanted_cat = {c.strip().upper() for c in category.split(",") if c.strip()}
             rows = [r for r in rows if str(r.get("category")) in wanted_cat]
         if symbol:
-            sym = symbol.strip().upper()
-            rows = [r for r in rows if str(r.get("symbol", "")).upper() == sym]
+            instrument_texts = self._instrument_search_texts()
+
+            def _matches_symbol(row: dict[str, Any]) -> bool:
+                row_symbol = _search_fold(row.get("symbol"))
+                texts = {row_symbol}
+                for key in {row_symbol, _search_compact(row_symbol)}:
+                    texts.update(instrument_texts.get(key, ()))
+                return _matches_trade_search(symbol, list(texts))
+
+            rows = [r for r in rows if _matches_symbol(r)]
         if from_dt or to_dt:
             def _matches(r: dict[str, Any]) -> bool:
                 # Filter by either close_timestamp (preferred) or created_at

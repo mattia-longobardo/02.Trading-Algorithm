@@ -2,7 +2,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCcw } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -14,6 +14,8 @@ import { EditTradeDialog } from "@/components/trades/edit-trade-dialog";
 import { TradesFilters } from "@/components/trades/trades-filters";
 import { TradesTable } from "@/components/trades/trades-table";
 import { api } from "@/lib/api";
+import { mergeLiveTradeValues } from "@/lib/trade-live-values";
+import { useLiveStream } from "@/lib/use-live-stream";
 import {
   type Trade,
   type TradeCategory,
@@ -29,6 +31,7 @@ interface TradesEnvelope {
 
 export default function TradesPage() {
   const qc = useQueryClient();
+  const { snapshot } = useLiveStream();
   const [statusFilter, setStatusFilter] = useState<TradeStatus | "ALL">("ALL");
   const [categoryFilter, setCategoryFilter] = useState<TradeCategory | "ALL">("ALL");
   const [symbolFilter, setSymbolFilter] = useState("");
@@ -49,7 +52,11 @@ export default function TradesPage() {
     refetchInterval: 30_000,
   });
 
-  const items = trades.data?.items ?? [];
+  const rawItems = trades.data?.items ?? [];
+  const items = useMemo(
+    () => mergeLiveTradeValues(rawItems, snapshot?.positions ?? []),
+    [rawItems, snapshot?.positions],
+  );
 
   return (
     <section className="space-y-6">

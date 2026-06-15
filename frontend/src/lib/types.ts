@@ -41,6 +41,7 @@ export interface Trade {
   pnl: number | null;
   realized_pnl: number;
   unrealized_pnl: number;
+  unrealized_pnl_pct?: number | null;
   close_reason: string | null;
   instrument_id: number | null;
   position_id: string | null;
