@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { formatCurrency, formatDateTime, formatNumber, formatSignedPercent } from "@/lib/format";
 import { type Trade } from "@/lib/types";
 
-/** Total PnL (realized + unrealized) for a trade. */
+/** Display PnL for a trade. Open trades use the live position value. */
 export function tradePnl(t: Trade): number {
+  if (t.status === "OPEN") return t.unrealized_pnl ?? 0;
   return (t.realized_pnl ?? 0) + (t.unrealized_pnl ?? 0);
 }
 

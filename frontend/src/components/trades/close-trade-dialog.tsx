@@ -12,7 +12,7 @@ import { StatusBanner } from "@/components/ui/status-banner";
 import { ApiError, api } from "@/lib/api";
 import { formatCurrency, formatNumber } from "@/lib/format";
 import { type Trade } from "@/lib/types";
-import { pnlClass } from "./trade-row";
+import { pnlClass, tradePnl } from "./trade-row";
 
 interface CloseTradeDialogProps {
   trade: Trade;
@@ -23,7 +23,7 @@ interface CloseTradeDialogProps {
 export function CloseTradeDialog({ trade, onClose, onDone }: CloseTradeDialogProps) {
   const isPending = trade.status === "PENDING";
   const [error, setError] = useState<string | null>(null);
-  const pnl = (trade.realized_pnl ?? 0) + (trade.unrealized_pnl ?? 0);
+  const pnl = tradePnl(trade);
 
   const mutation = useMutation({
     mutationFn: () => api.post<{ trade: Trade }>(`/api/trades/${trade.id}/close`),

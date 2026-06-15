@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { TradeRow, tradePnlPct } from "@/components/trades/trade-row";
+import { TradeRow, tradePnl, tradePnlPct } from "@/components/trades/trade-row";
 import type { Trade } from "@/lib/types";
 
 const OPEN_TRADE: Trade = {
@@ -71,7 +71,7 @@ describe("TradeRow", () => {
 
   it("renders positive PnL with accent/profit class and formatted value", () => {
     renderRow(OPEN_TRADE);
-    // unrealized_pnl=145, realized_pnl=0 → total=145 → positive
+    // OPEN trades display unrealized_pnl=145 as the live position PnL.
     // formatCurrency(145, "EUR") in it-IT locale → "145,00 €" or similar
     const pnlCell = screen.getByTitle(/Trailing TP non ancora armato/i)
       .closest("tr")
@@ -153,6 +153,17 @@ describe("TradeRow", () => {
       cell.className.includes("--color-danger")
     );
     expect(pnlCells.length).toBeGreaterThan(0);
+  });
+
+  it("uses only live unrealized PnL for open trades", () => {
+    expect(
+      tradePnl({
+        ...OPEN_TRADE,
+        realized_pnl: 999,
+        unrealized_pnl: 145,
+        unrealized_pnl_pct: 8.03,
+      })
+    ).toBe(145);
   });
 
   it("uses the live position PnL percentage when present", () => {

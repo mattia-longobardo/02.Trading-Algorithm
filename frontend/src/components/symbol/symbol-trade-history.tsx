@@ -4,13 +4,13 @@ import { ReceiptText } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDateTime, formatNumber } from "@/lib/format";
-import { pnlClass, statusVariant } from "@/components/trades/trade-row";
+import { pnlClass, statusVariant, tradePnl } from "@/components/trades/trade-row";
 import type { Trade } from "@/lib/types";
 
 const HEADERS = ["Stato", "Entry", "Chiusura/Corrente", "Qty", "PnL", "Aperto", "Chiuso"] as const;
 
 function TradeHistoryRow({ trade: t }: { trade: Trade }) {
-  const pnl = (t.realized_pnl ?? 0) + (t.unrealized_pnl ?? 0);
+  const pnl = tradePnl(t);
   const closeOrCurrent = t.close_price ?? t.current_price;
 
   return (
