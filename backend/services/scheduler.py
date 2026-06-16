@@ -7,13 +7,14 @@ import threading
 from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import contextmanager
+from datetime import timedelta
 from typing import Any
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from filelock import FileLock, Timeout
 
-from core.utils import AppConfig, merge_universe_categories
+from core.utils import AppConfig, merge_universe_categories, utc_now
 from services.report import ReportGenerator
 from services.trade_manager import TradeManager
 from services.universe_manager import UniverseManager
@@ -236,6 +237,12 @@ class TradingScheduler:
 
         record_snapshots_all(self.config, self.trade_manager.brokers, self.logger)
 
+    def job_reconcile_closed_trades(self) -> None:
+        # Realign locally-stored closed trades with the broker's authoritative
+        # realized history (fixes estimated close prices and backfills positions
+        # the bot never tracked). Read-mostly; safe to run alongside trading.
+        self.trade_manager.reconcile_closed_trades()
+
     def run_manual_refresh_universe(self) -> dict[str, list[str]]:
         def execute() -> dict[str, list[str]]:
             universe = self.universe_manager.select_trading_universe()
@@ -273,6 +280,24 @@ class TradingScheduler:
 
     def run_manual_annual_report(self) -> dict:
         return self.run_with_lock("manual_annual_report", self.report_generator.generate_annual_report)
+
+    def run_manual_reconcile_closed_trades(self, lookback_days: int = 365) -> dict[str, Any]:
+        """One-time full-history reconciliation across all brokers.
+
+        Unlike the 30-minute recurring job (short lookback), this scans a wide
+        window so the trades DB is fully realigned with the broker's realized
+        history — used to backfill historical closes after first deploy.
+        """
+
+        def execute() -> dict[str, Any]:
+            min_date = (utc_now() - timedelta(days=lookback_days)).date()
+            results = {
+                provider: self.trade_manager.reconcile_closed_trades(min_date=min_date, provider=provider)
+                for provider in self.trade_manager.brokers
+            }
+            return {"reconciled": results, "lookback_days": lookback_days}
+
+        return self.run_with_lock("manual_reconcile_closed_trades", execute)
 
     def reset_locks(self) -> dict[str, Any]:
         """Force-reset stuck execution locks and the pending jobs queue.
@@ -409,6 +434,15 @@ class TradingScheduler:
             self.guarded("equity_snapshot", self.job_record_equity_snapshot),
             CronTrigger(minute="*/15"),
             id="equity_snapshot",
+            replace_existing=True,
+        )
+        # Closed-trade reconciliation every 30 minutes — overwrites locally
+        # estimated close prices/PnL with eToro's realized history and backfills
+        # untracked closed positions so the trades DB matches the account.
+        self.scheduler.add_job(
+            self.guarded("reconcile_closed_trades", self.job_reconcile_closed_trades),
+            CronTrigger(minute="5,35"),
+            id="reconcile_closed_trades",
             replace_existing=True,
         )
 

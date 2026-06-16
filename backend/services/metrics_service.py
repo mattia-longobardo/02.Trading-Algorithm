@@ -374,7 +374,40 @@ class MetricsService:
 
         total_pnl_abs = round(sum(pnls_display), 2)
         allocated_sum = sum(allocated_display)
-        total_pnl_pct = round((total_pnl_abs / allocated_sum) * 100.0, 2) if allocated_sum > 0 else 0.0
+
+        # Split the bot's trade PnL: realized (closed in period) vs unrealized
+        # (currently open). These are the *bot's tracked trades* — not the same
+        # thing as the account's real equity growth (see account_return below).
+        realized_pnl_abs = total_pnl_abs
+        open_trades = [r for r in non_cancelled if r.get("status") == "OPEN"]
+        unrealized_pnl_abs = round(
+            sum(
+                float(self._fx_convert(_unrealized_pnl(r), source_currency=self._trade_native_currency(r)) or 0.0)
+                for r in open_trades
+            ),
+            2,
+        )
+
+        # Real account performance from the broker's equity snapshots (ground
+        # truth, independent of which trades the bot tracked). Local import to
+        # avoid pulling the app DB at module import time.
+        from services.equity_snapshots import account_return
+
+        account_perf = account_return(self.config.db_app, target_currency=self.config.currency) or {}
+        account_equity_base = account_perf.get("base")
+        account_return_abs = account_perf.get("abs")
+        account_return_pct = account_perf.get("pct")
+
+        # PnL% is return on the real money base (account equity at tracking
+        # start), not on the sum of every trade's allocated capital — that
+        # denominator double-counts capital recycled across sequential trades
+        # and made the headline % meaningless.
+        if account_equity_base:
+            total_pnl_pct = round((total_pnl_abs / account_equity_base) * 100.0, 2)
+        elif allocated_sum > 0:
+            total_pnl_pct = round((total_pnl_abs / allocated_sum) * 100.0, 2)
+        else:
+            total_pnl_pct = 0.0
 
         win_rate = round(len(wins) / n_trades, 4) if n_trades else 0.0
         avg_win = round(sum(wins) / len(wins), 2) if wins else 0.0
@@ -397,6 +430,11 @@ class MetricsService:
         return {
             "total_pnl_abs": total_pnl_abs,
             "total_pnl_pct": total_pnl_pct,
+            "realized_pnl_abs": realized_pnl_abs,
+            "unrealized_pnl_abs": unrealized_pnl_abs,
+            "account_return_abs": account_return_abs,
+            "account_return_pct": account_return_pct,
+            "account_equity_base": account_equity_base,
             "win_rate": win_rate,
             "avg_win": avg_win,
             "avg_loss": avg_loss,

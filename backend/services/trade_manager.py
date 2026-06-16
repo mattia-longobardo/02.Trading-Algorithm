@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from typing import Any, Mapping
 
 from clients.gpt_client import GPTClient
-from core.db import db_cursor, fetch_all, fetch_one
+from core.db import db_cursor, fetch_all, fetch_one, get_instrument_by_id
 from core.utils import (
     PROVIDER_ETORO,
     AppConfig,
@@ -1026,6 +1026,52 @@ class TradeManager:
         )
         self.logger.info("Cancelled stale pending trade %s after GPT cancel review", trade["id"])
 
+    # Days of broker trade-history scanned to resolve the real fill at close time.
+    CLOSE_RESOLUTION_LOOKBACK_DAYS = 3
+
+    def _resolve_actual_close(self, trade: dict[str, Any]) -> dict[str, Any] | None:
+        """Best-effort lookup of the broker's *real* close for ``trade``'s position.
+
+        Returns ``{close_price, pnl, close_timestamp}`` from the authoritative
+        trade-history, or ``None`` when the position is not (yet) settled there,
+        the broker can't serve history, or the call fails. Callers fall back to
+        the locally estimated close price — the periodic reconciliation job
+        (:meth:`reconcile_closed_trades`) repairs any residual drift later.
+        """
+
+        position_id = trade.get("position_id")
+        broker = self._trade_broker(trade)
+        if not position_id or broker is None or not hasattr(broker, "list_trade_history"):
+            return None
+        try:
+            lookback = (utc_now() - timedelta(days=self.CLOSE_RESOLUTION_LOOKBACK_DAYS)).date()
+            history = broker.list_trade_history(lookback)
+            if not isinstance(history, list):
+                return None
+            for record in history:
+                if str(record.get("position_id")) != str(position_id):
+                    continue
+                close_rate = record.get("close_rate")
+                net_profit = record.get("net_profit")
+                if close_rate is None and net_profit is None:
+                    return None
+                close_price = close_rate if close_rate is not None else self._as_float(trade.get("close_price"))
+                if net_profit is not None:
+                    pnl = net_profit
+                else:
+                    pnl = (close_price - float(trade["entry_price"])) * float(trade["quantity"])
+                return {
+                    "close_price": close_price,
+                    "pnl": pnl,
+                    "close_timestamp": record.get("close_timestamp"),
+                }
+        except Exception:
+            self.logger.warning(
+                "Could not resolve real close for trade %s (position %s); using estimate",
+                trade.get("id"), position_id, exc_info=True,
+            )
+        return None
+
     def _mark_trade_closed(
         self,
         trade: dict[str, Any],
@@ -1034,6 +1080,17 @@ class TradeManager:
         close_timestamp: datetime | None = None,
     ) -> None:
         pnl = (close_price - float(trade["entry_price"])) * float(trade["quantity"])
+        close_ts = isoformat_utc(close_timestamp or utc_now())
+
+        # Prefer the broker's settled fill over our trigger-price estimate so the
+        # realized PnL matches the account the moment the trade is recorded.
+        actual = self._resolve_actual_close(trade)
+        if actual is not None:
+            close_price = actual["close_price"]
+            pnl = actual["pnl"]
+            if actual.get("close_timestamp"):
+                close_ts = actual["close_timestamp"]
+
         with db_cursor(self.config.db_trades) as cursor:
             cursor.execute(
                 """
@@ -1042,7 +1099,7 @@ class TradeManager:
                     pnl = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (close_price, isoformat_utc(close_timestamp or utc_now()), close_reason, pnl, trade["id"]),
+                (close_price, close_ts, close_reason, pnl, trade["id"]),
             )
         self.logger.info("Trade %s closed with reason %s", trade["id"], close_reason)
 
@@ -1307,6 +1364,142 @@ class TradeManager:
                     self.sync_open_trade(trade)
             except Exception:
                 self.logger.exception("Failed to sync trade %s", trade["id"])
+
+    # --- closed-trade reconciliation against the broker's realized history ----
+
+    RECONCILE_DEFAULT_LOOKBACK_DAYS = 30
+
+    def reconcile_closed_trades(
+        self,
+        *,
+        min_date: Any | None = None,
+        provider: str = PROVIDER_ETORO,
+    ) -> dict[str, int]:
+        """Make local closed trades match the broker's realized history.
+
+        The local DB stores *estimated* close prices/PnL (the bot guesses the
+        fill on external/manual closes). The broker's ``trade/history`` is the
+        authoritative realized result, so for every closed position we:
+
+        * overwrite ``pnl``/``close_price``/``close_timestamp`` when they drift, and
+        * backfill positions the bot never tracked at all.
+
+        Idempotent: backfilled rows carry the ``position_id`` so a re-run matches
+        them instead of duplicating. Returns a per-run counters summary.
+        """
+
+        summary = {"corrected": 0, "backfilled": 0, "unchanged": 0, "skipped_open": 0}
+        broker = self.broker(provider)
+        if broker is None or not hasattr(broker, "list_trade_history"):
+            return summary
+
+        if min_date is None:
+            min_date = (utc_now() - timedelta(days=self.RECONCILE_DEFAULT_LOOKBACK_DAYS)).date()
+
+        try:
+            history = broker.list_trade_history(min_date)
+        except Exception:
+            self.logger.exception("Failed to fetch %s trade history for reconciliation", provider)
+            return summary
+
+        existing = self._closed_trades_by_position_id(provider)
+        for record in history:
+            position_id = record.get("position_id")
+            if not position_id:
+                continue
+            row = existing.get(str(position_id))
+            if row is None:
+                if self._backfill_closed_trade(record, provider):
+                    summary["backfilled"] += 1
+                continue
+            if str(row.get("status")) != "CLOSED":
+                summary["skipped_open"] += 1
+                continue
+            if self._apply_history_correction(row, record):
+                summary["corrected"] += 1
+            else:
+                summary["unchanged"] += 1
+
+        if summary["corrected"] or summary["backfilled"]:
+            self.logger.info("Closed-trade reconciliation (%s): %s", provider, summary)
+        return summary
+
+    def _closed_trades_by_position_id(self, provider: str) -> dict[str, dict[str, Any]]:
+        rows = fetch_all(
+            self.config.db_trades,
+            "SELECT * FROM trades WHERE provider = ? AND position_id IS NOT NULL AND position_id != ''",
+            (provider,),
+        )
+        return {str(row["position_id"]): row for row in rows}
+
+    def _apply_history_correction(self, row: dict[str, Any], record: dict[str, Any]) -> bool:
+        net_profit = record.get("net_profit")
+        close_rate = record.get("close_rate")
+        close_timestamp = record.get("close_timestamp")
+
+        current_pnl = self._as_float(row.get("pnl")) or 0.0
+        current_close = self._as_float(row.get("close_price")) or 0.0
+
+        pnl_changed = net_profit is not None and abs(current_pnl - net_profit) > 0.01
+        price_changed = close_rate is not None and abs(current_close - close_rate) > 1e-9
+        if not pnl_changed and not price_changed:
+            return False
+
+        new_close_price = close_rate if close_rate is not None else row.get("close_price")
+        new_pnl = net_profit if net_profit is not None else row.get("pnl")
+        with db_cursor(self.config.db_trades) as cursor:
+            cursor.execute(
+                """
+                UPDATE trades
+                SET pnl = ?, close_price = ?, close_timestamp = COALESCE(?, close_timestamp),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (new_pnl, new_close_price, close_timestamp, row["id"]),
+            )
+        return True
+
+    def _backfill_closed_trade(self, record: dict[str, Any], provider: str) -> bool:
+        instrument_id = record.get("instrument_id")
+        mapping = (
+            get_instrument_by_id(self.config.db_market_data, instrument_id)
+            if instrument_id is not None
+            else None
+        )
+        if mapping is None:
+            self.logger.warning(
+                "Cannot backfill closed position %s: instrument %s not in instrument_map",
+                record.get("position_id"),
+                instrument_id,
+            )
+            return False
+
+        open_rate = record.get("open_rate") or 0.0
+        units = record.get("units") or 0.0
+        investment = record.get("investment")
+        allocated = investment if investment is not None else open_rate * units
+        direction = "LONG" if record.get("is_buy", True) else "SHORT"
+        account_currency = self.config.provider_account_currency(provider)
+
+        with db_cursor(self.config.db_trades) as cursor:
+            cursor.execute(
+                """
+                INSERT INTO trades (
+                    symbol, category, direction, status, entry_price, quantity, allocated_capital,
+                    open_timestamp, close_timestamp, close_price, pnl, close_reason,
+                    instrument_id, position_id, provider, account_currency, reasoning, position_confirmed
+                ) VALUES (?, ?, ?, 'CLOSED', ?, ?, ?, ?, ?, ?, ?, 'EXTERNAL_CLOSE', ?, ?, ?, ?, ?, 1)
+                """,
+                (
+                    mapping["symbol"], mapping["category"], direction,
+                    open_rate, units, allocated,
+                    record.get("open_timestamp"), record.get("close_timestamp"),
+                    record.get("close_rate"), record.get("net_profit"),
+                    instrument_id, str(record.get("position_id")), provider, account_currency,
+                    "Backfilled from eToro trade history",
+                ),
+            )
+        return True
 
     def _evaluate_provider_category(
         self,

@@ -584,6 +584,78 @@ class EToroClient:
         portfolio = self._portfolio()
         return [self._normalize_position(p) for p in (portfolio.get("positions") or [])]
 
+    @staticmethod
+    def _format_history_date(value: Any) -> str:
+        """Coerce a date/datetime/str into the ``YYYY-MM-DD`` that ``minDate`` expects."""
+
+        if hasattr(value, "strftime"):
+            return value.strftime("%Y-%m-%d")
+        return str(value)[:10]
+
+    @staticmethod
+    def _normalize_history_trade(raw: dict[str, Any]) -> dict[str, Any]:
+        """Normalize one closed-trade row from ``trade/{demo/}history``.
+
+        Exposes the broker's *authoritative* realized result (``netProfit`` and
+        ``closeRate``) so the reconciler can overwrite locally-estimated PnL.
+        """
+
+        iid = raw.get("instrumentId")
+        pid = raw.get("positionId")
+
+        def _f(key: str) -> float | None:
+            return float(raw[key]) if raw.get(key) is not None else None
+
+        return {
+            "position_id": str(pid) if pid is not None else None,
+            "instrument_id": int(iid) if iid is not None else None,
+            "net_profit": float(raw.get("netProfit") or 0.0),
+            "open_rate": _f("openRate"),
+            "close_rate": _f("closeRate"),
+            "units": _f("units"),
+            "investment": _f("investment"),
+            "fees": float(raw.get("fees") or 0.0),
+            "is_buy": bool(raw.get("isBuy", True)),
+            "open_timestamp": raw.get("openTimestamp"),
+            "close_timestamp": raw.get("closeTimestamp"),
+        }
+
+    def list_trade_history(
+        self,
+        min_date: Any,
+        *,
+        page_size: int = 200,
+        max_pages: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return closed trades from ``minDate`` onward (paginated, normalized).
+
+        eToro returns one JSON array per page; we keep requesting pages until a
+        short/empty page signals the end. Each row carries ``net_profit`` /
+        ``close_rate`` — the real execution the account settled at.
+        """
+
+        date_str = self._format_history_date(min_date)
+        path = f"/api/v1/trading/info/trade/{self._mode_segment()}history"
+        history: list[dict[str, Any]] = []
+        page = 1
+        while page <= max_pages:
+            payload = self._request(
+                "GET",
+                path,
+                params={"minDate": date_str, "page": page, "pageSize": page_size},
+            )
+            if isinstance(payload, list):
+                rows = payload
+            else:
+                rows = payload.get("items") or payload.get("data") or []
+            if not rows:
+                break
+            history.extend(self._normalize_history_trade(r) for r in rows)
+            if len(rows) < page_size:
+                break
+            page += 1
+        return history
+
     def get_available_cash(self) -> float:
         portfolio = self._portfolio()
         credit = float(portfolio.get("credit") or 0.0)

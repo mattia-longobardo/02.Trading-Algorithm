@@ -57,6 +57,16 @@ export interface Trade {
 export interface Metrics {
   total_pnl_abs: number;
   total_pnl_pct: number;
+  /** Realized PnL of the bot's closed trades in the window (display currency). */
+  realized_pnl_abs?: number;
+  /** Unrealized PnL of the bot's currently-open trades (display currency). */
+  unrealized_pnl_abs?: number;
+  /** Real account growth from broker equity snapshots: latest − base. */
+  account_return_abs?: number | null;
+  /** Real account growth %, on the equity base (broker ground truth). */
+  account_return_pct?: number | null;
+  /** Account equity at tracking start, the base for return %. */
+  account_equity_base?: number | null;
   win_rate: number;
   avg_win: number;
   avg_loss: number;

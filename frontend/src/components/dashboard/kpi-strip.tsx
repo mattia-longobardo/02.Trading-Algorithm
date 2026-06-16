@@ -50,7 +50,7 @@ export function KpiStrip({ metrics: m, loading }: KpiStripProps) {
   if (loading) {
     return (
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-6">
-        {Array.from({ length: 11 }).map((_, i) => (
+        {Array.from({ length: 12 }).map((_, i) => (
           <Card key={i} className="p-4">
             <Skeleton className="h-3 w-16" />
             <Skeleton className="mt-2 h-6 w-24" />
@@ -63,11 +63,16 @@ export function KpiStrip({ metrics: m, loading }: KpiStripProps) {
   return (
     <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-6">
       <Kpi
-        title="PnL totale"
+        title="PnL realizzato"
         value={formatCurrency(m?.total_pnl_abs, m?.currency ?? "EUR")}
         accent={(m?.total_pnl_abs ?? 0) >= 0 ? "positive" : "negative"}
         subtitle={formatSignedPercent(m?.total_pnl_pct)}
         subtitleProminent
+      />
+      <Kpi
+        title="PnL non realizzato"
+        value={formatCurrency(m?.unrealized_pnl_abs, m?.currency ?? "EUR")}
+        accent={(m?.unrealized_pnl_abs ?? 0) >= 0 ? "positive" : "negative"}
       />
       <Kpi title="Win rate" value={formatPercent((m?.win_rate ?? 0) * 100)} />
       <Kpi
@@ -83,6 +88,11 @@ export function KpiStrip({ metrics: m, loading }: KpiStripProps) {
       <Kpi
         title="Equity account"
         value={formatCurrency(m?.account_equity, m?.currency ?? "EUR")}
+        accent={(m?.account_return_abs ?? 0) >= 0 ? "positive" : "negative"}
+        subtitle={
+          m?.account_return_pct != null ? formatSignedPercent(m.account_return_pct) : undefined
+        }
+        subtitleProminent
       />
       <Kpi
         title="Avg win"

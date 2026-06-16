@@ -324,3 +324,18 @@ def get_instrument_mapping(db_path: str, symbol: str) -> dict[str, Any] | None:
         "SELECT symbol, instrument_id, category, display_name, tradable FROM instrument_map WHERE symbol = ?",
         (normalized,),
     )
+
+
+def get_instrument_by_id(db_path: str, instrument_id: int) -> dict[str, Any] | None:
+    """Reverse lookup: return the cached mapping row for an eToro instrumentId, or None.
+
+    Used to resolve ``symbol``/``category`` when backfilling closed positions that
+    only carry the broker's numeric instrument id (e.g. trade-history reconciliation).
+    """
+
+    return fetch_one(
+        db_path,
+        "SELECT symbol, instrument_id, category, display_name, tradable "
+        "FROM instrument_map WHERE instrument_id = ? ORDER BY updated_at DESC LIMIT 1",
+        (int(instrument_id),),
+    )

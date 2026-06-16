@@ -205,6 +205,30 @@ class TradingSchedulerManualApiTests(unittest.TestCase):
         self.assertIn("monitor_trades", jobs_by_id)
         self.assertEqual(jobs_by_id["monitor_trades"]["max_instances"], 2)
 
+    def test_job_reconcile_closed_trades_delegates_to_trade_manager(self) -> None:
+        self.scheduler.job_reconcile_closed_trades()
+
+        self.trade_manager.reconcile_closed_trades.assert_called_once_with()
+
+    def test_register_jobs_includes_closed_trade_reconciliation(self) -> None:
+        self.scheduler.register_jobs()
+
+        job_ids = {job_id for _, _, job_id, _, _ in self.scheduler.scheduler.jobs}
+
+        self.assertIn("reconcile_closed_trades", job_ids)
+
+    def test_run_manual_reconcile_reconciles_each_provider(self) -> None:
+        self.trade_manager.brokers = {"etoro": Mock()}
+        self.trade_manager.reconcile_closed_trades.return_value = {"corrected": 2, "backfilled": 3}
+
+        result = self.scheduler.run_manual_reconcile_closed_trades()
+
+        self.trade_manager.reconcile_closed_trades.assert_called_once()
+        _, kwargs = self.trade_manager.reconcile_closed_trades.call_args
+        self.assertEqual(kwargs["provider"], "etoro")
+        self.assertIn("min_date", kwargs)
+        self.assertEqual(result["reconciled"]["etoro"], {"corrected": 2, "backfilled": 3})
+
 
 try:
     from fastapi.testclient import TestClient

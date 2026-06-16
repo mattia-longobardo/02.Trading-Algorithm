@@ -1323,6 +1323,16 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
         _audit(admin, entity="job", entity_id="new_orders", action="manual_run")
         return result
 
+    @app.get("/api/trades/reconcile")
+    def manual_reconcile_closed_trades(
+        admin: auth_lib.AuthenticatedUser = Depends(require_admin),
+    ) -> dict[str, Any]:
+        result = _run_manual(
+            "reconcile_closed_trades", scheduler.run_manual_reconcile_closed_trades
+        )
+        _audit(admin, entity="job", entity_id="reconcile_closed_trades", action="manual_run")
+        return result
+
     @app.get("/api/report/generate")
     def manual_report(admin: auth_lib.AuthenticatedUser = Depends(require_admin)) -> dict[str, Any]:
         result = _run_manual("report", scheduler.run_manual_weekly_report)
