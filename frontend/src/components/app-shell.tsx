@@ -67,11 +67,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <div className="mt-auto space-y-3 pt-6">
         <div className="rounded-lg border border-(--color-line) bg-(--color-elevated) p-3">
-          <div className="flex items-center justify-between gap-2">
-            <p className="truncate text-sm font-medium" title={user.display_name}>
-              {user.display_name}
+          <p className="text-sm font-medium break-words" title={user.display_name}>
+            {user.display_name}
+          </p>
+          <div className="mt-1 flex items-center justify-between gap-2">
+            <p className="truncate text-xs text-(--color-muted)" title={user.username}>
+              @{user.username}
             </p>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               <button
                 type="button"
                 aria-label="Apri palette comandi"
@@ -85,9 +88,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Badge variant={user.role === "admin" ? "admin" : "user"}>{user.role}</Badge>
             </div>
           </div>
-          <p className="mt-1 truncate text-xs text-(--color-muted)" title={user.username}>
-            @{user.username}
-          </p>
         </div>
         <Button variant="secondary" size="sm" className="w-full" onClick={logout}>
           <LogOut className="size-4" />
