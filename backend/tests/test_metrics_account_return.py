@@ -54,6 +54,32 @@ class AccountReturnHelperTests(unittest.TestCase):
     def test_none_when_no_snapshots(self):
         self.assertIsNone(account_return(self.app_db, target_currency="USD"))
 
+    def test_scoped_to_window(self):
+        from datetime import datetime, UTC
+        self._snap("2026-06-08T10:00:00+00:00", 150000.0)
+        self._snap("2026-06-12T10:00:00+00:00", 160000.0)
+        self._snap("2026-06-16T10:00:00+00:00", 168000.0)
+        # window [06-12, 06-16] -> base 160000, latest 168000, +5%
+        out = account_return(
+            self.app_db,
+            target_currency="USD",
+            from_dt=datetime(2026, 6, 12, tzinfo=UTC),
+            to_dt=datetime(2026, 6, 16, 23, tzinfo=UTC),
+        )
+        self.assertAlmostEqual(out["base"], 160000.0)
+        self.assertAlmostEqual(out["latest"], 168000.0)
+        self.assertAlmostEqual(out["abs"], 8000.0)
+        self.assertAlmostEqual(out["pct"], 5.0)
+
+    def test_none_when_window_has_no_snapshots(self):
+        from datetime import datetime, UTC
+        self._snap("2026-06-08T10:00:00+00:00", 150000.0)
+        out = account_return(
+            self.app_db, target_currency="USD",
+            from_dt=datetime(2026, 1, 1, tzinfo=UTC), to_dt=datetime(2026, 1, 2, tzinfo=UTC),
+        )
+        self.assertIsNone(out)
+
 
 class MetricsPayloadTests(unittest.TestCase):
     def setUp(self):
@@ -109,6 +135,39 @@ class MetricsPayloadTests(unittest.TestCase):
         out = self.metrics.compute_metrics(None, None)
         # realized 918.58 / base 150000 * 100 = 0.61 (NOT 918.58/1000*100 = 91.86)
         self.assertAlmostEqual(out["total_pnl_pct"], 0.61, places=2)
+
+    def _insert_closed(self, symbol, close_ts, pnl):
+        conn = sqlite3.connect(self.trades_db)
+        conn.execute(
+            """INSERT INTO trades (symbol,category,status,entry_price,quantity,allocated_capital,
+                 close_price,close_timestamp,pnl,account_currency,provider)
+               VALUES (?,'CRYPTO','CLOSED',100.0,1.0,100.0,100.0,?,?,'USD','etoro')""",
+            (symbol, close_ts, pnl),
+        )
+        conn.commit()
+        conn.close()
+
+    def test_avg_loss_only_counts_in_window_losses(self):
+        from datetime import datetime, UTC
+        # a loss closed 06-09, before the window we'll select
+        self._insert_closed("OLD", "2026-06-09T10:00:00+00:00", -500.0)
+        # full history: one loss (-500) -> avg_loss -500
+        full = self.metrics.compute_metrics(None, None)
+        self.assertAlmostEqual(full["avg_loss"], -500.0, places=2)
+        # window from 06-10 excludes the 06-09 loss -> no losses
+        scoped = self.metrics.compute_metrics(datetime(2026, 6, 10, tzinfo=UTC), None)
+        self.assertEqual(scoped["avg_loss"], 0.0)
+
+    def test_account_return_scoped_to_selected_window(self):
+        from datetime import datetime, UTC
+        conn = sqlite3.connect(self.app_db)
+        conn.execute("INSERT INTO account_equity_snapshots (recorded_at, equity, currency, provider) VALUES (?,?,?,?)",
+                     ("2026-06-12T10:00:00+00:00", 160000.0, "USD", "etoro"))
+        conn.commit()
+        conn.close()
+        out = self.metrics.compute_metrics(datetime(2026, 6, 12, tzinfo=UTC), datetime(2026, 6, 16, 23, tzinfo=UTC))
+        self.assertAlmostEqual(out["account_equity_base"], 160000.0, places=2)
+        self.assertAlmostEqual(out["account_return_abs"], 8000.0, places=2)
 
 
 if __name__ == "__main__":

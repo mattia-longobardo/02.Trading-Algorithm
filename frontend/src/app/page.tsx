@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useMinuteRefresh } from "@/lib/use-minute-refresh";
-import { TimeframeSelector, type Timeframe } from "@/components/timeframe-selector";
+import { DateRangePicker, type DateRange } from "@/components/dashboard/date-range-picker";
 import { EquityBalanceChart } from "@/components/equity-balance-chart";
 import { KpiStrip } from "@/components/dashboard/kpi-strip";
 import { CategoryAllocationChart } from "@/components/dashboard/category-allocation-chart";
@@ -46,19 +46,45 @@ const DASHBOARD_QUERY_KEYS = [
   "account-balance",
 ] as const;
 
+// Selected range → `from`/`to` query string (empty = whole history). The end
+// is pushed to the last millisecond of the day so the chosen day is inclusive.
+function rangeToParams(range: DateRange): string {
+  const params = new URLSearchParams();
+  if (range.from) {
+    const f = new Date(range.from);
+    f.setHours(0, 0, 0, 0);
+    params.set("from", f.toISOString());
+  }
+  if (range.to) {
+    const t = new Date(range.to);
+    t.setHours(23, 59, 59, 999);
+    params.set("to", t.toISOString());
+  }
+  return params.toString();
+}
+
+function defaultRange(): DateRange {
+  const to = new Date();
+  const from = new Date();
+  from.setDate(from.getDate() - 90); // last 3 months
+  return { from, to };
+}
+
 export default function DashboardPage() {
   const theme = useChartTheme();
-  const [timeframe, setTimeframe] = useState<Timeframe>("3M");
+  const [range, setRange] = useState<DateRange>(() => defaultRange());
+  const rangeQuery = rangeToParams(range);
   const lastAutoRefresh = useMinuteRefresh(DASHBOARD_QUERY_KEYS);
   const { status: liveStatus } = useLiveStream();
 
   const metrics = useQuery({
-    queryKey: ["metrics", timeframe],
-    queryFn: () => api.get<Metrics>(`/api/metrics?window=${timeframe}`),
+    queryKey: ["metrics", rangeQuery],
+    queryFn: () => api.get<Metrics>(`/api/metrics${rangeQuery ? `?${rangeQuery}` : ""}`),
   });
   const equity = useQuery({
-    queryKey: ["equity", timeframe],
-    queryFn: () => api.get<{ points: EquityPoint[] }>(`/api/equity-curve?window=${timeframe}`),
+    queryKey: ["equity", rangeQuery],
+    queryFn: () =>
+      api.get<{ points: EquityPoint[] }>(`/api/equity-curve${rangeQuery ? `?${rangeQuery}` : ""}`),
   });
   const fxRate = useQuery({
     queryKey: ["fx-rate"],
@@ -73,8 +99,9 @@ export default function DashboardPage() {
     staleTime: 5 * 60 * 1000,
   });
   const pnlBySymbol = useQuery({
-    queryKey: ["pnl-by-symbol", timeframe],
-    queryFn: () => api.get<{ items: PnlBySymbolRow[] }>(`/api/pnl-by-symbol?window=${timeframe}`),
+    queryKey: ["pnl-by-symbol", rangeQuery],
+    queryFn: () =>
+      api.get<{ items: PnlBySymbolRow[] }>(`/api/pnl-by-symbol${rangeQuery ? `?${rangeQuery}` : ""}`),
   });
   const allocation = useQuery({
     queryKey: ["allocation"],
@@ -85,9 +112,11 @@ export default function DashboardPage() {
       }>("/api/allocation"),
   });
   const distribution = useQuery({
-    queryKey: ["returns-distribution", timeframe],
+    queryKey: ["returns-distribution", rangeQuery],
     queryFn: () =>
-      api.get<{ bins: ReturnsBin[] }>(`/api/returns-distribution?window=${timeframe}&bins=12`),
+      api.get<{ bins: ReturnsBin[] }>(
+        `/api/returns-distribution?${rangeQuery ? `${rangeQuery}&` : ""}bins=12`
+      ),
   });
 
   const m = metrics.data;
@@ -146,7 +175,7 @@ export default function DashboardPage() {
               )}
             </div>
           )}
-          <TimeframeSelector value={timeframe} onChange={setTimeframe} />
+          <DateRangePicker value={range} onChange={setRange} />
         </div>
       </header>
 
@@ -161,7 +190,7 @@ export default function DashboardPage() {
       <KpiStrip metrics={m} loading={metrics.isLoading} />
 
       {/* Account equity + equity curve */}
-      <EquityBalanceChart fallbackCurrency={currency} />
+      <EquityBalanceChart fallbackCurrency={currency} from={range.from} to={range.to} />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">

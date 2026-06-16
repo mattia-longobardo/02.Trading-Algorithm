@@ -393,7 +393,12 @@ class MetricsService:
         # avoid pulling the app DB at module import time.
         from services.equity_snapshots import account_return
 
-        account_perf = account_return(self.config.db_app, target_currency=self.config.currency) or {}
+        account_perf = account_return(
+            self.config.db_app,
+            target_currency=self.config.currency,
+            from_dt=from_dt,
+            to_dt=to_dt,
+        ) or {}
         account_equity_base = account_perf.get("base")
         account_return_abs = account_perf.get("abs")
         account_return_pct = account_perf.get("pct")
