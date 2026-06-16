@@ -53,8 +53,9 @@ class ReportGeneratorTests(unittest.TestCase):
 
             self.assertEqual(report["pnl_total"], 0.0)
             generated_files = sorted(path.name for path in report_dir.iterdir())
-            self.assertEqual(len(generated_files), 2)
-            self.assertTrue(any(name.endswith(".json") for name in generated_files))
+            # Only the PDF is written — no companion JSON file.
+            self.assertEqual(len(generated_files), 1)
+            self.assertFalse(any(name.endswith(".json") for name in generated_files))
             pdf_files = [name for name in generated_files if name.endswith(".pdf")]
             self.assertEqual(len(pdf_files), 1)
             pdf_bytes = (report_dir / pdf_files[0]).read_bytes()
