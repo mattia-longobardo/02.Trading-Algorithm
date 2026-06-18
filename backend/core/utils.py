@@ -92,7 +92,9 @@ class AppConfig:
     universe_etf_symbols: tuple[str, ...] = DEFAULT_UNIVERSE_ETFS
     universe_stock_min_market_cap: float = 2_000_000_000.0
     universe_stock_min_dollar_volume: float = 5_000_000.0
-    universe_crypto_min_market_cap: float = 100_000_000.0
+    universe_crypto_min_market_cap: float = 300_000_000.0
+    universe_crypto_min_dollar_volume: float = 3_000_000.0
+    universe_crypto_max_volatility_1m_pct: float = 60.0
     universe_stock_shortlist: int = 300
     universe_crypto_shortlist: int = 150
     risk_weight_vol: float = 0.30
@@ -225,7 +227,9 @@ def load_config() -> AppConfig:
         ),
         universe_stock_min_market_cap=max(0.0, float(os.getenv("UNIVERSE_STOCK_MIN_MARKET_CAP", "2000000000"))),
         universe_stock_min_dollar_volume=max(0.0, float(os.getenv("UNIVERSE_STOCK_MIN_DOLLAR_VOLUME", "5000000"))),
-        universe_crypto_min_market_cap=max(0.0, float(os.getenv("UNIVERSE_CRYPTO_MIN_MARKET_CAP", "100000000"))),
+        universe_crypto_min_market_cap=max(0.0, float(os.getenv("UNIVERSE_CRYPTO_MIN_MARKET_CAP", "300000000"))),
+        universe_crypto_min_dollar_volume=max(0.0, float(os.getenv("UNIVERSE_CRYPTO_MIN_DOLLAR_VOLUME", "3000000"))),
+        universe_crypto_max_volatility_1m_pct=max(0.0, float(os.getenv("UNIVERSE_CRYPTO_MAX_VOLATILITY_1M_PCT", "60"))),
         universe_stock_shortlist=max(10, int(os.getenv("UNIVERSE_STOCK_SHORTLIST", "300"))),
         universe_crypto_shortlist=max(10, int(os.getenv("UNIVERSE_CRYPTO_SHORTLIST", "150"))),
         risk_weight_vol=max(0.0, float(os.getenv("RISK_WEIGHT_VOL", "0.30"))),

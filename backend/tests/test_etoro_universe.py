@@ -454,5 +454,64 @@ class UniverseMetadataQuoteTests(unittest.TestCase):
         self.assertIn("not configured", aapl["quote_error"])
 
 
+class CryptoReliabilityGateTests(unittest.TestCase):
+    """Hard liquidity + 1-month volatility gate that screens out unreliable crypto."""
+
+    def _manager(self, **overrides):
+        from services.universe_manager import UniverseManager
+        kwargs = dict(
+            openai_api_key="k", etoro_api_key="a", etoro_user_key="b",
+            etoro_account_type="demo", weekly_universe_stocks=2, weekly_universe_crypto=2,
+            universe_crypto_min_dollar_volume=3_000_000.0,
+            universe_crypto_max_volatility_1m_pct=60.0,
+        )
+        kwargs.update(overrides)
+        config = AppConfig(**kwargs)
+        return UniverseManager(config, logging.getLogger("t"), {PE: Mock()}, Mock())
+
+    @staticmethod
+    def _bars(daily_step_pct: float, count: int = 22, volume: float = 100.0):
+        """Synthetic bars where each close moves by +/- daily_step_pct alternately."""
+        bars = []
+        price = 100.0
+        for i in range(count):
+            price *= 1.0 + (daily_step_pct / 100.0 if i % 2 == 0 else -daily_step_pct / 100.0)
+            bars.append({"timestamp": f"2026-01-{i + 1:02d}", "close": round(price, 6), "volume": volume})
+        return bars
+
+    def test_metrics_expose_one_month_volatility_below_annualized(self):
+        manager = self._manager()
+        metrics = manager._compute_market_metrics(self._bars(5.0), "CRYPTO")
+        self.assertIsNotNone(metrics["realized_volatility_1m_pct"])
+        self.assertIsNotNone(metrics["realized_volatility_20d_pct"])
+        # 1-month figure must be materially smaller than the annualized one.
+        self.assertLess(metrics["realized_volatility_1m_pct"], metrics["realized_volatility_20d_pct"])
+
+    def test_gate_passes_liquid_calm_crypto(self):
+        manager = self._manager()
+        asset = {"bar_count": 90, "avg_dollar_volume_20d": 8_000_000.0, "realized_volatility_1m_pct": 25.0}
+        self.assertTrue(manager._passes_liquidity_prefilter("CRYPTO", asset))
+
+    def test_gate_blocks_thin_volume(self):
+        manager = self._manager()
+        asset = {"bar_count": 90, "avg_dollar_volume_20d": 1_000_000.0, "realized_volatility_1m_pct": 25.0}
+        self.assertFalse(manager._passes_liquidity_prefilter("CRYPTO", asset))
+
+    def test_gate_blocks_excessive_one_month_volatility(self):
+        manager = self._manager()
+        asset = {"bar_count": 90, "avg_dollar_volume_20d": 8_000_000.0, "realized_volatility_1m_pct": 95.0}
+        self.assertFalse(manager._passes_liquidity_prefilter("CRYPTO", asset))
+
+    def test_gate_passes_when_volatility_metric_missing(self):
+        manager = self._manager()
+        asset = {"bar_count": 90, "avg_dollar_volume_20d": 8_000_000.0, "realized_volatility_1m_pct": None}
+        self.assertTrue(manager._passes_liquidity_prefilter("CRYPTO", asset))
+
+    def test_vol_cap_disabled_when_zero(self):
+        manager = self._manager(universe_crypto_max_volatility_1m_pct=0.0)
+        asset = {"bar_count": 90, "avg_dollar_volume_20d": 8_000_000.0, "realized_volatility_1m_pct": 300.0}
+        self.assertTrue(manager._passes_liquidity_prefilter("CRYPTO", asset))
+
+
 if __name__ == "__main__":
     unittest.main()

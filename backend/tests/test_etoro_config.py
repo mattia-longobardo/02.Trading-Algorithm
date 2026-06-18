@@ -65,7 +65,9 @@ class EtoroConfigTests(unittest.TestCase):
         self.assertEqual(config.universe_crypto_shortlist, 150)
         self.assertEqual(config.universe_stock_min_market_cap, 2_000_000_000.0)
         self.assertEqual(config.universe_stock_min_dollar_volume, 5_000_000.0)
-        self.assertEqual(config.universe_crypto_min_market_cap, 100_000_000.0)
+        self.assertEqual(config.universe_crypto_min_market_cap, 300_000_000.0)
+        self.assertEqual(config.universe_crypto_min_dollar_volume, 3_000_000.0)
+        self.assertEqual(config.universe_crypto_max_volatility_1m_pct, 60.0)
         self.assertIn("US", config.universe_countries)
         self.assertIn("IT", config.universe_countries)
 

@@ -44,7 +44,8 @@ class UniverseManager:
     CRYPTO_MIN_BAR_COUNT = 60
     STOCK_MIN_LAST_CLOSE = 5.0
     STOCK_MIN_AVG_DOLLAR_VOLUME_20D = 2_000_000.0
-    CRYPTO_MIN_AVG_DOLLAR_VOLUME_20D = 1_000_000.0
+    # Crypto liquidity floor + volatility ceiling are operator-tunable via config
+    # (universe_crypto_min_dollar_volume / universe_crypto_max_volatility_1m_pct).
     MAX_DOSSIER_WORKERS = 6
 
     _DATED_FUTURE_RE = re.compile(r"\.[A-Z]{3}\d{2}$")
@@ -202,6 +203,7 @@ class UniverseManager:
             "return_120d_pct": self._percent_change(closes, 120),
             "distance_from_52w_high_pct": None,
             "realized_volatility_20d_pct": None,
+            "realized_volatility_1m_pct": None,
         }
         if not closes:
             return metrics
@@ -218,8 +220,14 @@ class UniverseManager:
             if previous_close > 0
         ]
         if len(daily_returns) >= 10:
+            daily_vol = pstdev(daily_returns)
             annualization_factor = math.sqrt(252.0 if category == "STOCK" else 365.0)
-            metrics["realized_volatility_20d_pct"] = round(pstdev(daily_returns) * annualization_factor * 100.0, 2)
+            metrics["realized_volatility_20d_pct"] = round(daily_vol * annualization_factor * 100.0, 2)
+            # Same daily vol expressed over a 1-month horizon (21 trading days for
+            # stocks, ~30 calendar days for always-on crypto). Used by the crypto
+            # reliability gate so the cap is read in intuitive monthly terms.
+            monthly_factor = math.sqrt(21.0 if category == "STOCK" else 30.0)
+            metrics["realized_volatility_1m_pct"] = round(daily_vol * monthly_factor * 100.0, 2)
         return metrics
 
     def _market_data_batch_size(self, category: str) -> int:
@@ -474,7 +482,14 @@ class UniverseManager:
 
         if bar_count and bar_count < self.CRYPTO_MIN_BAR_COUNT:
             return False
-        if avg_dollar_volume is not None and avg_dollar_volume < self.CRYPTO_MIN_AVG_DOLLAR_VOLUME_20D:
+        if avg_dollar_volume is not None and avg_dollar_volume < self.config.universe_crypto_min_dollar_volume:
+            return False
+        # Reliability cap: drop erratic coins whose 1-month realized volatility
+        # exceeds the configured ceiling. A ceiling of 0 disables the gate, and a
+        # missing metric (too few bars) is not enough on its own to exclude.
+        max_volatility_1m = self.config.universe_crypto_max_volatility_1m_pct
+        realized_volatility_1m = self._safe_float(asset.get("realized_volatility_1m_pct"))
+        if max_volatility_1m > 0 and realized_volatility_1m is not None and realized_volatility_1m > max_volatility_1m:
             return False
         return True
 
@@ -613,6 +628,7 @@ class UniverseManager:
                 "return_120d_pct": candidate.get("return_120d_pct"),
                 "distance_from_52w_high_pct": candidate.get("distance_from_52w_high_pct"),
                 "realized_volatility_20d_pct": candidate.get("realized_volatility_20d_pct"),
+                "realized_volatility_1m_pct": candidate.get("realized_volatility_1m_pct"),
             },
             "summary": dossier.get("summary", ""),
             "bull_case": dossier.get("bull_case", []),
