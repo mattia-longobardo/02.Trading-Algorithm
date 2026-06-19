@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Brush,
@@ -35,6 +35,11 @@ const GRANULARITY_OPTIONS: { value: Granularity; label: string }[] = [
 ];
 
 const MAX_VISIBLE_POINTS = 80;
+
+interface BrushRange {
+  startIndex: number;
+  endIndex: number;
+}
 
 function formatTickForGranularity(iso: string, granularity: Granularity): string {
   const d = new Date(iso);
@@ -105,8 +110,19 @@ export function EquityBalanceChart({
   const points = balance.data?.points ?? [];
   const currency = balance.data?.currency ?? fallbackCurrency;
   const showBrush = points.length > MAX_VISIBLE_POINTS;
-  const startIndex = showBrush ? points.length - MAX_VISIBLE_POINTS : 0;
-  const endIndex = points.length > 0 ? points.length - 1 : 0;
+  const defaultStartIndex = showBrush ? points.length - MAX_VISIBLE_POINTS : 0;
+  const defaultEndIndex = points.length > 0 ? points.length - 1 : 0;
+  const [brushRange, setBrushRange] = useState<BrushRange>({
+    startIndex: defaultStartIndex,
+    endIndex: defaultEndIndex,
+  });
+
+  useEffect(() => {
+    setBrushRange({ startIndex: defaultStartIndex, endIndex: defaultEndIndex });
+  }, [defaultStartIndex, defaultEndIndex, queryParams]);
+
+  const activeStartIndex = Math.min(brushRange.startIndex, defaultEndIndex);
+  const activeEndIndex = Math.min(Math.max(brushRange.endIndex, activeStartIndex), defaultEndIndex);
 
   return (
     <Card>
@@ -186,8 +202,15 @@ export function EquityBalanceChart({
                   stroke={theme.info}
                   fill={theme.tooltipBg}
                   travellerWidth={8}
-                  startIndex={startIndex}
-                  endIndex={endIndex}
+                  startIndex={activeStartIndex}
+                  endIndex={activeEndIndex}
+                  onChange={(range) => {
+                    const nextStartIndex =
+                      typeof range.startIndex === "number" ? range.startIndex : activeStartIndex;
+                    const nextEndIndex =
+                      typeof range.endIndex === "number" ? range.endIndex : activeEndIndex;
+                    setBrushRange({ startIndex: nextStartIndex, endIndex: nextEndIndex });
+                  }}
                   tickFormatter={(v: string) => formatTickForGranularity(v, granularity)}
                 />
               )}
