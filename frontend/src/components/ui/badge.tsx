@@ -5,11 +5,11 @@ type Variant = "default" | "open" | "pending" | "closed" | "cancelled" | "admin"
 
 const variantStyles: Record<Variant, string> = {
   default: "bg-(--color-hover) text-(--color-text)",
-  open: "bg-emerald-500/20 text-emerald-300",
-  pending: "bg-amber-500/20 text-amber-300",
-  closed: "bg-sky-500/20 text-sky-300",
-  cancelled: "bg-rose-500/20 text-rose-300",
-  admin: "bg-violet-500/20 text-violet-300",
+  open: "bg-(--color-accent)/15 text-(--color-accent)",
+  pending: "bg-(--color-warning)/15 text-(--color-warning)",
+  closed: "bg-(--color-info)/15 text-(--color-info)",
+  cancelled: "bg-(--color-danger)/15 text-(--color-danger)",
+  admin: "bg-(--color-info)/15 text-(--color-info)",
   user: "bg-(--color-hover) text-(--color-text)",
   muted: "bg-(--color-hover) text-(--color-muted)",
 };

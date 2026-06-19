@@ -150,9 +150,9 @@ export default function DashboardPage() {
               className={`rounded-lg border px-3 py-1.5 text-xs ${
                 fxRate.data.available
                   ? fxRate.data.stale
-                    ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                    ? "border-(--color-warning)/50 bg-(--color-warning)/10 text-(--color-warning)"
                     : "border-(--color-line) bg-(--color-panel)/70 text-(--color-muted)"
-                  : "border-rose-500/40 bg-rose-500/10 text-rose-300"
+                  : "border-(--color-danger)/50 bg-(--color-danger)/10 text-(--color-danger)"
               }`}
               title={
                 fxRate.data.available

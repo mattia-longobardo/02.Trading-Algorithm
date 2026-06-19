@@ -61,7 +61,7 @@ function FolderTree({ folders, activeId, onSelect, onDelete }: FolderTreeProps) 
           <Button
             variant="ghost"
             size="icon"
-            className="text-(--color-muted) hover:text-rose-400"
+            className="text-(--color-muted) hover:text-(--color-danger)"
             onClick={() => onDelete(f)}
             aria-label={`Elimina cartella ${f.name}`}
           >

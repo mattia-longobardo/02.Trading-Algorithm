@@ -25,7 +25,7 @@ export default function PositionsPage() {
       {/* Summary line */}
       <p className="tnum text-sm text-(--color-muted)">
         <span className="font-medium text-(--color-text)">Equity</span> {equityStr}
-        <span className="mx-2 text-(--color-line)">·</span>
+        <span className="mx-2 text-(--color-muted)">·</span>
         <span className="font-medium text-(--color-text)">Liquidità</span> {cashStr}
       </p>
 

@@ -38,9 +38,9 @@ describe("useChartTheme", () => {
     const theme = result.current;
 
     // Spot-check light values
-    expect(theme.grid).toBe("#e4e7ec");
-    expect(theme.text).toBe("#1a1f29");
-    expect(theme.up).toBe("#12a150");
+    expect(theme.grid).toBe("#cbd5e1");
+    expect(theme.text).toBe("#0f172a");
+    expect(theme.up).toBe("#047857");
     expect(Array.isArray(theme.pie)).toBe(true);
   });
 

@@ -33,18 +33,18 @@ const DARK: ChartTheme = {
 };
 
 const LIGHT: ChartTheme = {
-  grid: "#e4e7ec",
-  axis: "#525c6e",
-  text: "#1a1f29",
-  up: "#12a150",
-  down: "#e5484d",
-  info: "#2f6feb",
-  warning: "#d98300",
-  positive: "#12a150",
-  negative: "#e5484d",
+  grid: "#cbd5e1",
+  axis: "#475569",
+  text: "#0f172a",
+  up: "#047857",
+  down: "#b42318",
+  info: "#1d4ed8",
+  warning: "#8a4b00",
+  positive: "#047857",
+  negative: "#b42318",
   tooltipBg: "#ffffff",
-  tooltipBorder: "#e4e7ec",
-  pie: ["#12a150", "#2f6feb", "#7c3aed", "#d98300", "#e5484d", "#0d9488", "#ca8a04"],
+  tooltipBorder: "#cbd5e1",
+  pie: ["#047857", "#1d4ed8", "#6d28d9", "#8a4b00", "#b42318", "#0f766e", "#854d0e"],
 };
 
 export function useChartTheme(): ChartTheme {

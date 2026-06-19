@@ -7,10 +7,10 @@ import { cn } from "@/lib/cn";
 type Kind = "error" | "success" | "warning" | "info";
 
 const kindStyles: Record<Kind, string> = {
-  error: "border-rose-500/50 bg-rose-500/10 text-rose-200",
-  success: "border-emerald-500/50 bg-emerald-500/10 text-emerald-200",
-  warning: "border-amber-500/50 bg-amber-500/10 text-amber-200",
-  info: "border-sky-500/50 bg-sky-500/10 text-sky-200",
+  error: "border-(--color-danger)/50 bg-(--color-danger)/10 text-(--color-danger)",
+  success: "border-(--color-accent)/50 bg-(--color-accent)/10 text-(--color-accent)",
+  warning: "border-(--color-warning)/50 bg-(--color-warning)/10 text-(--color-warning)",
+  info: "border-(--color-info)/50 bg-(--color-info)/10 text-(--color-info)",
 };
 
 const kindIcons: Record<Kind, React.ComponentType<{ className?: string }>> = {

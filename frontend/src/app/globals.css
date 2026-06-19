@@ -12,6 +12,7 @@
   --color-text: #dfe6ee;
   --color-muted: #6b7484;
   --color-accent: #22d37f;
+  --color-accent-contrast: #020617;
   --color-danger: #f06868;
   --color-warning: #f59e0b;
   --color-info: #58a6ff;
@@ -21,18 +22,19 @@
    re-declaring the same CSS variables in that scope flips every
    `*-(--color-*)` utility at runtime without rebuilding. */
 :root.light {
-  --color-bg: #f6f7f9;
+  --color-bg: #f3f6fa;
   --color-elevated: #ffffff;
-  --color-field: #ffffff;
-  --color-hover: #eceef2;
+  --color-field: #f8fafc;
+  --color-hover: #e2e8f0;
   --color-panel: #ffffff;
-  --color-line: #e4e7ec;
-  --color-text: #1a1f29;
-  --color-muted: #525c6e;
-  --color-accent: #12a150;
-  --color-danger: #e5484d;
-  --color-warning: #d98300;
-  --color-info: #2f6feb;
+  --color-line: #cbd5e1;
+  --color-text: #0f172a;
+  --color-muted: #475569;
+  --color-accent: #047857;
+  --color-accent-contrast: #ffffff;
+  --color-danger: #b42318;
+  --color-warning: #8a4b00;
+  --color-info: #1d4ed8;
 }
 
 html,

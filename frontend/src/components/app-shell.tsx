@@ -32,7 +32,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const sidebarContent = (
     <>
       <div className="mb-6 flex items-center gap-2">
-        <div className="size-8 rounded-lg bg-(--color-accent) grid place-items-center text-slate-950 font-bold">
+        <div className="size-8 rounded-lg bg-(--color-accent) grid place-items-center text-(--color-accent-contrast) font-bold">
           T
         </div>
         <div>
@@ -109,7 +109,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {/* Mobile top bar: brand + theme toggle + logout. Hidden on lg+. */}
         <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-(--color-line) bg-(--color-bg)/95 px-4 backdrop-blur lg:hidden">
           <div className="flex items-center gap-2">
-            <div className="size-6 rounded bg-(--color-accent) grid place-items-center text-slate-950 text-xs font-bold">
+            <div className="size-6 rounded bg-(--color-accent) grid place-items-center text-(--color-accent-contrast) text-xs font-bold">
               T
             </div>
             <p className="text-sm font-semibold">Trading Console</p>

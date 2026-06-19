@@ -40,7 +40,7 @@ function LoginForm() {
   return (
     <Card className="w-full max-w-sm">
       <div className="mb-6 text-center">
-        <div className="mx-auto mb-3 size-10 rounded-xl bg-(--color-accent) grid place-items-center text-slate-950 text-lg font-bold">
+        <div className="mx-auto mb-3 size-10 rounded-xl bg-(--color-accent) grid place-items-center text-(--color-accent-contrast) text-lg font-bold">
           T
         </div>
         <h1 className="text-xl font-semibold">Trading Console</h1>
