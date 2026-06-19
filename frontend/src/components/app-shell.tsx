@@ -101,7 +101,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen">
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
       {/* Desktop sidebar: always visible from lg breakpoint up. */}
-      <aside className="hidden w-60 flex-col border-r border-(--color-line) bg-(--color-elevated) px-4 py-6 lg:flex">
+      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 self-start overflow-y-auto border-r border-(--color-line) bg-(--color-elevated) px-4 py-6 lg:flex">
         {sidebarContent}
       </aside>
 
