@@ -52,14 +52,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               href={item.href}
               aria-current={active ? "page" : undefined}
               className={cn(
-                "relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent) focus-visible:ring-offset-2 focus-visible:ring-offset-(--color-bg)",
+                "relative flex min-w-0 items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent) focus-visible:ring-offset-2 focus-visible:ring-offset-(--color-bg)",
                 active
                   ? "bg-(--color-panel) text-(--color-text) before:absolute before:left-0 before:top-1/2 before:h-5 before:w-0.5 before:-translate-y-1/2 before:rounded-r before:bg-(--color-accent)"
                   : "text-(--color-muted) hover:bg-(--color-panel)/60 hover:text-(--color-text)"
               )}
             >
-              <Icon className={cn("size-4", active && "text-(--color-accent)")} />
-              <span>{item.label}</span>
+              <Icon className={cn("size-4 shrink-0", active && "text-(--color-accent)")} />
+              <span className="truncate">{item.label}</span>
             </Link>
           );
         })}
@@ -71,7 +71,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {user.display_name}
           </p>
           <div className="mt-1 flex items-center justify-between gap-2">
-            <p className="truncate text-xs text-(--color-muted)" title={user.username}>
+            <p className="min-w-0 truncate text-xs text-(--color-muted)" title={user.username}>
               @{user.username}
             </p>
             <div className="flex shrink-0 items-center gap-2">
@@ -101,7 +101,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen">
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
       {/* Desktop sidebar: always visible from lg breakpoint up. */}
-      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 self-start overflow-y-auto border-r border-(--color-line) bg-(--color-elevated) px-4 py-6 lg:flex">
+      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col self-start overflow-x-hidden overflow-y-auto border-r border-(--color-line) bg-(--color-elevated) px-4 py-6 lg:flex">
         {sidebarContent}
       </aside>
 
