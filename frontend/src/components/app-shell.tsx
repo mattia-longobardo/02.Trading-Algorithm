@@ -115,8 +115,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <p className="truncate text-sm font-semibold">Trading Console</p>
           </div>
           <div className="flex items-center gap-2">
-            <ThemeToggle className="size-8" />
-            <Button variant="secondary" size="sm" aria-label="Logout" onClick={logout}>
+            <ThemeToggle className="size-10" />
+            <Button
+              variant="secondary"
+              size="icon"
+              className="size-10"
+              aria-label="Logout"
+              onClick={logout}
+            >
               <LogOut className="size-4" />
             </Button>
           </div>
