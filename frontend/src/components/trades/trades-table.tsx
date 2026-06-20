@@ -21,7 +21,7 @@ interface ColumnDef {
   key: string;
   label: string;
   align?: "left" | "right";
-  sticky?: boolean;
+  stickyClass?: string;
   /** Returns a comparable value for sorting; omit to make the column non-sortable. */
   accessor?: (t: Trade) => SortValue;
 }
@@ -34,30 +34,32 @@ function ts(value: string | null | undefined): number | null {
 
 // Column order MUST stay in sync with the cells rendered by <TradeRow>.
 const COLUMNS: ColumnDef[] = [
-  { key: "symbol", label: "Simbolo", sticky: true, accessor: (t) => t.symbol },
-  { key: "id", label: "ID", accessor: (t) => t.id },
+  { key: "close_action", label: "Chiudi", stickyClass: "sticky left-0 z-30 w-12 min-w-12 bg-(--color-panel)" },
+  { key: "edit_action", label: "Mod.", stickyClass: "sticky left-12 z-30 w-12 min-w-12 bg-(--color-panel)" },
+  { key: "symbol", label: "Simbolo", stickyClass: "sticky left-24 z-30 w-36 min-w-36 bg-(--color-panel)", accessor: (t) => t.symbol },
   { key: "status", label: "Stato", accessor: (t) => t.status },
-  { key: "category", label: "Cat.", accessor: (t) => t.category },
-  { key: "direction", label: "Dir.", accessor: (t) => t.direction },
+  { key: "pnl", label: "PnL", align: "right", accessor: (t) => tradePnl(t) },
+  { key: "pnl_pct", label: "PnL %", align: "right", accessor: (t) => tradePnlPct(t) },
+  { key: "price", label: "Prezzo att.", align: "right", accessor: (t) => t.current_price },
+  { key: "opened", label: "Aperto", accessor: (t) => ts(t.open_timestamp ?? t.created_at) },
   { key: "entry", label: "Entry", align: "right", accessor: (t) => t.entry_price },
-  { key: "target", label: "Target", align: "right", accessor: (t) => t.target_entry_price },
+  { key: "exit", label: "Uscita", align: "right", accessor: (t) => t.close_price },
+  { key: "closed", label: "Chiuso", accessor: (t) => ts(t.close_timestamp) },
   { key: "qty", label: "Qty", align: "right", accessor: (t) => t.quantity },
   { key: "capital", label: "Capitale", align: "right", accessor: (t) => t.allocated_capital },
+  { key: "category", label: "Cat.", accessor: (t) => t.category },
+  { key: "direction", label: "Dir.", accessor: (t) => t.direction },
+  { key: "target", label: "Target", align: "right", accessor: (t) => t.target_entry_price },
   { key: "tp", label: "TP", align: "right", accessor: (t) => t.take_profit },
+  { key: "sl", label: "SL", align: "right", accessor: (t) => t.stop_loss },
   { key: "ttp_dist", label: "TTP dist", align: "right", accessor: (t) => t.trailing_take_profit_distance },
   { key: "ttp_arm", label: "TTP arm%", align: "right", accessor: (t) => t.trailing_take_profit_activation_pct },
   { key: "ttp_trigger", label: "TTP trigger", align: "right", accessor: (t) => t.trailing_take_profit_price },
   { key: "hwm", label: "HWM", align: "right", accessor: (t) => t.high_water_mark },
-  { key: "sl", label: "SL", align: "right", accessor: (t) => t.stop_loss },
   { key: "ts_dist", label: "TS dist", align: "right", accessor: (t) => t.trailing_stop_distance },
   { key: "ts_trigger", label: "TS trigger", align: "right", accessor: (t) => t.trailing_stop_price },
-  { key: "price", label: "Prezzo", align: "right", accessor: (t) => t.current_price },
-  { key: "pnl", label: "PnL", align: "right", accessor: (t) => tradePnl(t) },
-  { key: "pnl_pct", label: "PnL %", align: "right", accessor: (t) => tradePnlPct(t) },
   { key: "reason", label: "Motivo", accessor: (t) => t.close_reason },
-  { key: "opened", label: "Aperto", accessor: (t) => ts(t.open_timestamp ?? t.created_at) },
-  { key: "closed", label: "Chiuso", accessor: (t) => ts(t.close_timestamp) },
-  { key: "actions", label: "", align: "right" },
+  { key: "id", label: "ID", accessor: (t) => t.id },
 ];
 
 function compareValues(a: SortValue, b: SortValue): number {
@@ -113,14 +115,14 @@ export function TradesTable({ items, loading, onEdit, onClose }: TradesTableProp
         ))}
       </div>
       <div className="hidden overflow-x-auto lg:block">
-        <table className="w-full min-w-[1200px] border-separate border-spacing-y-1 text-sm">
+        <table className="w-full min-w-[1720px] border-separate border-spacing-y-1 text-sm">
           <thead>
             <tr className="text-left text-xs uppercase text-(--color-muted)">
               {COLUMNS.map((col) => {
                 const active = sortKey === col.key;
                 const thClass = [
                   "px-2 py-2",
-                  col.sticky ? "sticky left-0 z-10 bg-(--color-panel)" : "",
+                  col.stickyClass ?? "",
                   col.align === "right" ? "text-right" : "",
                 ]
                   .filter(Boolean)

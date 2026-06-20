@@ -16,6 +16,19 @@ if (!window.HTMLElement.prototype.scrollIntoView) {
   window.HTMLElement.prototype.scrollIntoView = function () {};
 }
 
+// Radix Toast checks pointer capture APIs for swipe gestures; jsdom lacks them.
+if (!window.HTMLElement.prototype.hasPointerCapture) {
+  window.HTMLElement.prototype.hasPointerCapture = function () {
+    return false;
+  };
+}
+if (!window.HTMLElement.prototype.setPointerCapture) {
+  window.HTMLElement.prototype.setPointerCapture = function () {};
+}
+if (!window.HTMLElement.prototype.releasePointerCapture) {
+  window.HTMLElement.prototype.releasePointerCapture = function () {};
+}
+
 // jsdom does not implement window.matchMedia; next-themes calls it on mount.
 Object.defineProperty(window, "matchMedia", {
   writable: true,

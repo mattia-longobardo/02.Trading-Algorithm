@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,9 +11,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { StatusBanner } from "@/components/ui/status-banner";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useToast } from "@/lib/toast";
 
 interface JobAction {
   label: string;
@@ -68,19 +68,21 @@ function RunActionForm({
   onClose: () => void;
   onDone: () => void;
 }) {
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<string | null>(null);
+  const toast = useToast();
 
-  const mutation = useMutation({
-    mutationFn: () => api.get<{ status: string; message: string }>(action.path),
-    onSuccess: (data) => {
-      setResult(data.message);
-      setTimeout(onDone, 1500);
-    },
-    onError: (err) => {
-      setError(err instanceof ApiError ? err.message : (err as Error).message);
-    },
-  });
+  function submit() {
+    const promise = api.get<{ status: string; message: string }>(action.path);
+    onClose();
+    void toast
+      .track(promise, {
+        loading: `${action.label} in corso`,
+        success: (data) => data.message || `${action.label} completato`,
+        error: `${action.label} fallito`,
+        description: action.description,
+      })
+      .then(onDone)
+      .catch(() => {});
+  }
 
   return (
     <div>
@@ -92,22 +94,12 @@ function RunActionForm({
         Confermi l&apos;esecuzione manuale di questo job? L&apos;azione condivide il lock dello
         scheduler: se un altro job è in corso riceverai un 409 Conflict.
       </p>
-      {error && (
-        <StatusBanner kind="error" className="mt-3">
-          {error}
-        </StatusBanner>
-      )}
-      {result && (
-        <StatusBanner kind="success" className="mt-3">
-          {result}
-        </StatusBanner>
-      )}
       <div className="mt-4 flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose}>
           Annulla
         </Button>
-        <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
-          {mutation.isPending ? "Esecuzione…" : "Conferma"}
+        <Button onClick={submit}>
+          Conferma
         </Button>
       </div>
     </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { Download, FileSearch } from "lucide-react";
+import { Download, FileSearch, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -21,6 +21,9 @@ export interface ReportsListProps {
   folders: ReportFolder[];
   onPreview: (r: ReportRow) => void;
   onMove: (id: number, folder_id: number | null) => void;
+  isAdmin: boolean;
+  deletingId?: number | null;
+  onDelete: (r: ReportRow) => void;
 }
 
 export function ReportsList({
@@ -29,6 +32,9 @@ export function ReportsList({
   folders,
   onPreview,
   onMove,
+  isAdmin,
+  deletingId = null,
+  onDelete,
 }: ReportsListProps) {
   if (loading) {
     return <p className="text-sm text-(--color-muted)">Caricamento…</p>;
@@ -119,6 +125,18 @@ export function ReportsList({
                       <Download className="size-4" />
                     </Button>
                   </a>
+                  {isAdmin && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="size-8 text-(--color-danger) hover:text-(--color-danger)"
+                      aria-label={`Elimina ${r.filename}`}
+                      disabled={deletingId === r.id}
+                      onClick={() => onDelete(r)}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  )}
                 </div>
               </td>
             </tr>

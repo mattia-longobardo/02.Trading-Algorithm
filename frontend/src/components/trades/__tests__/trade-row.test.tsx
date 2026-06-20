@@ -112,15 +112,15 @@ describe("TradeRow", () => {
     expect(screen.getByRole("button", { name: /Annulla/i })).toBeInTheDocument();
   });
 
-  it("does not render close button for CLOSED trades", () => {
+  it("keeps action buttons visible but disabled for CLOSED trades", () => {
     const closedTrade: Trade = {
       ...OPEN_TRADE,
       status: "CLOSED",
       close_timestamp: "2024-01-20T12:00:00Z",
     };
     renderRow(closedTrade);
-    expect(screen.queryByRole("button", { name: /Chiudi/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Annulla/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Chiudi/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Modifica/i })).toBeDisabled();
   });
 
   it("applies tnum class to numeric cells (entry price)", () => {

@@ -311,6 +311,63 @@ class TradingApiServerTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200, response.text)
 
+    def _login_user(self) -> None:
+        from core import auth
+
+        try:
+            auth.create_user(
+                self._config.db_app,
+                username="plain-user",
+                password="plain-pw-123",
+                display_name="Plain User",
+                role="user",
+            )
+        except ValueError:
+            pass
+        response = self._client.post(
+            "/api/auth/login",
+            json={"username": "plain-user", "password": "plain-pw-123"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+
+    def _insert_folder(self, name: str, parent_id: int | None = None) -> int:
+        from core import app_db
+
+        with app_db.app_cursor(self._config.db_app) as cursor:
+            cursor.execute(
+                """
+                INSERT INTO report_folders (name, parent_id, created_at, created_by)
+                VALUES (?, ?, '2024-01-01T00:00:00+00:00', NULL)
+                """,
+                (name, parent_id),
+            )
+            return int(cursor.lastrowid or 0)
+
+    def _folder_exists(self, folder_id: int) -> bool:
+        from core import app_db
+
+        return app_db.app_fetch_one(
+            self._config.db_app,
+            "SELECT id FROM report_folders WHERE id = ?",
+            (folder_id,),
+        ) is not None
+
+    def _insert_report(self, filename: str, folder_id: int | None = None) -> tuple[int, Path]:
+        from core import app_db
+
+        path = self._reports_dir / filename
+        path.write_bytes(b"%PDF-1.4\n")
+        with app_db.app_cursor(self._config.db_app) as cursor:
+            cursor.execute(
+                """
+                INSERT INTO reports (filename, type, format, size_bytes, generated_at, folder_id, tags)
+                VALUES (?, 'weekly', 'pdf', ?, '2024-01-01T00:00:00+00:00', ?, '[]')
+                """,
+                (filename, path.stat().st_size, folder_id),
+            )
+            report_id = int(cursor.lastrowid or 0)
+        return report_id, path
+
     def test_restart_required_set_on_change_and_cleared_after_restart(self) -> None:
         """Changing a restart-only setting flags a restart, and a real restart
         (a fresh app re-snapshotting the overlay) clears the flag — the bug was
@@ -391,6 +448,81 @@ class TradingApiServerTests(unittest.TestCase):
         # No auth cookie — must be rejected with 401.
         response = self._client.get("/api/candles?symbol=BTC")
         self.assertEqual(response.status_code, 401)
+
+    def test_admin_can_delete_report_file_and_metadata(self) -> None:
+        from services.report_index import get_report
+
+        report_id, path = self._insert_report("weekly_report_delete_admin_20240101_000000.pdf")
+
+        self._login_admin()
+        response = self._client.delete(f"/api/reports/{report_id}")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"ok": True})
+        self.assertFalse(path.exists())
+        self.assertIsNone(get_report(self._config.db_app, report_id))
+
+    def test_deleting_last_report_prunes_empty_folder_and_parent(self) -> None:
+        year_id = self._insert_folder("delete-empty-2024")
+        month_id = self._insert_folder("delete-empty-2024-01", parent_id=year_id)
+        report_id, _path = self._insert_report(
+            "weekly_report_prune_empty_20240101_000000.pdf",
+            folder_id=month_id,
+        )
+
+        self._login_admin()
+        response = self._client.delete(f"/api/reports/{report_id}")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(self._folder_exists(month_id))
+        self.assertFalse(self._folder_exists(year_id))
+
+    def test_deleting_one_report_keeps_non_empty_folder(self) -> None:
+        folder_id = self._insert_folder("delete-non-empty-folder")
+        report_id, _path = self._insert_report(
+            "weekly_report_delete_keep_folder_1_20240101_000000.pdf",
+            folder_id=folder_id,
+        )
+        self._insert_report(
+            "weekly_report_delete_keep_folder_2_20240101_000000.pdf",
+            folder_id=folder_id,
+        )
+
+        self._login_admin()
+        response = self._client.delete(f"/api/reports/{report_id}")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(self._folder_exists(folder_id))
+
+    def test_moving_report_prunes_empty_source_folder(self) -> None:
+        source_id = self._insert_folder("move-empty-source")
+        destination_id = self._insert_folder("move-empty-destination")
+        report_id, _path = self._insert_report(
+            "weekly_report_move_prune_source_20240101_000000.pdf",
+            folder_id=source_id,
+        )
+
+        self._login_admin()
+        response = self._client.patch(
+            f"/api/reports/{report_id}",
+            json={"folder_id": destination_id},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(self._folder_exists(source_id))
+        self.assertTrue(self._folder_exists(destination_id))
+
+    def test_non_admin_cannot_delete_report(self) -> None:
+        from services.report_index import get_report
+
+        report_id, path = self._insert_report("weekly_report_delete_user_20240101_000000.pdf")
+
+        self._login_user()
+        response = self._client.delete(f"/api/reports/{report_id}")
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertTrue(path.exists())
+        self.assertIsNotNone(get_report(self._config.db_app, report_id))
 
     def test_candles_with_stubbed_broker_returns_ohlc_shape(self) -> None:
         """Authenticated request with a stubbed eToro broker returns mapped candle shape."""

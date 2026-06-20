@@ -292,6 +292,8 @@ def update_report(
     tags: list[str] | None = None,
     clear_folder: bool = False,
 ) -> dict[str, Any] | None:
+    before = get_report(db_path, report_id)
+    old_folder_id = _folder_id(before)
     fields: list[str] = []
     params: list[Any] = []
     if clear_folder:
@@ -303,11 +305,85 @@ def update_report(
         fields.append("tags = ?")
         params.append(json.dumps(tags, ensure_ascii=True))
     if not fields:
-        return get_report(db_path, report_id)
+        return before
     params.append(report_id)
     with app_cursor(db_path) as cursor:
         cursor.execute(f"UPDATE reports SET {', '.join(fields)} WHERE id = ?", tuple(params))
-    return get_report(db_path, report_id)
+    after = get_report(db_path, report_id)
+    new_folder_id = _folder_id(after)
+    if old_folder_id is not None and old_folder_id != new_folder_id:
+        prune_empty_folders(db_path, old_folder_id)
+    return after
+
+
+def _folder_id(row: dict[str, Any] | None) -> int | None:
+    if not row or row.get("folder_id") is None:
+        return None
+    return int(row["folder_id"])
+
+
+def prune_empty_folders(db_path: str, folder_id: int | None) -> list[dict[str, Any]]:
+    """Delete an empty folder and keep walking upward while parents become empty."""
+
+    deleted: list[dict[str, Any]] = []
+    current_id = int(folder_id) if folder_id is not None else None
+    while current_id is not None:
+        folder = app_fetch_one(db_path, "SELECT * FROM report_folders WHERE id = ?", (current_id,))
+        if not folder:
+            break
+        report_count = app_fetch_one(
+            db_path,
+            "SELECT COUNT(*) AS count FROM reports WHERE folder_id = ?",
+            (current_id,),
+        )
+        child_count = app_fetch_one(
+            db_path,
+            "SELECT COUNT(*) AS count FROM report_folders WHERE parent_id = ?",
+            (current_id,),
+        )
+        if int((report_count or {}).get("count") or 0) > 0:
+            break
+        if int((child_count or {}).get("count") or 0) > 0:
+            break
+
+        parent_id = folder.get("parent_id")
+        with app_cursor(db_path) as cursor:
+            cursor.execute("DELETE FROM report_folders WHERE id = ?", (current_id,))
+        deleted.append(folder)
+        current_id = int(parent_id) if parent_id is not None else None
+    return deleted
+
+
+def _report_path_candidate(report_dir: str | Path, filename: str) -> Path | None:
+    base = Path(report_dir)
+    candidate = base / filename
+    # Reject path traversal before touching disk.
+    try:
+        candidate.resolve().relative_to(base.resolve())
+    except ValueError:
+        return None
+    return candidate
+
+
+def delete_report(db_path: str, report_dir: str | Path, report_id: int) -> dict[str, Any] | None:
+    row = get_report(db_path, report_id)
+    if not row:
+        return None
+    old_folder_id = _folder_id(row)
+
+    path = _report_path_candidate(report_dir, str(row["filename"]))
+    if path is None:
+        raise ValueError("Unsafe report filename")
+
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+    with app_cursor(db_path) as cursor:
+        cursor.execute("DELETE FROM reports WHERE id = ?", (int(report_id),))
+    prune_empty_folders(db_path, old_folder_id)
+    return row
 
 
 def list_folders(db_path: str) -> list[dict[str, Any]]:
@@ -384,12 +460,8 @@ def search_reports_full_text(db_path: str, report_dir: str | Path, query: str) -
 
 
 def report_path_for(report_dir: str | Path, filename: str) -> Path | None:
-    base = Path(report_dir)
-    candidate = base / filename
-    # Reject path traversal — filename must resolve directly under report_dir.
-    try:
-        candidate.resolve().relative_to(base.resolve())
-    except ValueError:
+    candidate = _report_path_candidate(report_dir, filename)
+    if candidate is None:
         return None
     if not candidate.exists():
         return None

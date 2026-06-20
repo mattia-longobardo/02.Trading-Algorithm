@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderPlus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CreateFolderDialog } from "@/components/reports/create-folder-dialog";
@@ -11,12 +11,14 @@ import { ReportPreview } from "@/components/reports/report-preview";
 import { ReportSearch } from "@/components/reports/report-search";
 import { ReportsList } from "@/components/reports/reports-list";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import type { ReportFolder, ReportRow } from "@/lib/types";
 
 type FolderFilter = number | null | "ALL";
 
 export default function ReportsPage() {
   const qc = useQueryClient();
+  const { user } = useAuth();
   const [folderFilter, setFolderFilter] = useState<FolderFilter>("ALL");
   const [typeFilter, setTypeFilter] = useState<string>("ALL");
   const [q, setQ] = useState("");
@@ -45,7 +47,10 @@ export default function ReportsPage() {
   const moveMutation = useMutation({
     mutationFn: ({ id, folder_id }: { id: number; folder_id: number | null }) =>
       api.patch(`/api/reports/${id}`, { folder_id, clear_folder: folder_id === null }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["reports"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["reports"] });
+      qc.invalidateQueries({ queryKey: ["report-folders"] });
+    },
   });
 
   const deleteFolderMutation = useMutation({
@@ -60,6 +65,23 @@ export default function ReportsPage() {
     () => folders.data?.folders ?? [],
     [folders.data],
   );
+  const isAdmin = user?.role === "admin";
+
+  useEffect(() => {
+    if (typeof folderFilter !== "number" || folders.isLoading) return;
+    if (!folderList.some((folder) => folder.id === folderFilter)) {
+      setFolderFilter("ALL");
+    }
+  }, [folderFilter, folderList, folders.isLoading]);
+
+  const deleteReportMutation = useMutation({
+    mutationFn: (id: number) => api.delete(`/api/reports/${id}`),
+    onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: ["reports"] });
+      qc.invalidateQueries({ queryKey: ["report-folders"] });
+      setPreviewing((current) => (current?.id === id ? null : current));
+    },
+  });
 
   return (
     <section className="space-y-6">
@@ -130,6 +152,13 @@ export default function ReportsPage() {
             folders={folderList}
             onPreview={setPreviewing}
             onMove={(id, folder_id) => moveMutation.mutate({ id, folder_id })}
+            isAdmin={isAdmin}
+            deletingId={deleteReportMutation.isPending ? deleteReportMutation.variables : null}
+            onDelete={(report) => {
+              if (confirm(`Eliminare definitivamente il report "${report.filename}"?`)) {
+                deleteReportMutation.mutate(report.id);
+              }
+            }}
           />
         </CardContent>
       </Card>

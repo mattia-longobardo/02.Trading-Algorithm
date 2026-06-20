@@ -53,6 +53,20 @@ function tableSymbolOrder(container: HTMLElement): string[] {
 }
 
 describe("TradesTable", () => {
+  it("puts sticky close, edit and symbol columns first", () => {
+    const { container } = render(
+      <TradesTable items={[makeTrade({ id: 1 })]} loading={false} onEdit={vi.fn()} onClose={vi.fn()} />
+    );
+    const headers = Array.from(container.querySelectorAll("thead th")).map((th) =>
+      th.textContent?.trim()
+    );
+    expect(headers.slice(0, 3)).toEqual(["Chiudi", "Mod.", "Simbolo"]);
+    const firstRowCells = Array.from(container.querySelectorAll("tbody tr:first-child td"));
+    expect(firstRowCells[0]).toHaveClass("sticky");
+    expect(firstRowCells[1]).toHaveClass("sticky");
+    expect(firstRowCells[2]).toHaveClass("sticky");
+  });
+
   it("renders the PnL % column header", () => {
     render(<TradesTable items={[makeTrade({ id: 1 })]} loading={false} onEdit={vi.fn()} onClose={vi.fn()} />);
     expect(screen.getByRole("button", { name: /PnL %/i })).toBeInTheDocument();

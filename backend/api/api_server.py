@@ -36,7 +36,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from clients.gpt_client import get_default_prompts
 from core import app_db, auth as auth_lib, fx, prompt_store
@@ -63,6 +63,7 @@ from services.universe_admin import (
 from services.report_index import (
     create_folder,
     delete_folder,
+    delete_report,
     get_report,
     list_folders,
     list_reports,
@@ -132,14 +133,13 @@ class ResetPasswordPayload(BaseModel):
 
 
 class TradePatchPayload(BaseModel):
-    target_entry_price: float | None = None
-    quantity: float | None = None
+    model_config = ConfigDict(extra="forbid")
+
     take_profit: float | None = None
     trailing_take_profit_distance: float | None = None
     trailing_take_profit_activation_pct: float | None = None
     stop_loss: float | None = None
     trailing_stop_distance: float | None = None
-    high_water_mark: float | None = None
 
 
 class RiskProjectPayload(BaseModel):
@@ -951,6 +951,23 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
         )
         _audit(user, entity="report", entity_id=report_id, action="update", before=before, after=after)
         return {"report": after}
+
+    @app.delete("/api/reports/{report_id}")
+    def delete_report_endpoint(
+        report_id: int,
+        admin: auth_lib.AuthenticatedUser = Depends(require_admin),
+    ) -> dict[str, bool]:
+        before = get_report(config.db_app, report_id)
+        if not before:
+            raise _error(HTTPStatus.NOT_FOUND, "report_not_found", "Report not found")
+        try:
+            delete_report(config.db_app, config.report_dir, report_id)
+        except ValueError as exc:
+            raise _error(HTTPStatus.BAD_REQUEST, "invalid_report_file", str(exc)) from exc
+        except OSError as exc:
+            raise _error(HTTPStatus.INTERNAL_SERVER_ERROR, "delete_failed", str(exc)) from exc
+        _audit(admin, entity="report", entity_id=report_id, action="delete", before=before)
+        return {"ok": True}
 
     @app.get("/api/report-folders")
     def get_report_folders(_user: auth_lib.AuthenticatedUser = Depends(get_current_user)) -> dict[str, Any]:

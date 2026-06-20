@@ -75,9 +75,9 @@ describe("TradeCard", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("hides the close/cancel button for a CLOSED trade", () => {
+  it("keeps action buttons visible but disabled for a CLOSED trade", () => {
     render(<TradeCard trade={{ ...trade, status: "CLOSED" }} onEdit={vi.fn()} onClose={vi.fn()} />);
-    expect(screen.queryByRole("button", { name: /annulla/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /chiudi/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /modifica/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /chiudi/i })).toBeDisabled();
   });
 });

@@ -1,16 +1,14 @@
 "use client";
 
-import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { StatusBanner } from "@/components/ui/status-banner";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
 import { formatCurrency, formatNumber } from "@/lib/format";
+import { useToast } from "@/lib/toast";
 import { type Trade } from "@/lib/types";
 import { pnlClass, tradePnl } from "./trade-row";
 
@@ -22,16 +20,28 @@ interface CloseTradeDialogProps {
 
 export function CloseTradeDialog({ trade, onClose, onDone }: CloseTradeDialogProps) {
   const isPending = trade.status === "PENDING";
-  const [error, setError] = useState<string | null>(null);
   const pnl = tradePnl(trade);
+  const toast = useToast();
 
-  const mutation = useMutation({
-    mutationFn: () => api.post<{ trade: Trade }>(`/api/trades/${trade.id}/close`),
-    onSuccess: onDone,
-    onError: (err) => {
-      setError(err instanceof ApiError ? err.message : (err as Error).message);
-    },
-  });
+  function submit() {
+    const promise = api.post<{ trade: Trade }>(`/api/trades/${trade.id}/close`);
+    onClose();
+    void toast
+      .track(promise, {
+        loading: isPending
+          ? `Annullamento ordine #${trade.id} in corso`
+          : `Chiusura trade #${trade.id} in corso`,
+        success: isPending
+          ? `Ordine #${trade.id} annullato`
+          : `Chiusura trade #${trade.id} inviata`,
+        error: isPending
+          ? `Annullamento ordine #${trade.id} fallito`
+          : `Chiusura trade #${trade.id} fallita`,
+        description: trade.symbol,
+      })
+      .then(onDone)
+      .catch(() => {});
+  }
 
   return (
     <div>
@@ -66,11 +76,6 @@ export function CloseTradeDialog({ trade, onClose, onDone }: CloseTradeDialogPro
           </p>
         </div>
       </div>
-      {error && (
-        <StatusBanner kind="error" className="mt-3">
-          {error}
-        </StatusBanner>
-      )}
       <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <Button type="button" variant="secondary" className="w-full sm:w-auto" onClick={onClose}>
           Indietro
@@ -78,17 +83,9 @@ export function CloseTradeDialog({ trade, onClose, onDone }: CloseTradeDialogPro
         <Button
           variant="danger"
           className="w-full sm:w-auto"
-          disabled={mutation.isPending}
-          onClick={() => {
-            setError(null);
-            mutation.mutate();
-          }}
+          onClick={submit}
         >
-          {mutation.isPending
-            ? "Invio…"
-            : isPending
-              ? "Conferma annullamento"
-              : "Conferma chiusura"}
+          {isPending ? "Conferma annullamento" : "Conferma chiusura"}
         </Button>
       </div>
     </div>

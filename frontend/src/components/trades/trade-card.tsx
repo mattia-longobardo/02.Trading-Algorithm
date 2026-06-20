@@ -6,7 +6,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatCurrency, formatDateTime, formatNumber, formatSignedPercent } from "@/lib/format";
 import { type Trade } from "@/lib/types";
-import { pnlClass, statusVariant, tradePnl, tradePnlPct } from "./trade-row";
+import {
+  isTradeActionable,
+  isTradeEditable,
+  pnlClass,
+  statusVariant,
+  tradePnl,
+  tradePnlPct,
+} from "./trade-row";
 
 export interface TradeCardProps {
   trade: Trade;
@@ -22,7 +29,9 @@ export function TradeCard({ trade: t, onEdit, onClose }: TradeCardProps) {
   const pnl = tradePnl(t);
   const pnlPct = tradePnlPct(t);
 
-  const isActionable = t.status === "PENDING" || t.status === "OPEN";
+  const isActionable = isTradeActionable(t);
+  const isEditable = isTradeEditable(t);
+  const closeLabel = t.status === "PENDING" ? "Annulla" : "Chiudi";
 
   return (
     <div className="rounded-lg border border-(--color-line) bg-(--color-panel)/40 p-3 text-sm">
@@ -73,6 +82,10 @@ export function TradeCard({ trade: t, onEdit, onClose }: TradeCardProps) {
           <div>
             <dt className="text-(--color-muted)">Entry</dt>
             <dd className="tnum">{formatNumber(t.entry_price)}</dd>
+          </div>
+          <div>
+            <dt className="text-(--color-muted)">Uscita</dt>
+            <dd className="tnum">{formatNumber(t.close_price)}</dd>
           </div>
           <div>
             <dt className="text-(--color-muted)">Target Entry</dt>
@@ -147,16 +160,28 @@ export function TradeCard({ trade: t, onEdit, onClose }: TradeCardProps) {
         </dl>
       )}
 
-      {/* Footer actions — always show Modifica; show Chiudi/Annulla only for PENDING/OPEN */}
+      {/* Footer actions stay visible; inactive states are disabled. */}
       <div className="mt-3 flex justify-end gap-2">
-        <Button size="sm" variant="secondary" onClick={() => onEdit(t)}>
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={!isEditable}
+          onClick={() => {
+            if (isEditable) onEdit(t);
+          }}
+        >
           Modifica
         </Button>
-        {isActionable && (
-          <Button size="sm" variant="danger" onClick={() => onClose(t)}>
-            {t.status === "PENDING" ? "Annulla" : "Chiudi"}
-          </Button>
-        )}
+        <Button
+          size="sm"
+          variant={isActionable ? "danger" : "secondary"}
+          disabled={!isActionable}
+          onClick={() => {
+            if (isActionable) onClose(t);
+          }}
+        >
+          {closeLabel}
+        </Button>
       </div>
     </div>
   );

@@ -1,9 +1,9 @@
 """Operator-driven mutations to existing trades from the Console UI.
 
 The trading bot owns the lifecycle (PENDING → OPEN → CLOSED/CANCELLED). The
-operator can only adjust certain numeric parameters on an existing trade —
-target entry price, quantity, take profit, stop loss, trailing TP/TSL — and
-each change is validated and audit-logged.
+operator can only adjust future exit/protection parameters on an existing
+trade — take profit, stop loss, trailing TP/TSL — and each change is validated
+and audit-logged.
 """
 
 from __future__ import annotations
@@ -16,17 +16,11 @@ from core.utils import AppConfig, isoformat_utc, utc_now
 
 # Whitelist of fields the operator can edit on a trade row.
 EDITABLE_TRADE_FIELDS: tuple[str, ...] = (
-    "target_entry_price",
-    "quantity",
     "take_profit",
     "trailing_take_profit_distance",
     "trailing_take_profit_activation_pct",
     "stop_loss",
     "trailing_stop_distance",
-    # ``high_water_mark`` drives the trailing TP / trailing stop levels: letting
-    # the operator override it is what allows them to "reset" a runaway trailing
-    # TP that has armed below entry, without waiting for the bot to recompute.
-    "high_water_mark",
 )
 
 
@@ -70,19 +64,7 @@ def update_trade(
         if field not in payload:
             continue
         raw = payload[field]
-        if field == "quantity":
-            # Quantity is special — must be positive (allow fractional for crypto).
-            if raw is None:
-                raise TradeValidationError("quantity is required")
-            try:
-                qty = float(raw)
-            except (TypeError, ValueError) as exc:
-                raise TradeValidationError("quantity must be a number") from exc
-            if qty <= 0:
-                raise TradeValidationError("quantity must be a positive number")
-            updates[field] = qty
-        else:
-            updates[field] = _coerce_optional_float(field, raw)
+        updates[field] = _coerce_optional_float(field, raw)
 
     # Trailing-take-profit pair rule: both null or both positive.
     new_ttp_distance = updates.get(
