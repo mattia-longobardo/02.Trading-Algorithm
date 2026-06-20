@@ -16,7 +16,7 @@ export default function AdminPage() {
   return (
     <section className="space-y-6">
       <header>
-        <h1 className="text-3xl font-semibold">Amministrazione</h1>
+        <h1 className="text-2xl font-semibold sm:text-3xl">Amministrazione</h1>
         <p className="text-sm text-(--color-muted)">Configurazione runtime, broker e gestione utenze.</p>
       </header>
       <Tabs defaultValue="env">

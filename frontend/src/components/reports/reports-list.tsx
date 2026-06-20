@@ -26,6 +26,91 @@ export interface ReportsListProps {
   onDelete: (r: ReportRow) => void;
 }
 
+function ReportCard({
+  report,
+  folders,
+  onPreview,
+  onMove,
+  isAdmin,
+  deleting,
+  onDelete,
+}: {
+  report: ReportRow;
+  folders: ReportFolder[];
+  onPreview: (r: ReportRow) => void;
+  onMove: (id: number, folder_id: number | null) => void;
+  isAdmin: boolean;
+  deleting: boolean;
+  onDelete: (r: ReportRow) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-(--color-line) bg-(--color-panel)/40 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="break-words font-medium">{report.filename}</p>
+          <div className="mt-2 flex flex-wrap gap-1">
+            <Badge variant="muted">{report.type}</Badge>
+            <Badge variant={report.format === "pdf" ? "open" : "muted"}>{report.format}</Badge>
+          </div>
+        </div>
+        <span className="tnum shrink-0 text-xs text-(--color-muted)">
+          {formatNumber(report.size_bytes / 1024, { maximumFractionDigits: 1 })} KB
+        </span>
+      </div>
+
+      <div className="mt-3 space-y-2 text-sm">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-(--color-muted)">Generato</span>
+          <span className="text-right text-(--color-text)">{formatDateTime(report.generated_at)}</span>
+        </div>
+        <Select
+          value={report.folder_id ? String(report.folder_id) : "NONE"}
+          onValueChange={(v) => onMove(report.id, v === "NONE" ? null : Number(v))}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="NONE">— senza cartella —</SelectItem>
+            {folders.map((f) => (
+              <SelectItem key={f.id} value={String(f.id)}>
+                {f.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="mt-3 grid grid-cols-[1fr_auto_auto] gap-2">
+        <Button size="sm" variant="secondary" onClick={() => onPreview(report)}>
+          Apri
+        </Button>
+        <a href={streamUrl(`/api/reports/${report.id}/file?download=true`)} download={report.filename}>
+          <Button
+            size="icon"
+            variant="ghost"
+            aria-label={`Scarica ${report.filename}`}
+          >
+            <Download className="size-4" />
+          </Button>
+        </a>
+        {isAdmin && (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="text-(--color-danger) hover:text-(--color-danger)"
+            aria-label={`Elimina ${report.filename}`}
+            disabled={deleting}
+            onClick={() => onDelete(report)}
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ReportsList({
   items,
   loading,
@@ -57,7 +142,22 @@ export function ReportsList({
   }
 
   return (
-    <div className="overflow-x-auto">
+    <>
+    <div className="space-y-2 md:hidden">
+      {items.map((r) => (
+        <ReportCard
+          key={r.id}
+          report={r}
+          folders={folders}
+          onPreview={onPreview}
+          onMove={onMove}
+          isAdmin={isAdmin}
+          deleting={deletingId === r.id}
+          onDelete={onDelete}
+        />
+      ))}
+    </div>
+    <div className="hidden overflow-x-auto md:block">
       <table className="w-full min-w-[840px] border-separate border-spacing-y-1 text-sm">
         <thead>
           <tr className="text-left text-xs uppercase text-(--color-muted)">
@@ -144,5 +244,6 @@ export function ReportsList({
         </tbody>
       </table>
     </div>
+    </>
   );
 }

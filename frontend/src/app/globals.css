@@ -68,5 +68,5 @@ input[type="number"] {
 
 /* Mobile safe-area helpers (iOS notch / home indicator). */
 .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
-.h-bottom-nav { height: 3.5rem; }
-.pb-bottom-nav { padding-bottom: calc(3.5rem + env(safe-area-inset-bottom)); }
+.h-bottom-nav { height: calc(3.75rem + env(safe-area-inset-bottom)); }
+.pb-bottom-nav { padding-bottom: calc(3.75rem + env(safe-area-inset-bottom)); }

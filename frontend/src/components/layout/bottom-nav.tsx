@@ -77,7 +77,7 @@ export function BottomNav({ items }: { items: NavItem[] }) {
 
       <nav
         aria-label="Navigazione principale"
-        className="pb-safe h-bottom-nav fixed inset-x-0 bottom-0 z-40 flex border-t border-(--color-line) bg-(--color-bg)/95 backdrop-blur lg:hidden"
+        className="pb-safe h-bottom-nav z-40 flex shrink-0 border-t border-(--color-line) bg-(--color-bg)/95 backdrop-blur lg:hidden"
       >
         {primary.map((item) => {
           const Icon = item.icon;

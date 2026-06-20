@@ -106,7 +106,7 @@ export function EnvForm({ isAdmin }: EnvFormProps) {
               </label>
               {f.kind === "select" ? (
                 <select
-                  className="h-9 w-full rounded-lg border border-(--color-line) bg-(--color-panel)/50 px-3 text-sm text-(--color-text) focus:outline-none focus:ring-2 focus:ring-(--color-accent)"
+                  className="h-10 w-full rounded-lg border border-(--color-line) bg-(--color-panel)/50 px-3 text-base text-(--color-text) focus:outline-none focus:ring-2 focus:ring-(--color-accent) sm:h-9 sm:text-sm"
                   value={draft[f.key] ?? ""}
                   onChange={(e) => setDraft((p) => ({ ...p, [f.key]: e.target.value }))}
                   disabled={!isAdmin}

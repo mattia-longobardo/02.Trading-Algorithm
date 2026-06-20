@@ -9,7 +9,7 @@ export const Card = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(
         // Solid panel background (no backdrop-blur shimmer over the radial
         // gradient body). Slightly softer shadow keeps depth without
         // distracting the eye from data inside.
-        "rounded-2xl border border-(--color-line) bg-(--color-panel) p-5 shadow-md shadow-black/20",
+        "rounded-xl border border-(--color-line) bg-(--color-panel) p-4 shadow-md shadow-black/20 sm:rounded-2xl sm:p-5",
         className
       )}
       {...props}

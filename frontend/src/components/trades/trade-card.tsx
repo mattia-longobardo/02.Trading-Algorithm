@@ -40,7 +40,8 @@ export function TradeCard({ trade: t, onEdit, onClose }: TradeCardProps) {
         <div className="flex min-w-0 items-center gap-2">
           <Link
             href={`/symbol/${encodeURIComponent(t.symbol)}`}
-            className="font-medium hover:underline"
+            className="truncate font-medium hover:underline"
+            title={t.symbol}
           >
             {t.symbol}
           </Link>

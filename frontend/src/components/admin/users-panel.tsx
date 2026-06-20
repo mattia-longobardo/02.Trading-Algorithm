@@ -181,6 +181,78 @@ function ChangeOwnPasswordCard() {
   );
 }
 
+function UserCard({
+  row,
+  currentUserId,
+  onRoleChange,
+  onReset,
+  onToggleDisabled,
+  onDelete,
+}: {
+  row: UserRow;
+  currentUserId: number | undefined;
+  onRoleChange: (id: number, role: "admin" | "user") => void;
+  onReset: (row: UserRow) => void;
+  onToggleDisabled: (id: number, disabled: boolean) => void;
+  onDelete: (row: UserRow) => void;
+}) {
+  const isSelf = row.id === currentUserId;
+  return (
+    <div className="rounded-lg border border-(--color-line) bg-(--color-panel)/40 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="break-words font-medium">{row.display_name}</p>
+          <p className="break-words text-xs text-(--color-muted)">@{row.username}</p>
+        </div>
+        <Badge variant={row.disabled ? "cancelled" : "open"}>
+          {row.disabled ? "disabilitato" : "attivo"}
+        </Badge>
+      </div>
+
+      <div className="mt-3 grid gap-2 text-sm">
+        <label className="space-y-1">
+          <span className="text-xs uppercase text-(--color-muted)">Ruolo</span>
+          <select
+            className="h-10 w-full rounded border border-(--color-line) bg-(--color-panel) px-2 text-base sm:h-7 sm:text-xs"
+            value={row.role}
+            onChange={(e) => onRoleChange(row.id, e.target.value as "admin" | "user")}
+            disabled={isSelf}
+          >
+            <option value="admin">admin</option>
+            <option value="user">user</option>
+          </select>
+        </label>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-(--color-muted)">Creato</span>
+          <span className="text-right">{formatDateTime(row.created_at)}</span>
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        <Button size="sm" variant="secondary" onClick={() => onReset(row)}>
+          Reset password
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => onToggleDisabled(row.id, !row.disabled)}
+          disabled={isSelf}
+        >
+          {row.disabled ? "Riabilita" : "Disabilita"}
+        </Button>
+        <Button
+          size="sm"
+          variant="danger"
+          onClick={() => onDelete(row)}
+          disabled={isSelf}
+        >
+          Elimina
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function ManageUsersCard() {
   const qc = useQueryClient();
   const { user } = useAuth();
@@ -219,7 +291,23 @@ function ManageUsersCard() {
       <CardContent>
         {users.isLoading && <p className="text-sm text-(--color-muted)">Caricamento…</p>}
         {users.data && (
-          <div className="overflow-x-auto">
+          <>
+          <div className="space-y-2 md:hidden">
+            {users.data.users.map((u) => (
+              <UserCard
+                key={u.id}
+                row={u}
+                currentUserId={user?.id}
+                onRoleChange={(id, role) => changeRole.mutate({ id, role })}
+                onReset={setResetting}
+                onToggleDisabled={(id, disabled) => toggleDisabled.mutate({ id, disabled })}
+                onDelete={(row) => {
+                  if (confirm(`Eliminare l'utente @${row.username}?`)) deleteUser.mutate(row.id);
+                }}
+              />
+            ))}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[760px] border-separate border-spacing-y-1 text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase text-(--color-muted)">
@@ -295,6 +383,7 @@ function ManageUsersCard() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </CardContent>
 

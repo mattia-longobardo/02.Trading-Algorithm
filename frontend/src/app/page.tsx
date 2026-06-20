@@ -126,7 +126,7 @@ export default function DashboardPage() {
     <section className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-semibold">Dashboard</h1>
+          <h1 className="text-2xl font-semibold sm:text-3xl">Dashboard</h1>
           <p className="text-sm text-(--color-muted)">
             Performance del bot — i KPI ricalcolano sull&apos;intervallo selezionato.
             I dati si aggiornano una volta al minuto, ~30 s dopo il tick di

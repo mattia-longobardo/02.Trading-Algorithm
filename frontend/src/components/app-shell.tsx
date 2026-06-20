@@ -98,21 +98,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex h-dvh min-h-dvh overflow-hidden lg:h-auto lg:min-h-screen lg:overflow-visible">
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
       {/* Desktop sidebar: always visible from lg breakpoint up. */}
       <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col self-start overflow-x-hidden overflow-y-auto border-r border-(--color-line) bg-(--color-elevated) px-4 py-6 lg:flex">
         {sidebarContent}
       </aside>
 
-      <main className="flex-1 overflow-x-hidden">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:min-h-screen lg:overflow-visible">
         {/* Mobile top bar: brand + theme toggle + logout. Hidden on lg+. */}
-        <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-(--color-line) bg-(--color-bg)/95 px-4 backdrop-blur lg:hidden">
-          <div className="flex items-center gap-2">
+        <header className="z-30 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-(--color-line) bg-(--color-bg)/95 px-4 backdrop-blur lg:hidden">
+          <div className="flex min-w-0 items-center gap-2">
             <div className="size-6 rounded bg-(--color-accent) grid place-items-center text-(--color-accent-contrast) text-xs font-bold">
               T
             </div>
-            <p className="text-sm font-semibold">Trading Console</p>
+            <p className="truncate text-sm font-semibold">Trading Console</p>
           </div>
           <div className="flex items-center gap-2">
             <ThemeToggle className="size-8" />
@@ -121,7 +121,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </Button>
           </div>
         </header>
-        <div className="mx-auto w-full max-w-7xl px-4 py-6 pb-bottom-nav sm:px-6 lg:px-8 lg:py-8 lg:pb-8">
+        <div className="mx-auto min-h-0 w-full max-w-7xl flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:flex-none lg:overflow-visible lg:px-8 lg:py-8">
           {children}
         </div>
         <BottomNav items={items} />

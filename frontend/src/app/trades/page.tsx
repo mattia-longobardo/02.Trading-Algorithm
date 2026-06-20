@@ -78,7 +78,7 @@ export default function TradesPage() {
     <section className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-semibold">Trade</h1>
+          <h1 className="text-2xl font-semibold sm:text-3xl">Trade</h1>
           <p className="text-sm text-(--color-muted)">
             Vista completa dei trade. Modifica i parametri, sblocca il trailing TP
             riallineando il massimo, oppure chiudi/annulla manualmente. Le

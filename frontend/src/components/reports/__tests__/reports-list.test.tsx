@@ -45,7 +45,9 @@ describe("ReportsList", () => {
     const { onDelete } = renderList(true);
 
     await user.click(
-      screen.getByRole("button", { name: /elimina weekly_report_20240101_000000\.pdf/i })
+      screen.getAllByRole("button", {
+        name: /elimina weekly_report_20240101_000000\.pdf/i,
+      })[0]
     );
 
     expect(onDelete).toHaveBeenCalledWith(REPORT);

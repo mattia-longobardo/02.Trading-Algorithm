@@ -40,9 +40,13 @@ function PositionCard({ pos }: { pos: LivePosition }) {
   const pnlPct = pos.unrealized_pnl_pct;
   return (
     <div className="rounded-xl border border-(--color-line) bg-(--color-panel)/40 p-3">
-      <div className="flex items-center justify-between">
-        <span className="inline-flex items-center gap-1 font-medium">
-          <Link href={`/symbol/${encodeURIComponent(pos.symbol)}`} className="hover:underline">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
+        <span className="inline-flex min-w-0 items-center gap-1 font-medium">
+          <Link
+            href={`/symbol/${encodeURIComponent(pos.symbol)}`}
+            className="truncate hover:underline"
+            title={pos.symbol}
+          >
             {pos.symbol}
           </Link>
           <DirectionHint isBuy={pos.is_buy} />

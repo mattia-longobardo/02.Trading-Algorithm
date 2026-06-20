@@ -34,7 +34,7 @@ export const DialogContent = forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-(--color-line) bg-(--color-panel) p-6 text-(--color-text) shadow-2xl",
+        "fixed inset-x-3 bottom-0 top-auto z-50 max-h-[calc(100dvh-1.5rem)] w-auto max-w-none translate-x-0 translate-y-0 overflow-y-auto rounded-t-2xl border border-(--color-line) bg-(--color-panel) p-4 text-(--color-text) shadow-2xl sm:left-1/2 sm:right-auto sm:top-1/2 sm:bottom-auto sm:w-full sm:max-w-lg sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:p-6",
         className
       )}
       {...props}
@@ -42,7 +42,7 @@ export const DialogContent = forwardRef<
       {children}
       <DialogPrimitive.Close
         aria-label="Chiudi finestra"
-        className="absolute right-4 top-4 rounded-md p-1.5 text-(--color-muted) transition-colors hover:bg-(--color-hover) hover:text-(--color-text) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent) focus-visible:ring-offset-2 focus-visible:ring-offset-(--color-panel)"
+        className="absolute right-3 top-3 rounded-md p-2 text-(--color-muted) transition-colors hover:bg-(--color-hover) hover:text-(--color-text) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent) focus-visible:ring-offset-2 focus-visible:ring-offset-(--color-panel) sm:right-4 sm:top-4 sm:p-1.5"
       >
         <X className="size-4" />
       </DialogPrimitive.Close>

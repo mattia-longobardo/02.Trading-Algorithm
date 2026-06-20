@@ -93,9 +93,12 @@ describe("SymbolTradeHistory", () => {
 
     it("renders column headers", () => {
       render(<SymbolTradeHistory trades={[WIN_TRADE]} />);
-      expect(screen.getByText("Stato")).toBeInTheDocument();
-      expect(screen.getByText("Entry")).toBeInTheDocument();
-      expect(screen.getByText("PnL")).toBeInTheDocument();
+      const headers = Array.from(document.querySelectorAll("th")).map(
+        (header) => header.textContent,
+      );
+      expect(headers).toContain("Stato");
+      expect(headers).toContain("Entry");
+      expect(headers).toContain("PnL");
     });
 
     it("uses tnum class on numeric cells", () => {

@@ -59,7 +59,7 @@ export default function UniversePage() {
     <section className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-semibold">Universe</h1>
+          <h1 className="text-2xl font-semibold sm:text-3xl">Universe</h1>
           <p className="text-sm text-(--color-muted)">
             Universe attivo monitorato dal bot. Le aggiunte manuali sono validate via eToro.
           </p>
@@ -172,6 +172,55 @@ function AddSymbolCard({ onAdded }: { onAdded: () => void }) {
   );
 }
 
+function UniverseEntryCard({
+  entry,
+  isAdmin,
+  removing,
+  onRemove,
+}: {
+  entry: UniverseEntry;
+  isAdmin: boolean;
+  removing: boolean;
+  onRemove: (entry: UniverseEntry) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-(--color-line) bg-(--color-panel)/40 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="break-words font-medium">{entry.symbol}</p>
+          <p className="mt-1 text-xs text-(--color-muted)">{entry.provider} · {entry.category}</p>
+        </div>
+        {entry.quote_error ? (
+          <Badge variant="cancelled" title={entry.quote_error}>
+            quote ko
+          </Badge>
+        ) : (
+          <Badge variant="open">live</Badge>
+        )}
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-3 text-sm">
+        <span className="text-(--color-muted)">Ultimo prezzo</span>
+        <span className="tnum font-medium text-(--color-text)">
+          {entry.last_price != null ? formatNumber(entry.last_price) : "—"}
+        </span>
+      </div>
+      {isAdmin && (
+        <Button
+          size="sm"
+          variant="danger"
+          className="mt-3 w-full"
+          aria-label={`Rimuovi ${entry.symbol} dall'universe`}
+          disabled={removing}
+          onClick={() => onRemove(entry)}
+        >
+          <Trash2 className="size-4" />
+          Rimuovi
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function UniverseCategoryCard({
   category,
   items,
@@ -214,7 +263,27 @@ function UniverseCategoryCard({
           />
         )}
         {items.length > 0 && (
-          <div className="overflow-x-auto">
+          <>
+          <div className="space-y-2 md:hidden">
+            {items.map((entry) => (
+              <UniverseEntryCard
+                key={`${entry.provider}:${entry.category}:${entry.symbol}`}
+                entry={entry}
+                isAdmin={isAdmin}
+                removing={removeMutation.isPending}
+                onRemove={(item) => {
+                  if (
+                    confirm(
+                      `Rimuovere ${item.symbol} dall'universe ${item.category.toLowerCase()}?`,
+                    )
+                  ) {
+                    removeMutation.mutate(item);
+                  }
+                }}
+              />
+            ))}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[560px] border-separate border-spacing-y-1 text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase text-(--color-muted)">
@@ -268,6 +337,7 @@ function UniverseCategoryCard({
               </tbody>
             </table>
           </div>
+          </>
         )}
       </CardContent>
     </Card>

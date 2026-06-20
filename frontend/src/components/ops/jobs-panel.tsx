@@ -123,7 +123,10 @@ export function JobsPanel() {
           </CardHeader>
           <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {JOB_ACTIONS.map((action) => (
-              <Card key={action.path} className="p-4">
+              <div
+                key={action.path}
+                className="rounded-lg border border-(--color-line) bg-(--color-panel)/40 p-4"
+              >
                 <h4 className="text-sm font-semibold text-(--color-text)">{action.label}</h4>
                 <p className="mt-1 text-xs text-(--color-muted)">{action.description}</p>
                 <Button
@@ -134,7 +137,7 @@ export function JobsPanel() {
                 >
                   Esegui
                 </Button>
-              </Card>
+              </div>
             ))}
           </CardContent>
         </Card>

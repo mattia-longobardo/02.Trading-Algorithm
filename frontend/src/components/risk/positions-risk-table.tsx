@@ -59,6 +59,46 @@ function StopCell({ row }: { row: RiskPositionRow }) {
 
 const HEADERS = ["Simbolo", "Valore", "Quota", "Protezioni", "Stop / dist.", ""] as const;
 
+function RiskPositionCard({ row, onEdit }: { row: RiskPositionRow; onEdit: (trade: Trade) => void }) {
+  return (
+    <div className="rounded-lg border border-(--color-line) bg-(--color-panel)/40 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <Link
+          href={`/symbol/${encodeURIComponent(row.live.symbol)}`}
+          className="min-w-0 break-words font-medium hover:underline"
+        >
+          {row.live.symbol}
+        </Link>
+        <span className="tnum shrink-0 text-sm font-medium text-(--color-text)">
+          {row.valuePct.toFixed(1)}%
+        </span>
+      </div>
+      <dl className="mt-3 space-y-2 text-sm">
+        <div className="flex items-center justify-between gap-3">
+          <dt className="text-(--color-muted)">Valore</dt>
+          <dd className="tnum font-medium">{formatNumber(row.value, { maximumFractionDigits: 0 })}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <dt className="text-(--color-muted)">Stop / dist.</dt>
+          <dd className="text-right"><StopCell row={row} /></dd>
+        </div>
+        <div className="flex items-start justify-between gap-3">
+          <dt className="text-(--color-muted)">Protezioni</dt>
+          <dd className="flex justify-end"><Coverage row={row} /></dd>
+        </div>
+      </dl>
+      <Button
+        variant="secondary"
+        size="sm"
+        className="mt-3 w-full"
+        onClick={() => onEdit(row.trade)}
+      >
+        Modifica
+      </Button>
+    </div>
+  );
+}
+
 export function PositionsRiskTable({
   rows,
   onEdit,
@@ -77,7 +117,13 @@ export function PositionsRiskTable({
   }
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-(--color-line)">
+    <>
+    <div className="space-y-2 md:hidden">
+      {rows.map((row) => (
+        <RiskPositionCard key={row.trade.id} row={row} onEdit={onEdit} />
+      ))}
+    </div>
+    <div className="hidden overflow-x-auto rounded-xl border border-(--color-line) md:block">
       <table className="w-full min-w-[640px] text-sm">
         <thead>
           <tr className="border-b border-(--color-line) bg-(--color-panel)/60">
@@ -117,5 +163,6 @@ export function PositionsRiskTable({
         </tbody>
       </table>
     </div>
+    </>
   );
 }
