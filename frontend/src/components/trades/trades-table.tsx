@@ -20,7 +20,7 @@ type SortDir = "asc" | "desc";
 interface ColumnDef {
   key: string;
   label: string;
-  align?: "left" | "right";
+  align?: "left" | "center" | "right";
   stickyClass?: string;
   /** Returns a comparable value for sorting; omit to make the column non-sortable. */
   accessor?: (t: Trade) => SortValue;
@@ -34,9 +34,24 @@ function ts(value: string | null | undefined): number | null {
 
 // Column order MUST stay in sync with the cells rendered by <TradeRow>.
 const COLUMNS: ColumnDef[] = [
-  { key: "close_action", label: "Chiudi", stickyClass: "sticky left-0 z-30 w-12 min-w-12 bg-(--color-panel)" },
-  { key: "edit_action", label: "Mod.", stickyClass: "sticky left-12 z-30 w-12 min-w-12 bg-(--color-panel)" },
-  { key: "symbol", label: "Simbolo", stickyClass: "sticky left-24 z-30 w-36 min-w-36 bg-(--color-panel)", accessor: (t) => t.symbol },
+  {
+    key: "close_action",
+    label: "Chiudi",
+    align: "center",
+    stickyClass: "sticky left-0 z-30 w-14 min-w-14 bg-(--color-panel)",
+  },
+  {
+    key: "edit_action",
+    label: "Mod.",
+    align: "center",
+    stickyClass: "sticky left-14 z-30 w-14 min-w-14 bg-(--color-panel)",
+  },
+  {
+    key: "symbol",
+    label: "Simbolo",
+    stickyClass: "sticky left-28 z-30 w-40 min-w-40 bg-(--color-panel)",
+    accessor: (t) => t.symbol,
+  },
   { key: "status", label: "Stato", accessor: (t) => t.status },
   { key: "pnl", label: "PnL", align: "right", accessor: (t) => tradePnl(t) },
   { key: "pnl_pct", label: "PnL %", align: "right", accessor: (t) => tradePnlPct(t) },
@@ -115,14 +130,15 @@ export function TradesTable({ items, loading, onEdit, onClose }: TradesTableProp
         ))}
       </div>
       <div className="hidden overflow-x-auto lg:block">
-        <table className="w-full min-w-[1720px] border-separate border-spacing-y-1 text-sm">
+        <table className="w-full min-w-[1840px] border-separate border-spacing-y-1 text-sm">
           <thead>
             <tr className="text-left text-xs uppercase text-(--color-muted)">
               {COLUMNS.map((col) => {
                 const active = sortKey === col.key;
                 const thClass = [
-                  "px-2 py-2",
+                  "whitespace-nowrap px-3 py-2",
                   col.stickyClass ?? "",
+                  col.align === "center" ? "text-center" : "",
                   col.align === "right" ? "text-right" : "",
                 ]
                   .filter(Boolean)

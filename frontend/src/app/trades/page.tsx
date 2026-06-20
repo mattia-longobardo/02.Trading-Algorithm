@@ -11,7 +11,13 @@ import {
 } from "@/components/ui/dialog";
 import { CloseTradeDialog } from "@/components/trades/close-trade-dialog";
 import { EditTradeDialog } from "@/components/trades/edit-trade-dialog";
-import { TradesFilters } from "@/components/trades/trades-filters";
+import {
+  DEFAULT_TRADE_CATEGORY_FILTER,
+  DEFAULT_TRADE_STATUS_FILTER,
+  TRADE_CATEGORY_OPTIONS,
+  TRADE_STATUS_OPTIONS,
+  TradesFilters,
+} from "@/components/trades/trades-filters";
 import { TradesTable } from "@/components/trades/trades-table";
 import { api } from "@/lib/api";
 import { mergeLiveTradeValues } from "@/lib/trade-live-values";
@@ -32,20 +38,30 @@ interface TradesEnvelope {
 export default function TradesPage() {
   const qc = useQueryClient();
   const { snapshot } = useLiveStream();
-  const [statusFilter, setStatusFilter] = useState<TradeStatus | "ALL">("ALL");
-  const [categoryFilter, setCategoryFilter] = useState<TradeCategory | "ALL">("ALL");
+  const [statusFilter, setStatusFilter] = useState<TradeStatus[]>(DEFAULT_TRADE_STATUS_FILTER);
+  const [categoryFilter, setCategoryFilter] = useState<TradeCategory[]>(
+    DEFAULT_TRADE_CATEGORY_FILTER,
+  );
   const [symbolFilter, setSymbolFilter] = useState("");
   const [editing, setEditing] = useState<Trade | null>(null);
   const [closing, setClosing] = useState<Trade | null>(null);
 
   const trades = useQuery<TradesEnvelope>({
     queryKey: ["trades", "orders", statusFilter, categoryFilter, symbolFilter],
-    queryFn: () => {
+    queryFn: async () => {
+      if (statusFilter.length === 0 || categoryFilter.length === 0) {
+        return { items: [], total: 0, page: 1, page_size: 500 };
+      }
+
       const params = new URLSearchParams();
       params.set("page", "1");
       params.set("page_size", "500");
-      if (statusFilter !== "ALL") params.set("status", statusFilter);
-      if (categoryFilter !== "ALL") params.set("category", categoryFilter);
+      if (statusFilter.length < TRADE_STATUS_OPTIONS.length) {
+        params.set("status", statusFilter.join(","));
+      }
+      if (categoryFilter.length < TRADE_CATEGORY_OPTIONS.length) {
+        params.set("category", categoryFilter.join(","));
+      }
       if (symbolFilter.trim()) params.set("symbol", symbolFilter.trim().toUpperCase());
       return api.get<TradesEnvelope>(`/api/trades?${params.toString()}`);
     },
