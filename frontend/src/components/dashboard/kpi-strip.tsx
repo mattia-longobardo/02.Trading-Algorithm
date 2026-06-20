@@ -27,12 +27,14 @@ function Kpi({
       ? "text-(--color-danger)"
       : "text-(--color-text)";
   const subtitleClass = subtitleProminent
-    ? `tnum mt-1 text-lg font-semibold tabular-nums ${tone}`
-    : "tnum mt-1 text-xs tabular-nums text-(--color-muted)";
+    ? `tnum mt-1 break-words text-lg font-semibold leading-tight tabular-nums ${tone}`
+    : "tnum mt-1 break-words text-xs leading-tight tabular-nums text-(--color-muted)";
   return (
     <Card className="p-3 sm:p-4">
-      <p className="text-xs uppercase tracking-wide text-(--color-muted)">{title}</p>
-      <p className={`tnum mt-1 text-xl font-semibold tabular-nums ${tone}`}>{value}</p>
+      <p className="text-xs uppercase text-(--color-muted)">{title}</p>
+      <p className={`tnum mt-1 break-words text-xl font-semibold leading-tight tabular-nums ${tone}`}>
+        {value}
+      </p>
       {subtitle && <p className={subtitleClass}>{subtitle}</p>}
     </Card>
   );
@@ -49,7 +51,7 @@ export interface KpiStripProps {
 export function KpiStrip({ metrics: m, loading }: KpiStripProps) {
   if (loading) {
     return (
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-6">
+      <div className="grid grid-cols-1 gap-3 min-[430px]:grid-cols-2 md:grid-cols-4 md:gap-4 xl:grid-cols-6">
         {Array.from({ length: 12 }).map((_, i) => (
           <Card key={i} className="p-4">
             <Skeleton className="h-3 w-16" />
@@ -61,7 +63,7 @@ export function KpiStrip({ metrics: m, loading }: KpiStripProps) {
   }
 
   return (
-    <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-6">
+    <div className="grid grid-cols-1 gap-3 min-[430px]:grid-cols-2 md:grid-cols-4 md:gap-4 xl:grid-cols-6">
       <Kpi
         title="PnL realizzato"
         value={formatCurrency(m?.total_pnl_abs, m?.currency ?? "EUR")}

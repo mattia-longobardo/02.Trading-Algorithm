@@ -52,7 +52,6 @@ body {
    Apply with the `.tnum` class on numeric cells. */
 .tnum {
   font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 /* Hide arrows on number inputs in WebKit / Firefox so the trade editor

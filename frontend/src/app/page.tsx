@@ -23,7 +23,7 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "@/lib/api";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatNumber } from "@/lib/format";
 import type {
   AllocationCategory,
   AllocationSymbol,
@@ -125,7 +125,7 @@ export default function DashboardPage() {
   return (
     <section className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
+        <div className="min-w-0 flex-1">
           <h1 className="text-2xl font-semibold sm:text-3xl">Dashboard</h1>
           <p className="text-sm text-(--color-muted)">
             Performance del bot — i KPI ricalcolano sull&apos;intervallo selezionato.
@@ -143,11 +143,11 @@ export default function DashboardPage() {
             </p>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 sm:flex sm:w-auto sm:items-center sm:gap-3">
           <LiveBadge status={liveStatus} />
           {fxRate.data && fxRate.data.from !== fxRate.data.to && (
             <div
-              className={`rounded-lg border px-3 py-1.5 text-xs ${
+              className={`min-w-0 rounded-lg border px-3 py-2 text-xs leading-tight sm:py-1.5 ${
                 fxRate.data.available
                   ? fxRate.data.stale
                     ? "border-(--color-warning)/50 bg-(--color-warning)/10 text-(--color-warning)"
@@ -165,8 +165,11 @@ export default function DashboardPage() {
               {fxRate.data.available && fxRate.data.rate != null ? (
                 <>
                   {fxRate.data.stale && "⚠ "}1 {fxRate.data.from} ={" "}
-                  <span className="tnum font-medium tabular-nums">
-                    {fxRate.data.rate.toFixed(4)}
+                  <span className="font-medium tabular-nums">
+                    {formatNumber(fxRate.data.rate, {
+                      minimumFractionDigits: 4,
+                      maximumFractionDigits: 4,
+                    })}
                   </span>{" "}
                   {fxRate.data.to}
                 </>
@@ -175,7 +178,11 @@ export default function DashboardPage() {
               )}
             </div>
           )}
-          <DateRangePicker value={range} onChange={setRange} />
+          <DateRangePicker
+            value={range}
+            onChange={setRange}
+            className="col-span-2 w-full justify-center sm:col-span-1 sm:w-auto"
+          />
         </div>
       </header>
 

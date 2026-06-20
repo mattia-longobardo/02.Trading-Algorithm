@@ -65,9 +65,11 @@ function monthGrid(year: number, month: number): Date[] {
 export function DateRangePicker({
   value,
   onChange,
+  className,
 }: {
   value: DateRange;
   onChange: (range: DateRange) => void;
+  className?: string;
 }) {
   const [open, setOpen] = useState(false);
   const initial = value.from ?? value.to ?? new Date();
@@ -114,10 +116,13 @@ export function DateRangePicker({
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="inline-flex h-9 items-center gap-2 rounded-lg border border-(--color-line) bg-(--color-field) px-3 text-sm text-(--color-text) transition-colors hover:border-(--color-muted) focus:outline-none focus:ring-2 focus:ring-(--color-accent)/40"
+          className={cn(
+            "inline-flex h-10 min-w-0 items-center gap-2 rounded-lg border border-(--color-line) bg-(--color-field) px-3 text-sm text-(--color-text) transition-colors hover:border-(--color-muted) focus:outline-none focus:ring-2 focus:ring-(--color-accent)/40 sm:h-9",
+            className,
+          )}
         >
-          <CalendarDays className="size-4 text-(--color-muted)" />
-          <span className="tnum tabular-nums">{formatRangeLabel(value)}</span>
+          <CalendarDays className="size-4 shrink-0 text-(--color-muted)" />
+          <span className="min-w-0 truncate">{formatRangeLabel(value)}</span>
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-auto">

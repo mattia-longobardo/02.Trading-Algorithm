@@ -9,7 +9,7 @@ export function formatCurrency(value: number | null | undefined, currency = "EUR
     style: "currency",
     currency,
     maximumFractionDigits: 2,
-  }).format(value);
+  }).format(value).replace(/\u00a0/g, " ");
 }
 
 export function formatPercent(value: number | null | undefined, fractionDigits = 2): string {
