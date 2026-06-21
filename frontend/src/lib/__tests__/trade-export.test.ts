@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTradesExcelFilename, buildTradesExcelXml } from "@/lib/trade-export";
+import { buildTradesExcelFilename, buildTradesExcelXlsx } from "@/lib/trade-export";
 import { type Trade } from "@/lib/types";
 
 const BASE_TRADE: Trade = {
@@ -42,24 +42,27 @@ const BASE_TRADE: Trade = {
 describe("trade export", () => {
   it("builds an Excel-compatible filename from the selected period", () => {
     expect(buildTradesExcelFilename("2026-06-01", "2026-06-21")).toBe(
-      "trades_2026-06-01_2026-06-21.xls",
+      "trades_2026-06-01_2026-06-21.xlsx",
     );
   });
 
-  it("serializes trades as SpreadsheetML with numeric cells", () => {
-    const xml = buildTradesExcelXml([BASE_TRADE]);
+  it("serializes trades as a real XLSX zip package with numeric cells", () => {
+    const bytes = buildTradesExcelXlsx([BASE_TRADE]);
+    const decoded = new TextDecoder().decode(bytes);
 
-    expect(xml).toContain('<?mso-application progid="Excel.Sheet"?>');
-    expect(xml).toContain('<Worksheet ss:Name="Trade">');
-    expect(xml).toContain('<Data ss:Type="String">Simbolo</Data>');
-    expect(xml).toContain('<Data ss:Type="Number">42</Data>');
-    expect(xml).toContain('<Data ss:Type="Number">123.45</Data>');
+    expect(Array.from(bytes.slice(0, 4))).toEqual([0x50, 0x4b, 0x03, 0x04]);
+    expect(decoded).toContain("[Content_Types].xml");
+    expect(decoded).toContain("xl/worksheets/sheet1.xml");
+    expect(decoded).toContain('<sheet name="Trade" sheetId="1" r:id="rId1"/>');
+    expect(decoded).toContain('<c r="B1" t="inlineStr"><is><t>Simbolo</t></is></c>');
+    expect(decoded).toContain('<c r="A2"><v>42</v></c>');
+    expect(decoded).toContain('<c r="O2"><v>123.45</v></c>');
   });
 
   it("escapes text values before writing XML cells", () => {
-    const xml = buildTradesExcelXml([BASE_TRADE]);
+    const decoded = new TextDecoder().decode(buildTradesExcelXlsx([BASE_TRADE]));
 
-    expect(xml).toContain("Momentum &amp; breakout &lt;confirmed&gt;");
-    expect(xml).not.toContain("Momentum & breakout <confirmed>");
+    expect(decoded).toContain("Momentum &amp; breakout &lt;confirmed&gt;");
+    expect(decoded).not.toContain("Momentum & breakout <confirmed>");
   });
 });
