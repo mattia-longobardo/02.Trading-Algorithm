@@ -23,6 +23,7 @@ from core.utils import (
     utc_now,
 )
 from services.data_manager import DataManager
+from services.exit_levels import normalize_exit_levels
 from services.portfolio_risk import PortfolioRiskService
 
 
@@ -539,8 +540,19 @@ class TradeManager:
         allocated_capital: float,
         provider: str = PROVIDER_ETORO,
     ) -> None:
-        trailing_take_profit_distance = self._as_float(signal.get("trailing_take_profit_distance"))
-        trailing_take_profit_activation_pct = self._as_float(signal.get("trailing_take_profit_activation_pct"))
+        _levels = normalize_exit_levels(
+            entry_price=float(signal["entry_price"]),
+            stop_loss=float(signal["stop_loss"]),
+            take_profit=self._as_float(signal.get("take_profit")),
+            trailing_take_profit_distance=self._as_float(signal.get("trailing_take_profit_distance")),
+            trailing_take_profit_activation_pct=self._as_float(signal.get("trailing_take_profit_activation_pct")),
+            min_reward_risk=self.config.exit_min_reward_risk,
+            arm_r=self.config.exit_trailing_arm_r,
+            trail_r=self.config.exit_trailing_trail_r,
+        )
+        trailing_take_profit_distance = _levels["trailing_take_profit_distance"]
+        trailing_take_profit_activation_pct = _levels["trailing_take_profit_activation_pct"]
+        take_profit = _levels["take_profit"]
         trailing_stop_distance = self._as_float(signal.get("trailing_stop_distance"))
         target_entry_price = float(signal["entry_price"])
         provisional_quantity = (allocated_capital / target_entry_price) if target_entry_price > 0 else 0.0
@@ -563,7 +575,7 @@ class TradeManager:
                     target_entry_price,
                     provisional_quantity,
                     allocated_capital,
-                    float(signal["take_profit"]),
+                    float(take_profit),
                     trailing_take_profit_distance,
                     trailing_take_profit_activation_pct,
                     float(signal["stop_loss"]),
