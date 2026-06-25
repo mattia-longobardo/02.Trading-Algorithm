@@ -25,6 +25,7 @@ from core.utils import (
 from services.data_manager import DataManager
 from services.exit_levels import normalize_exit_levels
 from services.portfolio_risk import PortfolioRiskService
+from services.regime import passes_regime_gate
 
 
 class TradeManager:
@@ -766,6 +767,20 @@ class TradeManager:
             return False
         if not self._signal_has_required_levels(signal):
             return False
+        if self.config.regime_gate_enabled:
+            bars = self.data_manager.get_symbol_history(
+                symbol, limit=self.config.regime_sma_period
+            ) or []
+            if not passes_regime_gate(
+                bars,
+                self.config.regime_sma_period,
+                current_price=self._as_float(signal.get("entry_price")),
+            ):
+                self.logger.info(
+                    "Regime gate blocked %s (price below SMA%s)",
+                    symbol, self.config.regime_sma_period,
+                )
+                return False
 
         allocated_capital = self._risk_based_allocation(
             category, symbol, provider=provider,

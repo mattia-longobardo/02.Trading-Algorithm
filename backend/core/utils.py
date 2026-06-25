@@ -48,6 +48,8 @@ SETTINGS_OVERRIDABLE_KEYS: frozenset[str] = frozenset(
         "exit_trailing_trail_r",
         "log_level",
         "log_profile",
+        "regime_gate_enabled",
+        "regime_sma_period",
     }
 )
 
@@ -116,6 +118,8 @@ class AppConfig:
     risk_per_trade_pct: float = 0.01
     risk_default_stock_vol: float = 0.30
     risk_default_crypto_vol: float = 0.60
+    regime_gate_enabled: bool = True
+    regime_sma_period: int = 200
     currency: str = "EUR"
     crypto_entry_limit_collar_bps: int = 15
     crypto_entry_max_chase_bps: int = 40
@@ -298,6 +302,9 @@ def load_config() -> AppConfig:
         etoro_account_type=os.getenv("ETORO_ACCOUNT_TYPE", "demo").strip().lower() or "demo",
         etoro_default_leverage=max(1, int(os.getenv("ETORO_DEFAULT_LEVERAGE", "1"))),
         etoro_min_trade_amount=max(0.0, float(os.getenv("ETORO_MIN_TRADE_AMOUNT", "50"))),
+        regime_gate_enabled=os.getenv("REGIME_GATE_ENABLED", "true").strip().lower()
+        in {"1", "true", "yes", "on"},
+        regime_sma_period=max(20, int(os.getenv("REGIME_SMA_PERIOD", "200"))),
     )
     config.log_file = resolve_runtime_path(config.log_file)
     config.universe_log_file = resolve_runtime_path(config.universe_log_file)
