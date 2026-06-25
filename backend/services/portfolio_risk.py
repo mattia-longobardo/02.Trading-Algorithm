@@ -312,6 +312,7 @@ class PortfolioRiskService:
         positions: list[dict[str, Any]],
         equity: float,
         available_cash: float,
+        stop_loss: float | None = None,
     ) -> float:
         if equity <= 0 or available_cash <= 0:
             return 0.0
@@ -328,6 +329,14 @@ class PortfolioRiskService:
             return 0.0
         value = (target_risk_per_slot / denom) * equity
         value = min(value, available_cash, self.config.risk_max_position_pct * equity)
+        # Fixed-fractional dollar-risk cap: bound the loss to the stop at
+        # risk_per_trade_pct of equity. entry/stop come from the candidate signal.
+        entry = self._coerce_value(candidate.get("entry_price"))
+        if stop_loss is not None and entry > 0 and stop_loss < entry:
+            stop_fraction = (entry - stop_loss) / entry
+            if stop_fraction > 0:
+                max_risk_value = (self.config.risk_per_trade_pct * equity) / stop_fraction
+                value = min(value, max_risk_value)
         minimum = float(getattr(self.config, "etoro_min_trade_amount", 0.0) or 0.0)
         if value < minimum:
             return minimum if available_cash >= minimum else 0.0

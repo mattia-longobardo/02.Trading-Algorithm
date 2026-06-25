@@ -337,7 +337,14 @@ class TradeManager:
             })
         return positions
 
-    def _risk_based_allocation(self, category: str, symbol: str, provider: str = PROVIDER_ETORO) -> float:
+    def _risk_based_allocation(
+        self,
+        category: str,
+        symbol: str,
+        provider: str = PROVIDER_ETORO,
+        entry_price: float | None = None,
+        stop_loss: float | None = None,
+    ) -> float:
         """Risk-based size for a new position, with an over-budget entry gate.
 
         Falls back to equal-slot allocation when equity/risk data is unavailable.
@@ -361,8 +368,8 @@ class TradeManager:
         # so every order in a batch cycle sizes against the shrinking balance.
         cash = max(0.0, cash - self._pending_allocated_capital(provider))
         positions = self._open_position_values(provider)
-        candidate = {"symbol": str(symbol).upper(), "category": category}
-        size = self.risk.suggest_size(candidate, positions, equity, cash)
+        candidate = {"symbol": str(symbol).upper(), "category": category, "entry_price": entry_price}
+        size = self.risk.suggest_size(candidate, positions, equity, cash, stop_loss=stop_loss)
         if size <= 0:
             return 0.0
         # Spread liquidity uniformly: never exceed an even share of the remaining
@@ -760,7 +767,11 @@ class TradeManager:
         if not self._signal_has_required_levels(signal):
             return False
 
-        allocated_capital = self._risk_based_allocation(category, symbol, provider=provider)
+        allocated_capital = self._risk_based_allocation(
+            category, symbol, provider=provider,
+            entry_price=float(signal["entry_price"]),
+            stop_loss=self._as_float(signal.get("stop_loss")),
+        )
         if allocated_capital <= 0:
             self.logger.warning("Skipping %s because allocated capital is zero", symbol)
             return False

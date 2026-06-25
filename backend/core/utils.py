@@ -41,6 +41,7 @@ SETTINGS_OVERRIDABLE_KEYS: frozenset[str] = frozenset(
         "crypto_pending_cancel_minutes",
         "etoro_min_trade_amount",
         "etoro_default_leverage",
+        "risk_per_trade_pct",
         "trailing_tp_min_profit_buffer_pct",
         "exit_min_reward_risk",
         "exit_trailing_arm_r",
@@ -112,6 +113,7 @@ class AppConfig:
     risk_hard_threshold: float = 85.0
     risk_sizing_corr_floor: float = 0.30
     risk_max_position_pct: float = 0.25
+    risk_per_trade_pct: float = 0.01
     risk_default_stock_vol: float = 0.30
     risk_default_crypto_vol: float = 0.60
     currency: str = "EUR"
@@ -252,6 +254,7 @@ def load_config() -> AppConfig:
         risk_hard_threshold=min(100.0, max(0.0, float(os.getenv("RISK_HARD_THRESHOLD", "85")))),
         risk_sizing_corr_floor=min(1.0, max(0.0, float(os.getenv("RISK_SIZING_CORR_FLOOR", "0.30")))),
         risk_max_position_pct=min(1.0, max(0.01, float(os.getenv("RISK_MAX_POSITION_PCT", "0.25")))),
+        risk_per_trade_pct=min(0.10, max(0.001, float(os.getenv("RISK_PER_TRADE_PCT", "0.01")))),
         risk_default_stock_vol=max(0.01, float(os.getenv("RISK_DEFAULT_STOCK_VOL", "0.30"))),
         risk_default_crypto_vol=max(0.01, float(os.getenv("RISK_DEFAULT_CRYPTO_VOL", "0.60"))),
         currency=os.getenv("CURRENCY", "EUR").upper(),
