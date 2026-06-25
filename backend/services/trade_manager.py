@@ -23,7 +23,10 @@ from core.utils import (
     utc_now,
 )
 from services.data_manager import DataManager
+from services.exit_levels import normalize_exit_levels
 from services.portfolio_risk import PortfolioRiskService
+from services.regime import passes_regime_gate
+from services.trade_analytics import planned_metrics, realized_r
 
 
 class TradeManager:
@@ -336,7 +339,14 @@ class TradeManager:
             })
         return positions
 
-    def _risk_based_allocation(self, category: str, symbol: str, provider: str = PROVIDER_ETORO) -> float:
+    def _risk_based_allocation(
+        self,
+        category: str,
+        symbol: str,
+        provider: str = PROVIDER_ETORO,
+        entry_price: float | None = None,
+        stop_loss: float | None = None,
+    ) -> float:
         """Risk-based size for a new position, with an over-budget entry gate.
 
         Falls back to equal-slot allocation when equity/risk data is unavailable.
@@ -360,8 +370,8 @@ class TradeManager:
         # so every order in a batch cycle sizes against the shrinking balance.
         cash = max(0.0, cash - self._pending_allocated_capital(provider))
         positions = self._open_position_values(provider)
-        candidate = {"symbol": str(symbol).upper(), "category": category}
-        size = self.risk.suggest_size(candidate, positions, equity, cash)
+        candidate = {"symbol": str(symbol).upper(), "category": category, "entry_price": entry_price}
+        size = self.risk.suggest_size(candidate, positions, equity, cash, stop_loss=stop_loss)
         if size <= 0:
             return 0.0
         # Spread liquidity uniformly: never exceed an even share of the remaining
@@ -539,8 +549,19 @@ class TradeManager:
         allocated_capital: float,
         provider: str = PROVIDER_ETORO,
     ) -> None:
-        trailing_take_profit_distance = self._as_float(signal.get("trailing_take_profit_distance"))
-        trailing_take_profit_activation_pct = self._as_float(signal.get("trailing_take_profit_activation_pct"))
+        _levels = normalize_exit_levels(
+            entry_price=float(signal["entry_price"]),
+            stop_loss=float(signal["stop_loss"]),
+            take_profit=self._as_float(signal.get("take_profit")),
+            trailing_take_profit_distance=self._as_float(signal.get("trailing_take_profit_distance")),
+            trailing_take_profit_activation_pct=self._as_float(signal.get("trailing_take_profit_activation_pct")),
+            min_reward_risk=self.config.exit_min_reward_risk,
+            arm_r=self.config.exit_trailing_arm_r,
+            trail_r=self.config.exit_trailing_trail_r,
+        )
+        trailing_take_profit_distance = _levels["trailing_take_profit_distance"]
+        trailing_take_profit_activation_pct = _levels["trailing_take_profit_activation_pct"]
+        take_profit = _levels["take_profit"]
         trailing_stop_distance = self._as_float(signal.get("trailing_stop_distance"))
         target_entry_price = float(signal["entry_price"])
         provisional_quantity = (allocated_capital / target_entry_price) if target_entry_price > 0 else 0.0
@@ -563,7 +584,7 @@ class TradeManager:
                     target_entry_price,
                     provisional_quantity,
                     allocated_capital,
-                    float(signal["take_profit"]),
+                    float(take_profit),
                     trailing_take_profit_distance,
                     trailing_take_profit_activation_pct,
                     float(signal["stop_loss"]),
@@ -577,6 +598,15 @@ class TradeManager:
                 ),
             )
         self.logger.info("Stored new pending (emulated-limit) trade for %s on %s", symbol, provider)
+        _pm = planned_metrics(
+            float(signal["entry_price"]), float(signal["stop_loss"]),
+            self._as_float(signal.get("take_profit")),
+        )
+        self.logger.info(
+            "OPEN %s qty=%s alloc=%.2f R=%.4f planned_RR=%s",
+            symbol, round(provisional_quantity, 8), float(allocated_capital),
+            _pm["risk_per_unit"], _pm["reward_risk"],
+        )
 
     def _signal_has_required_levels(self, signal: dict[str, Any]) -> bool:
         for field in ("entry_price", "take_profit", "stop_loss"):
@@ -747,8 +777,26 @@ class TradeManager:
             return False
         if not self._signal_has_required_levels(signal):
             return False
+        if self.config.regime_gate_enabled:
+            bars = self.data_manager.get_symbol_history(
+                symbol, limit=self.config.regime_sma_period
+            ) or []
+            if not passes_regime_gate(
+                bars,
+                self.config.regime_sma_period,
+                current_price=self._as_float(signal.get("entry_price")),
+            ):
+                self.logger.info(
+                    "Regime gate blocked %s (price below SMA%s)",
+                    symbol, self.config.regime_sma_period,
+                )
+                return False
 
-        allocated_capital = self._risk_based_allocation(category, symbol, provider=provider)
+        allocated_capital = self._risk_based_allocation(
+            category, symbol, provider=provider,
+            entry_price=float(signal["entry_price"]),
+            stop_loss=self._as_float(signal.get("stop_loss")),
+        )
         if allocated_capital <= 0:
             self.logger.warning("Skipping %s because allocated capital is zero", symbol)
             return False
@@ -1102,6 +1150,14 @@ class TradeManager:
                 (close_price, close_ts, close_reason, pnl, trade["id"]),
             )
         self.logger.info("Trade %s closed with reason %s", trade["id"], close_reason)
+        _r = realized_r(
+            float(trade["entry_price"]), float(trade["stop_loss"]),
+            float(close_price),
+        ) if self._as_float(trade.get("stop_loss")) is not None else None
+        self.logger.info(
+            "CLOSE %s reason=%s pnl=%.2f realized_R=%s",
+            trade["symbol"], close_reason, float(pnl) if pnl is not None else 0.0, _r,
+        )
 
     def _request_market_close(self, trade: dict[str, Any], close_reason: str, trigger_price: float) -> None:
         if trade.get("exit_order_id"):

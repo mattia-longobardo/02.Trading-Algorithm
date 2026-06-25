@@ -44,6 +44,7 @@ class EtoroLifecycleBase(unittest.TestCase):
         self.broker.get_available_cash.return_value = 1000.0
         self.broker.is_market_open.return_value = True
         self.data_manager = Mock()
+        self.data_manager.get_symbol_history.return_value = []
         self.gpt = Mock()
         self.manager = TradeManager(
             self.config, logging.getLogger("t"), {PROVIDER_ETORO: self.broker}, self.data_manager, self.gpt

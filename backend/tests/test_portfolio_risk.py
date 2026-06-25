@@ -220,5 +220,37 @@ class SizingTests(unittest.TestCase):
         self.assertIn("BBB", after.per_position_risk_contribution)
 
 
+class RiskBasedSizingCapTests(unittest.TestCase):
+    def _svc(self, risk_pct):
+        cfg = AppConfig(openai_api_key="k", etoro_api_key="a", etoro_user_key="b")
+        cfg.risk_per_trade_pct = risk_pct
+        cfg.risk_max_position_pct = 1.0  # isolate the new cap
+        return PortfolioRiskService(cfg, logging.getLogger("t"),
+                                    history_provider=lambda s, l: [])
+
+    def test_stop_cap_limits_dollar_risk(self):
+        svc = self._svc(0.01)  # risk 1% of equity per trade
+        # entry 100, stop 90 -> 10% stop. equity 100000 -> max risk $1000.
+        # max value = 1000 / 0.10 = 10000.
+        cand = {"symbol": "AAA", "category": "STOCK", "entry_price": 100.0}
+        value = svc.suggest_size(cand, [], equity=100000.0,
+                                 available_cash=100000.0, stop_loss=90.0)
+        self.assertLessEqual(value, 10000.0 + 1e-6)
+
+    def test_no_stop_means_no_extra_cap(self):
+        svc = self._svc(0.01)
+        cand = {"symbol": "AAA", "category": "STOCK", "entry_price": 100.0}
+        with_cap = svc.suggest_size(cand, [], 100000.0, 100000.0, stop_loss=90.0)
+        without = svc.suggest_size(cand, [], 100000.0, 100000.0, stop_loss=None)
+        self.assertLessEqual(with_cap, without + 1e-6)
+
+    def test_invalid_long_ignores_cap(self):
+        svc = self._svc(0.01)
+        cand = {"symbol": "AAA", "category": "STOCK", "entry_price": 100.0}
+        # stop above entry -> not a valid long, cap is skipped (no div-by-zero/negative)
+        value = svc.suggest_size(cand, [], 100000.0, 100000.0, stop_loss=110.0)
+        self.assertGreaterEqual(value, 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
