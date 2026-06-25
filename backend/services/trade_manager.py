@@ -26,6 +26,7 @@ from services.data_manager import DataManager
 from services.exit_levels import normalize_exit_levels
 from services.portfolio_risk import PortfolioRiskService
 from services.regime import passes_regime_gate
+from services.trade_analytics import planned_metrics, realized_r
 
 
 class TradeManager:
@@ -597,6 +598,15 @@ class TradeManager:
                 ),
             )
         self.logger.info("Stored new pending (emulated-limit) trade for %s on %s", symbol, provider)
+        _pm = planned_metrics(
+            float(signal["entry_price"]), float(signal["stop_loss"]),
+            self._as_float(signal.get("take_profit")),
+        )
+        self.logger.info(
+            "OPEN %s qty=%s alloc=%.2f R=%.4f planned_RR=%s",
+            symbol, round(provisional_quantity, 8), float(allocated_capital),
+            _pm["risk_per_unit"], _pm["reward_risk"],
+        )
 
     def _signal_has_required_levels(self, signal: dict[str, Any]) -> bool:
         for field in ("entry_price", "take_profit", "stop_loss"):
@@ -1140,6 +1150,14 @@ class TradeManager:
                 (close_price, close_ts, close_reason, pnl, trade["id"]),
             )
         self.logger.info("Trade %s closed with reason %s", trade["id"], close_reason)
+        _r = realized_r(
+            float(trade["entry_price"]), float(trade["stop_loss"]),
+            float(close_price),
+        ) if self._as_float(trade.get("stop_loss")) is not None else None
+        self.logger.info(
+            "CLOSE %s reason=%s pnl=%.2f realized_R=%s",
+            trade["symbol"], close_reason, float(pnl) if pnl is not None else 0.0, _r,
+        )
 
     def _request_market_close(self, trade: dict[str, Any], close_reason: str, trigger_price: float) -> None:
         if trade.get("exit_order_id"):
