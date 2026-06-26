@@ -169,6 +169,45 @@ class MetricsPayloadTests(unittest.TestCase):
         self.assertAlmostEqual(out["account_equity_base"], 160000.0, places=2)
         self.assertAlmostEqual(out["account_return_abs"], 8000.0, places=2)
 
+    def _insert_closed_r(self, symbol, close_ts, pnl, realized_r=None, planned_rr=None):
+        conn = sqlite3.connect(self.trades_db)
+        conn.execute(
+            """INSERT INTO trades (symbol,category,status,entry_price,quantity,allocated_capital,
+                 close_price,close_timestamp,pnl,account_currency,provider,realized_r,planned_reward_risk)
+               VALUES (?,'CRYPTO','CLOSED',100.0,1.0,100.0,100.0,?,?,'USD','etoro',?,?)""",
+            (symbol, close_ts, pnl, realized_r, planned_rr),
+        )
+        conn.commit()
+        conn.close()
+
+    def test_avg_captured_r(self):
+        self._insert_closed_r("X1", "2026-06-11T10:00:00+00:00", 100.0, realized_r=1.0)
+        self._insert_closed_r("X2", "2026-06-12T10:00:00+00:00", 200.0, realized_r=2.0)
+        m = self.metrics.compute_metrics(None, None)
+        self.assertAlmostEqual(m["avg_captured_r"], 1.5, places=6)
+
+    def test_avg_captured_r_skips_null(self):
+        # trade with no realized_r should not count toward average
+        self._insert_closed_r("X3", "2026-06-11T10:00:00+00:00", 100.0, realized_r=3.0)
+        self._insert_closed_r("X4", "2026-06-12T10:00:00+00:00", 50.0, realized_r=None)
+        m = self.metrics.compute_metrics(None, None)
+        self.assertAlmostEqual(m["avg_captured_r"], 3.0, places=6)
+
+    def test_avg_captured_r_empty(self):
+        # existing setUp trade has no realized_r -> should default to 0.0
+        m = self.metrics.compute_metrics(None, None)
+        self.assertEqual(m["avg_captured_r"], 0.0)
+
+    def test_avg_planned_rr(self):
+        self._insert_closed_r("Y1", "2026-06-11T10:00:00+00:00", 100.0, planned_rr=2.0)
+        self._insert_closed_r("Y2", "2026-06-12T10:00:00+00:00", 200.0, planned_rr=4.0)
+        m = self.metrics.compute_metrics(None, None)
+        self.assertAlmostEqual(m["avg_planned_rr"], 3.0, places=6)
+
+    def test_avg_planned_rr_empty(self):
+        m = self.metrics.compute_metrics(None, None)
+        self.assertEqual(m["avg_planned_rr"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
