@@ -619,6 +619,16 @@ class TradeManager:
                     value,
                 )
                 return False
+        entry_price = float(signal["entry_price"])
+        stop_loss = float(signal["stop_loss"])
+        if entry_price <= stop_loss:
+            self.logger.warning(
+                "GPT returned OPEN for %s with entry_price=%s <= stop_loss=%s (not a valid long); skipping trade",
+                signal.get("symbol"),
+                entry_price,
+                stop_loss,
+            )
+            return False
         trailing_take_profit_distance = signal.get("trailing_take_profit_distance")
         if trailing_take_profit_distance is not None:
             if not isinstance(trailing_take_profit_distance, (int, float)) or float(trailing_take_profit_distance) <= 0:
