@@ -19,3 +19,15 @@ def realized_r(entry_price: float, stop_loss: float, close_price: float) -> floa
     if entry_price <= 0 or risk <= 0:
         return None
     return (close_price - entry_price) / risk
+
+
+def excursion_r(entry_price: float, stop_loss: float, water_mark: float) -> float | None:
+    """Excursion from entry to a high/low water mark, in R-multiples.
+
+    Positive for a favorable mark (MFE), negative for an adverse one (MAE).
+    None when not a valid long (entry <= stop or entry <= 0).
+    """
+    risk = entry_price - stop_loss
+    if entry_price <= 0 or risk <= 0:
+        return None
+    return (water_mark - entry_price) / risk

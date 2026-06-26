@@ -359,6 +359,13 @@ class MetricsService:
         non_cancelled = [r for r in rows if r.get("status") != "CANCELLED"]
         closed_in_period = [r for r in non_cancelled if _within(r, from_dt, to_dt)]
 
+        _rs = [_safe_float(r.get("realized_r")) for r in closed_in_period
+               if r.get("realized_r") not in (None, "")]
+        avg_captured_r = round(sum(_rs) / len(_rs), 4) if _rs else 0.0
+        _rrs = [_safe_float(r.get("planned_reward_risk")) for r in closed_in_period
+                if r.get("planned_reward_risk") not in (None, "")]
+        avg_planned_rr = round(sum(_rrs) / len(_rrs), 4) if _rrs else 0.0
+
         # PnL values, converted to display currency (each trade by its own
         # native currency) so multi-broker portfolios sum correctly.
         pnls_display = [self._pnl_in_display(r) for r in closed_in_period]
@@ -444,6 +451,8 @@ class MetricsService:
             "avg_win": avg_win,
             "avg_loss": avg_loss,
             "profit_factor": profit_factor,
+            "avg_captured_r": avg_captured_r,
+            "avg_planned_rr": avg_planned_rr,
             "max_drawdown": round(max_drawdown_display, 2),
             "sharpe": round(sharpe, 4),
             "n_trades": n_trades,

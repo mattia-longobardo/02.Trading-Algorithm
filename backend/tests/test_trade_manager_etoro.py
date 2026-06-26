@@ -104,6 +104,14 @@ class EtoroEntryTests(EtoroLifecycleBase):
         self.broker.is_market_open.assert_not_called()
         self.assertEqual(len(self._rows("PENDING")), 1)
 
+    def test_signal_rejected_when_entry_not_above_stop(self):
+        sig = self._signal(entry_price=100.0, stop_loss=100.0, take_profit=130.0)
+        self.assertFalse(self.manager._signal_has_required_levels(sig))
+        sig2 = self._signal(entry_price=90.0, stop_loss=100.0, take_profit=130.0)
+        self.assertFalse(self.manager._signal_has_required_levels(sig2))
+        ok = self._signal(entry_price=100.0, stop_loss=90.0, take_profit=130.0)
+        self.assertTrue(self.manager._signal_has_required_levels(ok))
+
 
 class EtoroPendingTests(EtoroLifecycleBase):
     def _pending(self, target=100.0):

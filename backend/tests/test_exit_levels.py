@@ -40,13 +40,14 @@ class NormalizeExitLevelsTests(unittest.TestCase):
         self.assertAlmostEqual(out["trailing_take_profit_distance"], 10.0, places=6)
 
     def test_trailing_invariant_holds(self):
-        # activation_pct must exceed distance/entry*100 (so trigger > entry at arming)
+        entry = 100.0
         out = normalize_exit_levels(
-            entry_price=100.0, stop_loss=80.0, take_profit=200.0,
+            entry_price=entry, stop_loss=80.0, take_profit=200.0,
             trailing_take_profit_distance=5.0, trailing_take_profit_activation_pct=1.0,
             min_reward_risk=1.5, arm_r=1.5, trail_r=1.0,
         )
-        distance_pct = out["trailing_take_profit_distance"] / 100.0 * 100.0
+        distance_pct = out["trailing_take_profit_distance"] / entry * 100.0
+        # activation must clear distance% so the trigger sits above entry at arming
         self.assertGreater(out["trailing_take_profit_activation_pct"], distance_pct)
 
     def test_no_trailing_when_input_none(self):

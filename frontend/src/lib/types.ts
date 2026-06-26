@@ -52,6 +52,10 @@ export interface Trade {
   created_at: string;
   updated_at: string;
   trade_score: number | null;
+  realized_r?: number | null;
+  planned_reward_risk?: number | null;
+  mae?: number | null;
+  mfe?: number | null;
 }
 
 export interface Metrics {
@@ -79,6 +83,8 @@ export interface Metrics {
   account_equity: number;
   currency: string;
   account_currency: string;
+  avg_captured_r?: number | null;
+  avg_planned_rr?: number | null;
 }
 
 export interface EquityPoint {

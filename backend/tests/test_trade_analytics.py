@@ -29,3 +29,19 @@ class TradeAnalyticsTests(unittest.TestCase):
         self.assertAlmostEqual(realized_r(100.0, 90.0, 115.0), 1.5, places=6)
         self.assertAlmostEqual(realized_r(100.0, 90.0, 90.0), -1.0, places=6)
         self.assertIsNone(realized_r(100.0, 100.0, 120.0))
+
+
+class ExcursionRTests(unittest.TestCase):
+    def test_favorable_excursion_positive_r(self):
+        from services.trade_analytics import excursion_r
+        # entry 100, stop 90 -> R=10. high water 115 -> +1.5R
+        self.assertAlmostEqual(excursion_r(100.0, 90.0, 115.0), 1.5, places=6)
+
+    def test_adverse_excursion_negative_r(self):
+        from services.trade_analytics import excursion_r
+        # low water 95 -> -0.5R
+        self.assertAlmostEqual(excursion_r(100.0, 90.0, 95.0), -0.5, places=6)
+
+    def test_invalid_long_none(self):
+        from services.trade_analytics import excursion_r
+        self.assertIsNone(excursion_r(100.0, 100.0, 110.0))

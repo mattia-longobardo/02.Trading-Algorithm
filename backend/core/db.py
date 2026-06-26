@@ -93,6 +93,12 @@ TRADE_OPTIONAL_COLUMNS: dict[str, str] = {
     "instrument_id": "INTEGER",
     "position_id": "TEXT",
     "order_reference_id": "TEXT",
+    "planned_risk_per_unit": "REAL",
+    "planned_reward_risk": "REAL",
+    "realized_r": "REAL",
+    "low_water_mark": "REAL",
+    "mae": "REAL",
+    "mfe": "REAL",
 }
 
 SYMBOL_TABLE_PREFIX = "ohlcv_"

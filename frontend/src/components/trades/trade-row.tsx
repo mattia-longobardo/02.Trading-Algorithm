@@ -185,6 +185,18 @@ export function TradeRow({ trade: t, onEdit, onClose }: TradeRowProps) {
         {t.close_reason ?? "—"}
       </td>
       <td className="whitespace-nowrap px-3 py-2 text-(--color-muted)">#{t.id}</td>
+      <td className="tnum whitespace-nowrap px-3 py-2 text-right">
+        {t.planned_reward_risk != null ? t.planned_reward_risk.toFixed(2) : "—"}
+      </td>
+      <td className="tnum whitespace-nowrap px-3 py-2 text-right">
+        {t.realized_r != null ? t.realized_r.toFixed(2) : "—"}
+      </td>
+      <td className="tnum whitespace-nowrap px-3 py-2 text-right">
+        {t.mfe != null ? t.mfe.toFixed(2) : "—"}
+      </td>
+      <td className="tnum whitespace-nowrap px-3 py-2 text-right">
+        {t.mae != null ? t.mae.toFixed(2) : "—"}
+      </td>
     </tr>
   );
 }

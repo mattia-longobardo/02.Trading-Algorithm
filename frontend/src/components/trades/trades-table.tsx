@@ -75,6 +75,10 @@ const COLUMNS: ColumnDef[] = [
   { key: "ts_trigger", label: "TS trigger", align: "right", accessor: (t) => t.trailing_stop_price },
   { key: "reason", label: "Motivo", accessor: (t) => t.close_reason },
   { key: "id", label: "ID", accessor: (t) => t.id },
+  { key: "planned_reward_risk", label: "Plan RR", align: "right", accessor: (t) => t.planned_reward_risk },
+  { key: "realized_r", label: "Real R", align: "right", accessor: (t) => t.realized_r },
+  { key: "mfe", label: "MFE (R)", align: "right", accessor: (t) => t.mfe },
+  { key: "mae", label: "MAE (R)", align: "right", accessor: (t) => t.mae },
 ];
 
 function compareValues(a: SortValue, b: SortValue): number {
