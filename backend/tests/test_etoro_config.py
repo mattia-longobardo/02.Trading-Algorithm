@@ -150,9 +150,15 @@ class EtoroConfigTests(unittest.TestCase):
         self.assertEqual(config.risk_max_position_pct, 0.2)
 
     def test_order_await_timeout_default_and_env(self):
-        self.assertEqual(AppConfig(openai_api_key="k", etoro_api_key="a", etoro_user_key="b").order_await_timeout_minutes, 360)
+        self.assertEqual(AppConfig(openai_api_key="k", etoro_api_key="a", etoro_user_key="b").order_await_timeout_minutes, 720)
         with patch.dict(os.environ, {"OPENAI_API_KEY": "o", "ORDER_AWAIT_TIMEOUT_MINUTES": "30"}, clear=True):
             self.assertEqual(load_config().order_await_timeout_minutes, 30)
+
+    def test_widened_execution_defaults(self):
+        cfg = AppConfig(openai_api_key="k", etoro_api_key="a", etoro_user_key="b")
+        self.assertEqual(cfg.crypto_entry_max_chase_bps, 80)
+        self.assertEqual(cfg.crypto_pending_cancel_minutes, 20)
+        self.assertEqual(cfg.order_await_timeout_minutes, 720)
 
 
 if __name__ == "__main__":

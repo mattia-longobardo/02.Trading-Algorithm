@@ -122,10 +122,10 @@ class AppConfig:
     regime_sma_period: int = 200
     currency: str = "EUR"
     crypto_entry_limit_collar_bps: int = 15
-    crypto_entry_max_chase_bps: int = 40
+    crypto_entry_max_chase_bps: int = 80
     crypto_pending_reprice_minutes: int = 2
-    crypto_pending_cancel_minutes: int = 12
-    order_await_timeout_minutes: int = 360
+    crypto_pending_cancel_minutes: int = 20
+    order_await_timeout_minutes: int = 720
     # Minimum profit cushion (in percent of entry_price) that the trailing
     # take profit must guarantee. The bot rejects GPT signals whose
     # `activation_pct − distance/entry × 100` falls below this buffer and
@@ -263,10 +263,10 @@ def load_config() -> AppConfig:
         risk_default_crypto_vol=max(0.01, float(os.getenv("RISK_DEFAULT_CRYPTO_VOL", "0.60"))),
         currency=os.getenv("CURRENCY", "EUR").upper(),
         crypto_entry_limit_collar_bps=max(0, int(os.getenv("CRYPTO_ENTRY_LIMIT_COLLAR_BPS", "15"))),
-        crypto_entry_max_chase_bps=max(0, int(os.getenv("CRYPTO_ENTRY_MAX_CHASE_BPS", "40"))),
+        crypto_entry_max_chase_bps=max(0, int(os.getenv("CRYPTO_ENTRY_MAX_CHASE_BPS", "80"))),
         crypto_pending_reprice_minutes=max(1, int(os.getenv("CRYPTO_PENDING_REPRICE_MINUTES", "2"))),
-        crypto_pending_cancel_minutes=max(1, int(os.getenv("CRYPTO_PENDING_CANCEL_MINUTES", "12"))),
-        order_await_timeout_minutes=max(1, int(os.getenv("ORDER_AWAIT_TIMEOUT_MINUTES", "360"))),
+        crypto_pending_cancel_minutes=max(1, int(os.getenv("CRYPTO_PENDING_CANCEL_MINUTES", "20"))),
+        order_await_timeout_minutes=max(1, int(os.getenv("ORDER_AWAIT_TIMEOUT_MINUTES", "720"))),
         trailing_tp_min_profit_buffer_pct=max(0.0, float(os.getenv("TRAILING_TP_MIN_PROFIT_BUFFER_PCT", "0.5"))),
         exit_min_reward_risk=max(0.0, float(os.getenv("EXIT_MIN_REWARD_RISK", "1.5"))),
         exit_trailing_arm_r=max(0.0, float(os.getenv("EXIT_TRAILING_ARM_R", "1.5"))),
