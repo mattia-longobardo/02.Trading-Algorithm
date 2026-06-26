@@ -833,9 +833,6 @@ class TradeManager:
             return
         self._open_trade_from_signal(category, symbol, signal, provider=provider)
 
-    def _entry_fill_ceiling(self, target_entry_price: float) -> float:
-        return target_entry_price * (1 + (int(self.config.crypto_entry_max_chase_bps) / 10_000.0))
-
     def sync_pending_trade(self, trade: dict[str, Any]) -> None:
         """Emulated limit entry: fill at market once price touches the target.
 

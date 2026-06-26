@@ -42,19 +42,26 @@ def _load_trades(trades_db_path: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def run_replay(trades_db_path, market_db_path, mode, exit_cfg, regime_cfg) -> dict:
+def run_replay(trades_db_path, market_db_path, mode, exit_cfg, regime_cfg, skips: dict | None = None) -> dict:
     results = []
+    skipped_no_levels = 0
+    skipped_no_data = 0
     for t in _load_trades(trades_db_path):
         # skip trades missing required levels (simulator requires numeric stop_loss / entry_price)
         if t.get("stop_loss") is None or t.get("entry_price") is None:
+            skipped_no_levels += 1
             continue
         bars = load_daily_bars(market_db_path, str(t["symbol"]))
         open_ts = str(t.get("open_timestamp") or "")[:10]
         entry_bars = [b for b in bars if b["timestamp"][:10] < open_ts]
         forward_bars = [b for b in bars if b["timestamp"][:10] >= open_ts]
         if not forward_bars:
+            skipped_no_data += 1
             continue  # no price data to replay this symbol/date
         results.append(simulate_trade(t, entry_bars, forward_bars, mode=mode, exit_cfg=exit_cfg, regime_cfg=regime_cfg))
+    if skips is not None:
+        skips["skipped_no_levels"] = skips.get("skipped_no_levels", 0) + skipped_no_levels
+        skips["skipped_no_data"] = skips.get("skipped_no_data", 0) + skipped_no_data
     return aggregate(results)
 
 
@@ -78,7 +85,11 @@ def main() -> None:
     exit_cfg, regime_cfg = _cfg_from_config()
     print("NOTE: daily bars; intraday ambiguity -> adverse exit assumed; GPT entries taken as-is.")
     modes = ["old", "new"] if args.mode == "ab" else [args.mode]
-    reports = {m: run_replay(args.trades, args.market, m, exit_cfg, regime_cfg) for m in modes}
+    skips: dict = {}
+    reports = {m: run_replay(args.trades, args.market, m, exit_cfg, regime_cfg, skips=skips) for m in modes}
+    skipped_no_levels = skips.get("skipped_no_levels", 0) // max(len(modes), 1)
+    skipped_no_data = skips.get("skipped_no_data", 0) // max(len(modes), 1)
+    print(f"NOTE: skipped {skipped_no_levels} (NULL levels), {skipped_no_data} (no price data)")
     for m, rep in reports.items():
         print(f"\n[{m.upper()}] {rep}")
     if args.mode == "ab":

@@ -21,6 +21,8 @@ def _f(v):
 
 
 def simulate_trade(trade, entry_bars, forward_bars, *, mode, exit_cfg, regime_cfg):
+    if mode not in ("old", "new"):
+        raise ValueError(f"unknown mode: {mode!r}")
     entry = float(trade["entry_price"])
     stop = float(trade["stop_loss"])
     tp = _f(trade.get("take_profit"))
