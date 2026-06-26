@@ -118,6 +118,11 @@ export function KpiStrip({ metrics: m, loading }: KpiStripProps) {
         title="# Pending"
         value={m ? formatNumber(m.n_pending, { maximumFractionDigits: 0 }) : "—"}
       />
+      <Kpi
+        title="Captured R"
+        value={m?.avg_captured_r != null ? m.avg_captured_r.toFixed(2) + "R" : "—"}
+        subtitle={m?.avg_planned_rr != null ? `planned ${m.avg_planned_rr.toFixed(2)}R` : undefined}
+      />
     </div>
   );
 }
