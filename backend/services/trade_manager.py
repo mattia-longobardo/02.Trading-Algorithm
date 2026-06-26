@@ -27,7 +27,7 @@ from services.exit_levels import normalize_exit_levels
 from services.order_exec import is_marketable
 from services.portfolio_risk import PortfolioRiskService
 from services.regime import passes_regime_gate
-from services.trade_analytics import planned_metrics, realized_r
+from services.trade_analytics import excursion_r, planned_metrics, realized_r
 
 
 class TradeManager:
@@ -567,6 +567,7 @@ class TradeManager:
         target_entry_price = float(signal["entry_price"])
         provisional_quantity = (allocated_capital / target_entry_price) if target_entry_price > 0 else 0.0
         account_currency = self.config.provider_account_currency(provider)
+        _pm = planned_metrics(target_entry_price, float(signal["stop_loss"]), take_profit)
         with db_cursor(self.config.db_trades) as cursor:
             cursor.execute(
                 """
@@ -575,8 +576,9 @@ class TradeManager:
                     take_profit, trailing_take_profit_distance, trailing_take_profit_activation_pct,
                     stop_loss, trailing_stop_distance,
                     instrument_id, reasoning, confidence, trade_score,
-                    provider, account_currency
-                ) VALUES (?, ?, 'LONG', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    provider, account_currency,
+                    planned_risk_per_unit, planned_reward_risk
+                ) VALUES (?, ?, 'LONG', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     symbol,
@@ -596,13 +598,11 @@ class TradeManager:
                     self._as_float(signal.get("trade_score")),
                     provider,
                     account_currency,
+                    _pm["risk_per_unit"],
+                    _pm["reward_risk"],
                 ),
             )
         self.logger.info("Stored new pending (emulated-limit) trade for %s on %s", symbol, provider)
-        _pm = planned_metrics(
-            float(signal["entry_price"]), float(signal["stop_loss"]),
-            self._as_float(signal.get("take_profit")),
-        )
         self.logger.info(
             "OPEN %s qty=%s alloc=%.2f R=%.4f planned_RR=%s",
             symbol, round(provisional_quantity, 8), float(allocated_capital),
@@ -1013,6 +1013,7 @@ class TradeManager:
             provider=self._trade_provider(trade),
         )
         high_water_mark = max(self._as_float(trade.get("high_water_mark")) or entry_price, entry_price, current_price)
+        low_water_mark = min(self._as_float(trade.get("low_water_mark")) or entry_price, entry_price, current_price)
         trailing_stop_price = self._compute_trailing_stop_price(
             high_water_mark, self._as_float(trade.get("trailing_stop_distance"))
         )
@@ -1028,13 +1029,13 @@ class TradeManager:
                 """
                 UPDATE trades
                 SET status = 'OPEN', open_timestamp = ?, entry_price = ?, quantity = ?, current_price = ?, pnl = ?,
-                    high_water_mark = ?, trailing_take_profit_price = ?, trailing_stop_price = ?,
+                    high_water_mark = ?, low_water_mark = ?, trailing_take_profit_price = ?, trailing_stop_price = ?,
                     position_id = ?, order_reference_id = ?, position_confirmed = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
                 (
                     isoformat_utc(utc_now()), entry_price, quantity, current_price, pnl,
-                    high_water_mark, trailing_take_profit_price, trailing_stop_price,
+                    high_water_mark, low_water_mark, trailing_take_profit_price, trailing_stop_price,
                     position_id, reference_id,
                     1 if isinstance(position, dict) and position else int(trade.get("position_confirmed") or 0),
                     trade["id"],
@@ -1152,24 +1153,28 @@ class TradeManager:
             if actual.get("close_timestamp"):
                 close_ts = actual["close_timestamp"]
 
+        _entry = float(trade["entry_price"])
+        _stop = self._as_float(trade.get("stop_loss"))
+        _rr = realized_r(_entry, _stop, float(close_price)) if _stop is not None else None
+        _hwm = self._as_float(trade.get("high_water_mark"))
+        _lwm = self._as_float(trade.get("low_water_mark"))
+        _mfe = excursion_r(_entry, _stop, _hwm) if (_stop is not None and _hwm is not None) else None
+        _mae = excursion_r(_entry, _stop, _lwm) if (_stop is not None and _lwm is not None) else None
+
         with db_cursor(self.config.db_trades) as cursor:
             cursor.execute(
                 """
                 UPDATE trades
                 SET status = 'CLOSED', close_price = ?, close_timestamp = ?, close_reason = ?, pending_close_reason = NULL,
-                    pnl = ?, updated_at = CURRENT_TIMESTAMP
+                    pnl = ?, realized_r = ?, mae = ?, mfe = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (close_price, close_ts, close_reason, pnl, trade["id"]),
+                (close_price, close_ts, close_reason, pnl, _rr, _mae, _mfe, trade["id"]),
             )
         self.logger.info("Trade %s closed with reason %s", trade["id"], close_reason)
-        _r = realized_r(
-            float(trade["entry_price"]), float(trade["stop_loss"]),
-            float(close_price),
-        ) if self._as_float(trade.get("stop_loss")) is not None else None
         self.logger.info(
             "CLOSE %s reason=%s pnl=%.2f realized_R=%s",
-            trade["symbol"], close_reason, float(pnl) if pnl is not None else 0.0, _r,
+            trade["symbol"], close_reason, float(pnl) if pnl is not None else 0.0, _rr,
         )
 
     def _request_market_close(self, trade: dict[str, Any], close_reason: str, trigger_price: float) -> None:
@@ -1385,6 +1390,7 @@ class TradeManager:
         trailing_take_profit_distance = self._as_float(trade.get("trailing_take_profit_distance"))
         trailing_take_profit_activation_pct = self._as_float(trade.get("trailing_take_profit_activation_pct"))
         high_water_mark = max(self._as_float(trade.get("high_water_mark")) or entry_price, current_price)
+        low_water_mark = min(self._as_float(trade.get("low_water_mark")) or entry_price, entry_price, current_price)
         trailing_take_profit_price = self._compute_trailing_take_profit_price(
             high_water_mark,
             entry_price,
@@ -1402,12 +1408,12 @@ class TradeManager:
             cursor.execute(
                 """
                 UPDATE trades
-                SET quantity = ?, current_price = ?, pnl = ?, high_water_mark = ?, trailing_take_profit_price = ?,
-                    trailing_stop_price = ?,
+                SET quantity = ?, current_price = ?, pnl = ?, high_water_mark = ?, low_water_mark = ?,
+                    trailing_take_profit_price = ?, trailing_stop_price = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (quantity, current_price, pnl, high_water_mark, trailing_take_profit_price, trailing_stop_price, trade["id"]),
+                (quantity, current_price, pnl, high_water_mark, low_water_mark, trailing_take_profit_price, trailing_stop_price, trade["id"]),
             )
 
         close_reason = self._trailing_take_profit_close_reason(current_price, trailing_take_profit_price)
