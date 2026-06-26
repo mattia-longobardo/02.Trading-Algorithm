@@ -24,6 +24,7 @@ from core.utils import (
 )
 from services.data_manager import DataManager
 from services.exit_levels import normalize_exit_levels
+from services.order_exec import is_marketable
 from services.portfolio_risk import PortfolioRiskService
 from services.regime import passes_regime_gate
 from services.trade_analytics import planned_metrics, realized_r
@@ -917,8 +918,8 @@ class TradeManager:
         ask = self._as_float(quote.get("ask_price")) or self._as_float(quote.get("bid_price"))
         if ask is None or ask <= 0:
             return
-        if ask > self._entry_fill_ceiling(target):
-            return  # wait for price to come down to the limit
+        if not is_marketable(ask, target, float(self.config.crypto_entry_max_chase_bps)):
+            return  # ask above the fill band; wait for price to come down
 
         instrument_id = int(trade.get("instrument_id") or 0) or broker.instrument_id_for_symbol(trade["symbol"])
         if not instrument_id:
