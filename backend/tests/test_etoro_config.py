@@ -160,6 +160,11 @@ class EtoroConfigTests(unittest.TestCase):
         self.assertEqual(cfg.crypto_pending_cancel_minutes, 20)
         self.assertEqual(cfg.order_await_timeout_minutes, 720)
 
+    def test_dead_knobs_removed(self):
+        cfg = AppConfig(openai_api_key="k", etoro_api_key="a", etoro_user_key="b")
+        self.assertFalse(hasattr(cfg, "crypto_entry_limit_collar_bps"))
+        self.assertFalse(hasattr(cfg, "crypto_pending_reprice_minutes"))
+
 
 if __name__ == "__main__":
     unittest.main()
