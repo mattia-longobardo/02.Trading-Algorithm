@@ -749,12 +749,14 @@ class TradeManager:
         return payloads
 
     def _rank_signals(self, signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        def sort_key(signal: dict[str, Any]) -> tuple[float, float]:
+        # Rank purely by GPT trade_score; confidence is intentionally excluded
+        # (historically uncorrelated-to-inverted with outcome). Tie-break on
+        # symbol so the ordering is deterministic and confidence-independent.
+        def sort_key(signal: dict[str, Any]) -> tuple[float, str]:
             score = self._as_float(signal.get("trade_score")) or 0.0
-            confidence = self._as_float(signal.get("confidence")) or 0.0
-            return (score, confidence)
-
-        return sorted(signals, key=sort_key, reverse=True)
+            symbol = str(signal.get("symbol") or "")
+            return (-score, symbol)
+        return sorted(signals, key=sort_key)
 
     def _open_trade_from_signal(
         self,

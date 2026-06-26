@@ -175,5 +175,20 @@ class RiskProjectionTests(unittest.TestCase):
         self.assertIn("score", out["projected"])
 
 
+class RankSignalsTests(unittest.TestCase):
+    def setUp(self):
+        self.manager, _ = _manager()
+
+    def test_rank_ignores_confidence_and_ties_break_on_symbol(self):
+        signals = [
+            {"symbol": "BBB", "trade_score": 80, "confidence": 0.99},
+            {"symbol": "AAA", "trade_score": 80, "confidence": 0.10},
+            {"symbol": "CCC", "trade_score": 90, "confidence": 0.10},
+        ]
+        ranked = self.manager._rank_signals(signals)
+        # highest score first; equal scores tie-break by symbol ascending, NOT by confidence
+        self.assertEqual([s["symbol"] for s in ranked], ["CCC", "AAA", "BBB"])
+
+
 if __name__ == "__main__":
     unittest.main()
