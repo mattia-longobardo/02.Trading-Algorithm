@@ -39,17 +39,18 @@ Cross-feature constraints (apply to every sub-feature):
 
 **Background (from exploration):** Crypto entries are emulated-limit: a PENDING trade waits until `ask ≤ _entry_fill_ceiling(target)` (chase up to `crypto_entry_max_chase_bps`=40), else cancels at `crypto_pending_cancel_minutes`=12 (`ENTRY_TIMEOUT`). `crypto_entry_limit_collar_bps` and `crypto_pending_reprice_minutes` are **defined but unused**. Stocks submit a broker market order; if its status can't be resolved within `order_await_timeout_minutes`=360, it is abandoned (`ORDER_AWAIT_TIMEOUT`); stock entries are skipped entirely when the market is closed.
 
+**CORRECTION (verified against code `trade_manager.py:863-909`):** crypto entries are ALREADY marketable up to `crypto_entry_max_chase_bps` (the fill condition is `ask ≤ target × (1 + max_chase/10_000)`, i.e. fill at market within +0.40% of target). The unused `crypto_entry_limit_collar_bps` (15 bps) is a *tighter* band than the chase (40 bps), so activating it would reduce fills, not increase them. Therefore "marketable-limit with collar" and "widen chase/timeout" collapse to the same lever. The real fix is to **widen the existing fill band and timeout**, plus make stock order resolution less trigger-happy. (User confirmed this corrected direction.)
+
 **Design:**
 
-1. **Crypto — marketable fill via the collar (primary fix).** Activate `crypto_entry_limit_collar_bps`: on each pending sync, if `ask ≤ target × (1 + collar_bps/10_000)`, fill **immediately at market** (the trade is "marketable" — close enough to target). This is distinct from the existing chase ceiling: the collar is a tighter "fill now, it's good enough" band evaluated first, so a trade that opens already near target fills on the first tick instead of waiting for a dip that may never come. Keep the existing chase logic as the outer bound.
-2. **Crypto — widen defaults.** Raise `crypto_pending_cancel_minutes` (12 → e.g. 20) and optionally `crypto_entry_max_chase_bps` so fewer pendings time out. Config-only, reversible.
-3. **Stock — widen await + safer status resolution.** Raise `order_await_timeout_minutes` default and make `_resolve_submitted_order` treat a transient "status unknown" more leniently before abandoning (don't abandon on a single `None` status read; require the age threshold AND a confirmed-not-found, not just an unresolved poll). Keep the market-closed skip.
-4. **Observability.** Log the cancel `close_reason` distribution is already present; add a counter/log so the operator can see fill-vs-cancel rates after the change.
+1. **Crypto — widen the fill band + timeout (config defaults).** Raise `crypto_entry_max_chase_bps` (40 → 80) so entries fill at market within a larger slippage tolerance, and `crypto_pending_cancel_minutes` (12 → 20) so a pending has longer to fill before `ENTRY_TIMEOUT`. Config-only, reversible.
+2. **Stock — safer order resolution + longer await.** In `_resolve_submitted_order`, do NOT abandon on a single transient `None` status read; only abandon a `None`-status order when it is past the timeout (current behaviour) AND we have not just transiently failed to read it — i.e. keep the existing timeout gate but document that `None` means "not found", and raise `order_await_timeout_minutes` (360 → 720) so a slow fill near the close is not abandoned prematurely.
+3. **Remove the two dead knobs.** Delete `crypto_entry_limit_collar_bps` and `crypto_pending_reprice_minutes` from `AppConfig`, `load_config`, and `SETTINGS_OVERRIDABLE_KEYS` (they are defined-but-unused, and keeping a collar knob that contradicts the chase semantics is a maintenance trap).
+4. **Marketable decision made testable.** Extract the fill condition into a pure helper `is_marketable(ask, target, max_chase_bps) -> bool` so the band logic is unit-tested in isolation; `sync_pending_trade` calls it instead of the inline `ask > self._entry_fill_ceiling(target)` comparison.
 
-**Decision applied:** marketable-limit with collar (chosen), plus the timeout/chase widening.
-**Files:** `services/trade_manager.py` (pending sync + order resolution), `core/utils.py` (config), tests `tests/test_trade_manager_orders.py` / a new focused test.
-**Risk:** Medium — touches live order code. Mitigations: every change behind a config knob with conservative defaults; pure helper for the marketable-fill decision (`_is_marketable(ask, target, collar_bps) -> bool`) so it is unit-testable; no change to how orders are actually placed (still `open_market_position`).
-**Open assumption to encode:** the collar fills at market (accepting up to collar_bps slippage above target) — that is the intended trade-off (fill certainty over price precision) and must be stated in the prompt/docs and bounded by the collar.
+**Decision applied:** widen band+timeout (crypto) + robust stock resolution + remove dead knobs (user-confirmed).
+**Files:** `services/trade_manager.py` (pending sync + order resolution), `core/utils.py` (config), tests.
+**Risk:** Medium — touches live order code. Mitigations: behaviour changes are config-default value changes + one extracted pure helper (`is_marketable`); no change to how orders are actually placed (still `open_market_position`); the helper preserves the exact current inequality.
 
 ---
 
