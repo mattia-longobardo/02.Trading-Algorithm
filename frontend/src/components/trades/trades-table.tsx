@@ -38,18 +38,18 @@ const COLUMNS: ColumnDef[] = [
     key: "close_action",
     label: "Chiudi",
     align: "center",
-    stickyClass: "sticky left-0 z-30 w-14 min-w-14 bg-(--color-panel)",
+    stickyClass: "sticky left-0 top-0 z-40 w-14 min-w-14 bg-(--color-panel)",
   },
   {
     key: "edit_action",
     label: "Mod.",
     align: "center",
-    stickyClass: "sticky left-14 z-30 w-14 min-w-14 bg-(--color-panel)",
+    stickyClass: "sticky left-14 top-0 z-40 w-14 min-w-14 bg-(--color-panel)",
   },
   {
     key: "symbol",
     label: "Simbolo",
-    stickyClass: "sticky left-28 z-30 w-40 min-w-40 bg-(--color-panel)",
+    stickyClass: "sticky left-28 top-0 z-40 w-40 min-w-40 bg-(--color-panel)",
     accessor: (t) => t.symbol,
   },
   { key: "status", label: "Stato", accessor: (t) => t.status },
@@ -133,7 +133,7 @@ export function TradesTable({ items, loading, onEdit, onClose }: TradesTableProp
           <TradeCard key={t.id} trade={t} onEdit={onEdit} onClose={onClose} />
         ))}
       </div>
-      <div className="hidden overflow-x-auto lg:block">
+      <div className="hidden max-h-[calc(100vh-12rem)] overflow-auto lg:block">
         <table className="w-full min-w-[1840px] border-separate border-spacing-y-1 text-sm">
           <thead>
             <tr className="text-left text-xs uppercase text-(--color-muted)">
@@ -141,7 +141,7 @@ export function TradesTable({ items, loading, onEdit, onClose }: TradesTableProp
                 const active = sortKey === col.key;
                 const thClass = [
                   "whitespace-nowrap px-3 py-2",
-                  col.stickyClass ?? "",
+                  col.stickyClass ?? "sticky top-0 z-30 bg-(--color-panel)",
                   col.align === "center" ? "text-center" : "",
                   col.align === "right" ? "text-right" : "",
                 ]
