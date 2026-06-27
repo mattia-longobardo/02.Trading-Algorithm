@@ -83,7 +83,7 @@ export default function TradesPage() {
   const [exporting, setExporting] = useState(false);
 
   const trades = useQuery<TradesEnvelope>({
-    queryKey: ["trades", "orders", statusFilter, categoryFilter, symbolFilter],
+    queryKey: ["trades", "orders", statusFilter, categoryFilter, symbolFilter, exportFrom, exportTo],
     queryFn: async () => {
       if (statusFilter.length === 0 || categoryFilter.length === 0) {
         return { items: [], total: 0, page: 1, page_size: 500 };
@@ -93,6 +93,7 @@ export default function TradesPage() {
       params.set("page", "1");
       params.set("page_size", "500");
       appendTradeFilters(params);
+      appendDateBounds(params);
       return api.get<TradesEnvelope>(`/api/trades?${params.toString()}`);
     },
     refetchInterval: 30_000,
@@ -115,15 +116,19 @@ export default function TradesPage() {
     if (symbolFilter.trim()) params.set("symbol", symbolFilter.trim().toUpperCase());
   }
 
+  function appendDateBounds(params: URLSearchParams) {
+    const fromIso = dateBoundToIso(exportFrom, false);
+    const toIso = dateBoundToIso(exportTo, true);
+    if (fromIso) params.set("from", fromIso);
+    if (toIso) params.set("to", toIso);
+  }
+
   async function fetchExportTrades(): Promise<Trade[]> {
     if (statusFilter.length === 0 || categoryFilter.length === 0) return [];
 
     const baseParams = new URLSearchParams();
     appendTradeFilters(baseParams);
-    const fromIso = dateBoundToIso(exportFrom, false);
-    const toIso = dateBoundToIso(exportTo, true);
-    if (fromIso) baseParams.set("from", fromIso);
-    if (toIso) baseParams.set("to", toIso);
+    appendDateBounds(baseParams);
 
     const exported: Trade[] = [];
     let page = 1;
@@ -195,7 +200,10 @@ export default function TradesPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Export Excel</CardTitle>
+          <CardTitle>Periodo</CardTitle>
+          <span className="text-xs text-(--color-muted)">
+            Filtra la tabella sottostante e l&apos;export Excel.
+          </span>
         </CardHeader>
         <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
           <div className="space-y-1">
