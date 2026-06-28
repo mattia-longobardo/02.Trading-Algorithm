@@ -7,14 +7,13 @@ import threading
 from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import contextmanager
-from datetime import timedelta
 from typing import Any
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from filelock import FileLock, Timeout
 
-from core.utils import AppConfig, merge_universe_categories, utc_now
+from core.utils import AppConfig, merge_universe_categories
 from services.report import ReportGenerator
 from services.trade_manager import TradeManager
 from services.universe_manager import UniverseManager
@@ -281,21 +280,19 @@ class TradingScheduler:
     def run_manual_annual_report(self) -> dict:
         return self.run_with_lock("manual_annual_report", self.report_generator.generate_annual_report)
 
-    def run_manual_reconcile_closed_trades(self, lookback_days: int = 365) -> dict[str, Any]:
-        """One-time full-history reconciliation across all brokers.
+    def run_manual_reconcile_closed_trades(self) -> dict[str, Any]:
+        """One-shot reconciliation across all brokers.
 
-        Unlike the 30-minute recurring job (short lookback), this scans a wide
-        window so the trades DB is fully realigned with the broker's realized
-        history — used to backfill historical closes after first deploy.
+        Uses the algorithm's own start cutoff (earliest open trade) as the
+        history window — never imports trades the algorithm did not open.
         """
 
         def execute() -> dict[str, Any]:
-            min_date = (utc_now() - timedelta(days=lookback_days)).date()
             results = {
-                provider: self.trade_manager.reconcile_closed_trades(min_date=min_date, provider=provider)
+                provider: self.trade_manager.reconcile_closed_trades(min_date=None, provider=provider)
                 for provider in self.trade_manager.brokers
             }
-            return {"reconciled": results, "lookback_days": lookback_days}
+            return {"reconciled": results}
 
         return self.run_with_lock("manual_reconcile_closed_trades", execute)
 

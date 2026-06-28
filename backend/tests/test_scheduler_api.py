@@ -219,15 +219,16 @@ class TradingSchedulerManualApiTests(unittest.TestCase):
 
     def test_run_manual_reconcile_reconciles_each_provider(self) -> None:
         self.trade_manager.brokers = {"etoro": Mock()}
-        self.trade_manager.reconcile_closed_trades.return_value = {"corrected": 2, "backfilled": 3}
+        self.trade_manager.reconcile_closed_trades.return_value = {"corrected": 2, "ignored_unmanaged": 3}
 
         result = self.scheduler.run_manual_reconcile_closed_trades()
 
         self.trade_manager.reconcile_closed_trades.assert_called_once()
         _, kwargs = self.trade_manager.reconcile_closed_trades.call_args
         self.assertEqual(kwargs["provider"], "etoro")
-        self.assertIn("min_date", kwargs)
-        self.assertEqual(result["reconciled"]["etoro"], {"corrected": 2, "backfilled": 3})
+        self.assertIsNone(kwargs["min_date"])
+        self.assertEqual(result["reconciled"]["etoro"], {"corrected": 2, "ignored_unmanaged": 3})
+        self.assertNotIn("lookback_days", result)
 
 
 try:
