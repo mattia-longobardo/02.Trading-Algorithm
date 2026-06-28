@@ -7,6 +7,24 @@ import { formatCurrency } from "@/lib/format";
 import type { AllocationCategory } from "@/lib/types";
 import { useChartTheme } from "@/components/charts/use-chart-theme";
 
+// Pick black or white text for legibility on top of a given slice color,
+// using WCAG relative luminance so it works in both light and dark themes.
+function readableTextColor(hex: string): string {
+  const c = hex.replace("#", "");
+  if (c.length < 6) return "#ffffff";
+  const toLinear = (v: number) => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  const r = toLinear(parseInt(c.slice(0, 2), 16));
+  const g = toLinear(parseInt(c.slice(2, 4), 16));
+  const b = toLinear(parseInt(c.slice(4, 6), 16));
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const contrastWhite = 1.05 / (luminance + 0.05);
+  const contrastBlack = (luminance + 0.05) / 0.05;
+  return contrastWhite >= contrastBlack ? "#ffffff" : "#0f172a";
+}
+
 // ---------------------------------------------------------------------------
 // AllocationLegend
 // ---------------------------------------------------------------------------
@@ -22,17 +40,17 @@ function AllocationLegend({
   if (items.length === 0) return null;
   const total = items.reduce((sum, c) => sum + c.value, 0);
   return (
-    <ul className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+    <ul className="mt-3 flex flex-col gap-y-1 text-xs">
       {items.map((item, idx) => {
         const pct = total > 0 ? (item.value / total) * 100 : 0;
         return (
-          <li key={item.category} className="flex items-center gap-2 truncate">
+          <li key={item.category} className="flex items-center gap-2">
             <span
               className="inline-block size-2.5 shrink-0 rounded-full"
               style={{ background: pieColors[idx % pieColors.length] }}
             />
-            <span className="truncate text-(--color-text)">{item.category}</span>
-            <span className="tnum ml-auto tabular-nums text-(--color-muted)">
+            <span className="shrink-0 text-(--color-text)">{item.category}</span>
+            <span className="tnum ml-auto truncate tabular-nums text-(--color-muted)">
               {formatCurrency(item.value, currency)} · {pct.toFixed(1)}%
             </span>
           </li>
@@ -123,6 +141,7 @@ export function CategoryAllocationChart({
                   innerRadius: number;
                   outerRadius: number;
                   percent?: number;
+                  index?: number;
                 }) => {
                   const pct = props.percent ?? 0;
                   if (pct < 0.05) return null;
@@ -130,11 +149,12 @@ export function CategoryAllocationChart({
                   const r = props.innerRadius + (props.outerRadius - props.innerRadius) / 2;
                   const x = props.cx + r * Math.cos(-props.midAngle * RADIAN);
                   const y = props.cy + r * Math.sin(-props.midAngle * RADIAN);
+                  const sliceColor = theme.pie[(props.index ?? 0) % theme.pie.length];
                   return (
                     <text
                       x={x}
                       y={y}
-                      fill={theme.text}
+                      fill={readableTextColor(sliceColor)}
                       textAnchor="middle"
                       dominantBaseline="central"
                       fontSize={12}
