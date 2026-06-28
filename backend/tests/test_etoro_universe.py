@@ -21,16 +21,6 @@ from core.utils import (
 PE = PROVIDER_ETORO
 
 
-def _asset(symbol, name="X"):
-    a = Mock()
-    a.symbol = symbol
-    a.name = name
-    a.status = "active"
-    a.tradable = True
-    a.fractionable = True
-    return a
-
-
 class UniversePlumbingTests(unittest.TestCase):
     def test_etoro_in_all_providers(self):
         self.assertIn(PROVIDER_ETORO, ALL_PROVIDERS)
@@ -44,46 +34,6 @@ class UniversePlumbingTests(unittest.TestCase):
         norm = _normalize_universe_payload({"etoro": {"STOCK": ["aapl"], "CRYPTO": ["btc"]}})
         self.assertEqual(norm[PROVIDER_ETORO]["STOCK"], ["AAPL"])
         self.assertEqual(norm[PROVIDER_ETORO]["CRYPTO"], ["BTC"])
-
-
-class EtoroUniverseSelectionTests(unittest.TestCase):
-    def setUp(self):
-        from services.universe_manager import UniverseManager
-        self.config = AppConfig(
-            openai_api_key="k", 
-            etoro_api_key="a", etoro_user_key="b", etoro_account_type="demo",
-            weekly_universe_stocks=1, weekly_universe_crypto=1,
-        )
-        self.broker = Mock()
-        self.broker.list_assets.side_effect = lambda cls: (
-            [_asset("AAPL", "Apple")] if cls in ("US_EQUITY", "STOCK") else [_asset("BTC", "Bitcoin")]
-        )
-        self.broker.get_multi_bars.return_value = {}
-        self.broker.discover_instruments.side_effect = Exception("no discover")
-        self.gpt = Mock()
-        self.gpt.request_universe_symbol_dossier.side_effect = Exception("no gpt")
-        self.manager = UniverseManager(self.config, logging.getLogger("t"), {PE: self.broker}, self.gpt)
-
-    def test_etoro_candidate_payloads(self):
-        stock = self.manager._get_etoro_stock_candidate_payload()
-        crypto = self.manager._get_etoro_crypto_candidate_payload()
-        self.assertEqual(stock[0]["symbol"], "AAPL")
-        self.assertEqual(crypto[0]["symbol"], "BTC")
-
-    def test_legacy_crypto_payload_excludes_dated_futures(self):
-        self.broker.list_assets.side_effect = lambda cls: (
-            [_asset("AAPL", "Apple")] if cls in ("US_EQUITY", "STOCK")
-            else [_asset("BTC", "Bitcoin"), _asset("BTC.MAY26", "BTC May26 Future")]
-        )
-        payload = self.manager._get_etoro_crypto_candidate_payload()
-        symbols = [a["symbol"] for a in payload]
-        self.assertIn("BTC", symbols)
-        self.assertNotIn("BTC.MAY26", symbols)
-
-    def test_select_etoro_universe_tops_up_when_no_dossiers(self):
-        result = self.manager._select_etoro_universe(self.manager.get_current_universe())
-        self.assertEqual(result["STOCK"], ["AAPL"])
-        self.assertEqual(result["CRYPTO"], ["BTC"])
 
 
 class EtoroUniverseAdminTests(unittest.TestCase):
@@ -330,52 +280,39 @@ class SelectEtoroUniverseWiringTests(unittest.TestCase):
         self.assertEqual(result["STOCK"], ["AAPL"])
         self.assertEqual(result["CRYPTO"], ["ETH.SPOT"])
 
-    def test_falls_back_to_list_assets_when_discover_raises(self):
+    def _current(self, stock, crypto):
+        return {PE: {"STOCK": list(stock), "CRYPTO": list(crypto)}}
+
+    def test_keeps_previous_universe_when_discover_raises(self):
+        """A discovery error (e.g. eToro API down) must preserve the previous
+        universe rather than wipe it — there is no legacy full-scan fallback."""
         broker = Mock()
         broker.discover_instruments.side_effect = Exception("discover down")
-        broker.list_assets.side_effect = lambda cls: (
-            [_asset("AAPL", "Apple")] if cls in ("US_EQUITY", "STOCK") else [_asset("BTC", "Bitcoin")]
-        )
         broker.get_multi_bars.return_value = {}
         manager = self._manager(broker)
-        result = manager._select_etoro_universe(self._empty_current())
-        broker.list_assets.assert_called()
-        self.assertEqual(result["STOCK"], ["AAPL"])
-        self.assertEqual(result["CRYPTO"], ["BTC"])
+        result = manager._select_etoro_universe(self._current(["OLDS"], ["OLDC"]))
+        self.assertEqual(result["STOCK"], ["OLDS"])
+        self.assertEqual(result["CRYPTO"], ["OLDC"])
 
-    def test_falls_back_when_discover_empty(self):
+    def test_keeps_previous_universe_when_discover_empty(self):
         broker = Mock()
         broker.discover_instruments.return_value = []
-        broker.list_assets.side_effect = lambda cls: (
-            [_asset("AAPL", "Apple")] if cls in ("US_EQUITY", "STOCK") else [_asset("BTC", "Bitcoin")]
-        )
         broker.get_multi_bars.return_value = {}
         manager = self._manager(broker)
-        result = manager._select_etoro_universe(self._empty_current())
-        broker.list_assets.assert_called()
-        self.assertEqual(result["STOCK"], ["AAPL"])
-        self.assertEqual(result["CRYPTO"], ["BTC"])
+        result = manager._select_etoro_universe(self._current(["OLDS"], ["OLDC"]))
+        self.assertEqual(result["STOCK"], ["OLDS"])
+        self.assertEqual(result["CRYPTO"], ["OLDC"])
 
-    def test_partial_discover_falls_back_per_category(self):
+    def test_keeps_previous_per_category_when_one_empty(self):
         broker = Mock()
-        def _discover(cat):
-            if cat == "STOCK":
-                return [self._stock_row("AAPL")]
-            return []  # crypto discover empty → must fall back per-category
-        broker.discover_instruments.side_effect = _discover
-        broker.list_assets.side_effect = lambda cls: (
-            [_asset("AAPL", "Apple")] if cls in ("US_EQUITY", "STOCK") else [_asset("BTC", "Bitcoin")]
+        broker.discover_instruments.side_effect = lambda cat: (
+            [self._stock_row("AAPL")] if cat == "STOCK" else []  # crypto discovery empty
         )
         broker.get_multi_bars.return_value = {}
         manager = self._manager(broker)
-        result = manager._select_etoro_universe(self._empty_current())
-        self.assertEqual(result["STOCK"], ["AAPL"])       # discover path
-        self.assertEqual(result["CRYPTO"], ["BTC"])        # legacy fallback
-        broker.list_assets.assert_any_call("CRYPTO")       # crypto fell back
-        # stock did NOT fall back to legacy
-        stock_legacy_calls = [c for c in broker.list_assets.call_args_list
-                              if c.args and c.args[0] in ("STOCK", "US_EQUITY")]
-        self.assertEqual(stock_legacy_calls, [])
+        result = manager._select_etoro_universe(self._current([], ["OLDC"]))
+        self.assertEqual(result["STOCK"], ["AAPL"])    # refreshed from discovery
+        self.assertEqual(result["CRYPTO"], ["OLDC"])    # kept previous (no candidates)
 
 
 class EtfAllowlistTests(unittest.TestCase):

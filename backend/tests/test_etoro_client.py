@@ -551,59 +551,6 @@ class EToroPositionLookupTests(unittest.TestCase):
         self.assertIsNone(client.get_open_position("AAPL"))
 
 
-class EToroListAssetsTests(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.market_db = str(Path(self.tmp.name) / "market.sqlite")
-        initialize_databases(self.market_db, str(Path(self.tmp.name) / "t.sqlite"))
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def _client(self):
-        client, session = make_client()
-        client.config.db_market_data = self.market_db
-        return client, session
-
-    def _types(self):
-        return make_response(200, {"instrumentTypes": [
-            {"instrumentTypeID": 5, "instrumentTypeDescription": "Stocks"},
-            {"instrumentTypeID": 10, "instrumentTypeDescription": "Crypto"},
-            {"instrumentTypeID": 6, "instrumentTypeDescription": "ETF"},
-        ]})
-
-    def test_list_assets_stock_filters_and_seeds_cache(self):
-        client, session = self._client()
-        session.request.side_effect = [
-            self._types(),
-            make_response(200, {"instrumentDisplayDatas": [
-                {"instrumentID": 101, "instrumentDisplayName": "Apple", "symbolFull": "AAPL", "isInternalInstrument": False},
-                {"instrumentID": 999, "instrumentDisplayName": "Internal", "symbolFull": "INT", "isInternalInstrument": True},
-            ]}),
-        ]
-        assets = client.list_assets("US_EQUITY")
-        self.assertEqual(len(assets), 1)
-        self.assertEqual(assets[0].symbol, "AAPL")
-        self.assertTrue(assets[0].tradable)
-        params = session.request.call_args_list[1].kwargs["params"]
-        self.assertEqual(params["instrumentTypeIds"], "5")
-        cached = get_instrument_mapping(self.market_db, "AAPL")
-        self.assertEqual(cached["instrument_id"], 101)
-        self.assertEqual(cached["category"], "STOCK")
-
-    def test_list_assets_crypto_uses_crypto_type(self):
-        client, session = self._client()
-        session.request.side_effect = [
-            self._types(),
-            make_response(200, {"instrumentDisplayDatas": [
-                {"instrumentID": 100000, "instrumentDisplayName": "Bitcoin", "symbolFull": "BTC", "isInternalInstrument": False},
-            ]}),
-        ]
-        assets = client.list_assets("CRYPTO")
-        self.assertEqual(assets[0].symbol, "BTC")
-        params = session.request.call_args_list[1].kwargs["params"]
-        self.assertEqual(params["instrumentTypeIds"], "10")
-
 
 class EToroDiscoverTests(unittest.TestCase):
     def test_list_exchanges_maps_id_to_description(self):
@@ -627,237 +574,146 @@ class EToroDiscoverTests(unittest.TestCase):
         client.list_exchanges()
         self.assertEqual(session.request.call_count, 1)
 
-    def _discover_page(self, items, page=1, total=None):
-        return make_response(200, {
-            "page": page, "pageSize": 200,
-            "totalItems": total if total is not None else len(items),
-            "items": items,
-        })
+    # -- popularity-search discovery ----------------------------------------
+    #
+    # eToro has no fundamentals-discovery endpoint, so discover_instruments
+    # ranks candidates via /market-data/search (popularityUniques sort, which
+    # returns ONLY instrumentId per item) and resolves them to symbols/types
+    # via a batch /market-data/instruments lookup.
 
-    def _stock_row(self, **over):
+    def _types(self, *pairs):
+        return make_response(200, {"instrumentTypes": [
+            {"instrumentTypeID": tid, "instrumentTypeDescription": desc} for tid, desc in pairs
+        ]})
+
+    def _search(self, *ids):
+        return make_response(200, {"items": [{"instrumentId": i} for i in ids]})
+
+    def _meta(self, rows):
+        return make_response(200, {"instrumentDisplayDatas": rows})
+
+    def _row(self, iid, symbol, type_id, **over):
         row = {
-            "instrumentId": 101, "symbol": "AAPL", "displayName": "Apple Inc",
-            "isin": "US0378331005", "assetClass": "Stocks", "exchangeName": "Nasdaq",
-            "countryCode": "US", "marketCap": 4.5e12, "currentRate": 200.0,
-            "popularityUniques": 5000, "isBuyEnabled": True, "isDelisted": False,
-            "daysSinceFirstTrade": 5000, "averageDailyVolumeLast3Months-TTM": 1_000_000.0,
-            "tipranksAllConsensus": "StrongBuy", "tipranksAllUpside": 20.0,
-            "tipranksAllTotalAnalysts": 30,
-            "oneYearAnnualRevenueGrowthRate": 12.0, "netProfitMargin": 25.0,
-            "dailyPriceChange": 1.0, "weeklyPriceChange": 2.0, "monthlyPriceChange": 3.0,
-            "threeMonthPriceChange": 4.0, "sixMonthPriceChange": 5.0,
+            "instrumentID": iid, "symbolFull": symbol,
+            "instrumentDisplayName": symbol.title(), "instrumentTypeID": type_id,
+            "exchangeID": 4, "isInternalInstrument": False,
         }
         row.update(over)
         return row
 
-    def test_discover_instruments_normalizes_and_filters_internal(self):
-        client, session = make_client()
-        session.request.side_effect = [self._discover_page([
-            self._stock_row(),
-            {"instrumentId": 999, "symbol": "HID", "isInternalInstrument": True},
-        ])]
-        rows = client.discover_instruments("STOCK")
-        self.assertEqual(len(rows), 1)
-        row = rows[0]
-        self.assertEqual(row["symbol"], "AAPL")
-        self.assertEqual(row["instrument_id"], 101)
-        self.assertEqual(row["name"], "Apple Inc")
-        self.assertEqual(row["isin"], "US0378331005")
-        self.assertEqual(row["country_code"], "US")
-        self.assertEqual(row["market_cap"], 4.5e12)
-        self.assertEqual(row["dollar_volume"], 1_000_000.0 * 200.0)
-        self.assertEqual(row["analyst_consensus"], "StrongBuy")
-        self.assertEqual(row["analyst_count"], 30)
-        self.assertTrue(row["tradable"])
-        self.assertEqual(row["price_change_3m"], 4.0)
-        params = session.request.call_args_list[0].kwargs["params"]
-        self.assertEqual(params["assetClass"], "Stocks")
-        self.assertEqual(params["sort"], "-marketCap")
-        self.assertIn("marketCapMin", params)
-        self.assertIn("marketCap", params["fields"])
-
-    def test_discover_instruments_crypto_uses_crypto_params(self):
-        client, session = make_client()
-        session.request.side_effect = [self._discover_page([
-            {"instrumentId": 1, "symbol": "BTC", "displayName": "Bitcoin",
-             "assetClass": "Crypto", "isBuyEnabled": True, "currentRate": 60000.0,
-             "cryptoMarketCap": 1.2e12, "popularityUniques": 10},
-        ])]
-        rows = client.discover_instruments("CRYPTO")
-        self.assertEqual(rows[0]["symbol"], "BTC")
-        self.assertEqual(rows[0]["asset_class"], "Crypto")
-        self.assertEqual(rows[0]["market_cap"], 1.2e12)
-        params = session.request.call_args_list[0].kwargs["params"]
-        self.assertEqual(params["assetClass"], "Crypto")
-        self.assertEqual(params["sort"], "-cryptoMarketCap")
-        self.assertNotIn("marketCapMin", params)
-
-    def test_discover_instruments_supports_legacy_market_cap_field(self):
-        client, session = make_client()
-        session.request.side_effect = [self._discover_page([
-            self._stock_row(marketCap=None, marketCapInUSD=4.5e12),
-        ])]
-        rows = client.discover_instruments("STOCK")
-        self.assertEqual(rows[0]["market_cap"], 4.5e12)
-
-    def _instruments_meta(self, rows):
-        return make_response(200, {"instrumentDisplayDatas": rows})
-
-    def test_discover_instruments_404_falls_back_to_popularity_search(self):
-        """When Asset Explorer 404s, rank candidates via market-data/search by
-        popularity and resolve their metadata via /market-data/instruments.
-
-        eToro's search endpoint returns ONLY ``instrumentId`` per item and sorts
-        most-popular-first with the ascending ``popularityUniques`` key (the
-        ``-popularityUniques`` descending key surfaces dated-future junk). The
-        IDs are then resolved to symbols in a batch instruments lookup, and only
-        rows matching the requested asset class's instrument types are kept.
-        """
+    def test_discover_instruments_ranks_by_popularity_and_resolves_metadata(self):
         client, session = make_client()
         session.request.side_effect = [
-            make_response(404, {"errorCode": "RouteNotFound", "errorMessage": "Route not found"}),
-            make_response(200, {"instrumentTypes": [
-                {"instrumentTypeID": 10, "instrumentTypeDescription": "Crypto"},
-                {"instrumentTypeID": 5, "instrumentTypeDescription": "Stocks"},
-            ]}),
-            # search page 1: popularity order (BTC then a stock); short page stops paging
-            make_response(200, {"items": [{"instrumentId": 100000}, {"instrumentId": 1001}]}),
-            # batch metadata lookup for both ids
-            self._instruments_meta([
-                {"instrumentID": 100000, "symbolFull": "BTC", "instrumentDisplayName": "Bitcoin",
-                 "instrumentTypeID": 10, "exchangeID": 8, "isInternalInstrument": False},
-                {"instrumentID": 1001, "symbolFull": "AAPL", "instrumentDisplayName": "Apple",
-                 "instrumentTypeID": 5, "exchangeID": 4, "isInternalInstrument": False},
+            self._types((10, "Crypto"), (5, "Stocks")),
+            self._search(100000, 1001),  # popularity order: BTC then a stock
+            self._meta([
+                self._row(100000, "BTC", 10, exchangeID=8, instrumentDisplayName="Bitcoin"),
+                self._row(1001, "AAPL", 5),
             ]),
         ]
         rows = client.discover_instruments("CRYPTO")
-        # only the crypto-type row survives the type filter
+        # only the crypto-type row survives the asset-class filter
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["symbol"], "BTC")
         self.assertEqual(rows[0]["instrument_id"], 100000)
         self.assertEqual(rows[0]["name"], "Bitcoin")
         self.assertTrue(rows[0]["tradable"])
         calls = session.request.call_args_list
-        self.assertEqual(calls[0].args[1], "https://public-api.etoro.com/api/v1/instruments/discover")
-        self.assertEqual(calls[1].args[1], "https://public-api.etoro.com/api/v1/market-data/instrument-types")
-        self.assertEqual(calls[2].args[1], "https://public-api.etoro.com/api/v1/market-data/search")
-        search_params = calls[2].kwargs["params"]
+        # no fictional /instruments/discover call anymore; straight to search
+        self.assertEqual(calls[0].args[1], "https://public-api.etoro.com/api/v1/market-data/instrument-types")
+        self.assertEqual(calls[1].args[1], "https://public-api.etoro.com/api/v1/market-data/search")
+        search_params = calls[1].kwargs["params"]
         self.assertEqual(search_params["sort"], "popularityUniques")
         self.assertEqual(search_params["pageNumber"], 1)
         self.assertIn("instrumentId", search_params["fields"])
         # metadata lookup must reach eToro with LITERAL commas (the gateway 500s
         # on %2C-encoded commas), in popularity order, not via encodable params
-        lookup_url = calls[3].args[1]
+        lookup_url = calls[2].args[1]
         self.assertIn("instrumentIds=100000,1001", lookup_url)
-        self.assertNotIn("instrumentIds", str(calls[3].kwargs.get("params") or ""))
+        self.assertNotIn("instrumentIds", str(calls[2].kwargs.get("params") or ""))
 
-    def test_discover_instruments_search_fallback_keeps_stock_types(self):
+    def test_discover_instruments_keeps_only_requested_asset_types(self):
         client, session = make_client()
         session.request.side_effect = [
-            make_response(404, {"errorCode": "RouteNotFound", "errorMessage": "Route not found"}),
-            make_response(200, {"instrumentTypes": [
-                {"instrumentTypeID": 10, "instrumentTypeDescription": "Crypto"},
-                {"instrumentTypeID": 5, "instrumentTypeDescription": "Stocks"},
-            ]}),
-            make_response(200, {"items": [{"instrumentId": 1001}, {"instrumentId": 100000}]}),
-            self._instruments_meta([
-                {"instrumentID": 1001, "symbolFull": "AAPL", "instrumentDisplayName": "Apple",
-                 "instrumentTypeID": 5, "exchangeID": 4, "isInternalInstrument": False},
-                {"instrumentID": 100000, "symbolFull": "BTC", "instrumentDisplayName": "Bitcoin",
-                 "instrumentTypeID": 10, "exchangeID": 8, "isInternalInstrument": False},
-            ]),
+            self._types((10, "Crypto"), (5, "Stocks")),
+            self._search(1001, 100000),
+            self._meta([self._row(1001, "AAPL", 5), self._row(100000, "BTC", 10)]),
         ]
         rows = client.discover_instruments("STOCK")
         self.assertEqual([r["symbol"] for r in rows], ["AAPL"])
 
-    def test_discover_instruments_search_fallback_skips_internal(self):
+    def test_discover_instruments_skips_internal(self):
         client, session = make_client()
         session.request.side_effect = [
-            make_response(404, {"errorCode": "RouteNotFound", "errorMessage": "Route not found"}),
-            make_response(200, {"instrumentTypes": [
-                {"instrumentTypeID": 10, "instrumentTypeDescription": "Crypto"},
-            ]}),
-            make_response(200, {"items": [{"instrumentId": 100000}, {"instrumentId": 222}]}),
-            self._instruments_meta([
-                {"instrumentID": 100000, "symbolFull": "BTC", "instrumentDisplayName": "Bitcoin",
-                 "instrumentTypeID": 10, "isInternalInstrument": False},
-                {"instrumentID": 222, "symbolFull": "INT", "instrumentDisplayName": "Internal",
-                 "instrumentTypeID": 10, "isInternalInstrument": True},
+            self._types((10, "Crypto")),
+            self._search(100000, 222),
+            self._meta([
+                self._row(100000, "BTC", 10),
+                self._row(222, "INT", 10, isInternalInstrument=True),
             ]),
         ]
         rows = client.discover_instruments("CRYPTO")
         self.assertEqual([r["symbol"] for r in rows], ["BTC"])
 
-    def test_discover_instruments_returns_empty_when_search_fallback_is_unavailable(self):
+    def test_discover_instruments_skips_non_positive_ids(self):
         client, session = make_client()
         session.request.side_effect = [
-            make_response(404, {"errorCode": "RouteNotFound", "errorMessage": "Route not found"}),
-            make_response(200, {"instrumentTypes": [
-                {"instrumentTypeID": 10, "instrumentTypeDescription": "Crypto"},
-            ]}),
+            self._types((10, "Crypto")),
+            self._search(-100000, 100000),  # synthetic aggregate id dropped
+            self._meta([self._row(100000, "BTC", 10)]),
+        ]
+        rows = client.discover_instruments("CRYPTO")
+        self.assertEqual([r["symbol"] for r in rows], ["BTC"])
+        lookup_url = session.request.call_args_list[2].args[1]
+        self.assertIn("instrumentIds=100000", lookup_url)
+        self.assertNotIn("-100000", lookup_url)
+
+    def test_discover_instruments_paginates_until_short_page(self):
+        client, session = make_client()
+        client.DISCOVER_PAGE_SIZE = 2  # force a second page
+        session.request.side_effect = [
+            self._types((10, "Crypto")),
+            self._search(100000, 100001),                 # full page -> keep paging
+            self._meta([self._row(100000, "BTC", 10), self._row(100001, "ETH", 10)]),
+            self._search(100002),                          # short page -> stop
+            self._meta([self._row(100002, "XRP", 10)]),
+        ]
+        rows = client.discover_instruments("CRYPTO")
+        self.assertEqual([r["symbol"] for r in rows], ["BTC", "ETH", "XRP"])
+        search_calls = [c for c in session.request.call_args_list
+                        if c.args[1].endswith("/market-data/search")]
+        self.assertEqual([c.kwargs["params"]["pageNumber"] for c in search_calls], [1, 2])
+
+    def test_discover_instruments_respects_cap(self):
+        client, session = make_client()
+        client._DISCOVER_CAPS = {"CRYPTO": 1}
+        session.request.side_effect = [
+            self._types((10, "Crypto")),
+            self._search(100000, 100001),
+            self._meta([self._row(100000, "BTC", 10), self._row(100001, "ETH", 10)]),
+        ]
+        rows = client.discover_instruments("CRYPTO")
+        self.assertEqual([r["symbol"] for r in rows], ["BTC"])  # capped at 1
+        # cap reached -> no second search page
+        self.assertEqual(session.request.call_count, 3)
+
+    def test_discover_instruments_empty_when_no_instrument_types(self):
+        client, session = make_client()
+        session.request.side_effect = [
+            make_response(404, {"errorCode": "RouteNotFound"}),  # instrument-types unavailable
+        ]
+        self.assertEqual(client.discover_instruments("CRYPTO"), [])
+        self.assertEqual(session.request.call_count, 1)
+
+    def test_discover_instruments_empty_when_search_404(self):
+        client, session = make_client()
+        session.request.side_effect = [
+            self._types((10, "Crypto")),
             make_response(404, {"message": "An error has occurred."}),
         ]
         rows = client.discover_instruments("CRYPTO")
         self.assertEqual(rows, [])
-        self.assertEqual(session.request.call_count, 3)
-
-    def test_discover_instruments_tradable_false_when_delisted(self):
-        client, session = make_client()
-        session.request.side_effect = [self._discover_page([
-            self._stock_row(symbol="X", instrumentId=7, isBuyEnabled=True, isDelisted=True),
-        ])]
-        rows = client.discover_instruments("STOCK")
-        self.assertFalse(rows[0]["tradable"])
-        self.assertTrue(rows[0]["delisted"])
-
-    def test_discover_instruments_tradable_false_when_not_buy_enabled(self):
-        client, session = make_client()
-        session.request.side_effect = [self._discover_page([
-            self._stock_row(symbol="X", instrumentId=8, isBuyEnabled=False, isDelisted=False),
-        ])]
-        rows = client.discover_instruments("STOCK")
-        self.assertFalse(rows[0]["tradable"])
-
-    def test_discover_instruments_skips_hidden_from_client(self):
-        client, session = make_client()
-        session.request.side_effect = [self._discover_page([
-            {"instrumentId": 9, "symbol": "HDN", "isHiddenFromClient": True},
-        ])]
-        rows = client.discover_instruments("STOCK")
-        self.assertEqual(rows, [])
-
-    def test_discover_instruments_stops_on_short_page(self):
-        client, session = make_client()
-        session.request.side_effect = [self._discover_page([self._stock_row()], total=1)]
-        rows = client.discover_instruments("STOCK")
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(session.request.call_count, 1)
-
-    def test_discover_instruments_paginates_multiple_pages(self):
-        client, session = make_client()
-        full_page = [self._stock_row(symbol=f"S{i}", instrumentId=i) for i in range(client.DISCOVER_PAGE_SIZE)]
-        second_page = [self._stock_row(symbol="LAST", instrumentId=99001)]
-        session.request.side_effect = [
-            self._discover_page(full_page, page=1, total=client.DISCOVER_PAGE_SIZE + 1),
-            self._discover_page(second_page, page=2, total=client.DISCOVER_PAGE_SIZE + 1),
-        ]
-        rows = client.discover_instruments("STOCK")
-        self.assertEqual(len(rows), client.DISCOVER_PAGE_SIZE + 1)
-        self.assertIn("LAST", [r["symbol"] for r in rows])
         self.assertEqual(session.request.call_count, 2)
-        self.assertEqual(session.request.call_args_list[0].kwargs["params"]["page"], 1)
-        self.assertEqual(session.request.call_args_list[1].kwargs["params"]["page"], 2)
-
-    def test_discover_instruments_respects_cap(self):
-        client, session = make_client()
-        client._DISCOVER_CAPS = {"STOCK": 2}
-        full_page = [self._stock_row(symbol=f"S{i}", instrumentId=i) for i in range(client.DISCOVER_PAGE_SIZE)]
-        session.request.side_effect = [self._discover_page(full_page, page=1, total=9999)]
-        rows = client.discover_instruments("STOCK")
-        # cap halts further pagination; the full first page is processed before
-        # the while condition re-evaluates, so only one page is fetched
-        self.assertGreaterEqual(len(rows), 2)
-        self.assertEqual(session.request.call_count, 1)
 
 
 if __name__ == "__main__":

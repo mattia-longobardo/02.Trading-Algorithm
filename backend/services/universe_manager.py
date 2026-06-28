@@ -140,16 +140,6 @@ class UniverseManager:
         )
 
     @staticmethod
-    def _asset_snapshot(asset: object) -> dict[str, Any]:
-        return {
-            "symbol": str(getattr(asset, "symbol", "")).upper(),
-            "name": str(getattr(asset, "name", "")).strip(),
-            "status": str(getattr(asset, "status", "")).lower(),
-            "tradable": bool(getattr(asset, "tradable", False)),
-            "fractionable": bool(getattr(asset, "fractionable", False)),
-        }
-
-    @staticmethod
     def _chunk_payload(payload: list[dict[str, Any]], batch_size: int) -> list[list[dict[str, Any]]]:
         if batch_size <= 0:
             return [payload]
@@ -820,64 +810,18 @@ class UniverseManager:
 
     # -- eToro path -------------------------------------------------------
 
-    def _get_etoro_stock_candidate_payload(self) -> list[dict[str, Any]]:
-        broker = self.broker(PROVIDER_ETORO)
-        if broker is None:
-            return []
-        assets = broker.list_assets("STOCK")
-        payload = [
-            self._asset_snapshot(asset)
-            for asset in assets
-            if getattr(asset, "tradable", False)
-            and not self._looks_like_etf(asset)
-            and not self._looks_like_non_common_stock(asset)
-            and not self._looks_like_shell_company(asset)
-        ]
-        payload = self._dedupe_payload_by_symbol(payload)
-        payload.sort(key=lambda asset: str(asset["symbol"]))
-        return payload
-
-    def _get_etoro_crypto_candidate_payload(self) -> list[dict[str, Any]]:
-        broker = self.broker(PROVIDER_ETORO)
-        if broker is None:
-            return []
-        assets = broker.list_assets("CRYPTO")
-        payload = [
-            self._asset_snapshot(asset)
-            for asset in assets
-            if getattr(asset, "tradable", False)
-            and not self._is_dated_future(getattr(asset, "symbol", ""))
-        ]
-        payload = self._dedupe_payload_by_symbol(payload)
-        payload.sort(key=lambda asset: str(asset["symbol"]))
-        return payload
-
     def _select_etoro_universe(self, current_universe: ProviderUniverse) -> dict[str, list[str]]:
         broker = self.broker(PROVIDER_ETORO)
         if broker is None:
             return {}
         preferred = universe_for_provider(current_universe, PROVIDER_ETORO)
         try:
-            base_stock_payload: list[dict[str, Any]] = []
-            base_crypto_payload: list[dict[str, Any]] = []
-            try:
-                base_stock_payload = self._build_cheap_shortlist(
-                    broker, "STOCK", preferred.get("STOCK", [])
-                )
-                base_crypto_payload = self._build_cheap_shortlist(
-                    broker, "CRYPTO", preferred.get("CRYPTO", [])
-                )
-            except Exception:
-                self.logger.warning(
-                    "eToro discover prefilter failed; falling back to legacy full scan",
-                    exc_info=True,
-                )
-            if not base_stock_payload:
-                self.logger.info("eToro discover STOCK prefilter empty; using legacy full scan for STOCK")
-                base_stock_payload = self._get_etoro_stock_candidate_payload()
-            if not base_crypto_payload:
-                self.logger.info("eToro discover CRYPTO prefilter empty; using legacy full scan for CRYPTO")
-                base_crypto_payload = self._get_etoro_crypto_candidate_payload()
+            base_stock_payload = self._build_cheap_shortlist(
+                broker, "STOCK", preferred.get("STOCK", [])
+            )
+            base_crypto_payload = self._build_cheap_shortlist(
+                broker, "CRYPTO", preferred.get("CRYPTO", [])
+            )
 
             full_stock_payload = self._enrich_payload_with_market_metrics(
                 PROVIDER_ETORO, "STOCK", base_stock_payload, preferred.get("STOCK", [])
@@ -887,14 +831,25 @@ class UniverseManager:
             )
             self._write_candidate_lists(full_stock_payload, full_crypto_payload)
 
-            stocks = self._select_category_universe(
-                PROVIDER_ETORO, "STOCK", full_stock_payload,
-                self.config.weekly_universe_stocks, self.STOCK_BATCH_SIZE, preferred.get("STOCK", []),
-            )
-            crypto = self._select_category_universe(
-                PROVIDER_ETORO, "CRYPTO", full_crypto_payload,
-                self.config.weekly_universe_crypto, self.CRYPTO_BATCH_SIZE, preferred.get("CRYPTO", []),
-            )
+            # Discovery returning nothing (e.g. eToro search/lookup 404) must not
+            # wipe a working universe — keep the previous symbols for that
+            # category instead of selecting from an empty pool.
+            if full_stock_payload:
+                stocks = self._select_category_universe(
+                    PROVIDER_ETORO, "STOCK", full_stock_payload,
+                    self.config.weekly_universe_stocks, self.STOCK_BATCH_SIZE, preferred.get("STOCK", []),
+                )
+            else:
+                self.logger.warning("eToro STOCK discovery returned no candidates; keeping previous STOCK universe")
+                stocks = list(preferred.get("STOCK", []))
+            if full_crypto_payload:
+                crypto = self._select_category_universe(
+                    PROVIDER_ETORO, "CRYPTO", full_crypto_payload,
+                    self.config.weekly_universe_crypto, self.CRYPTO_BATCH_SIZE, preferred.get("CRYPTO", []),
+                )
+            else:
+                self.logger.warning("eToro CRYPTO discovery returned no candidates; keeping previous CRYPTO universe")
+                crypto = list(preferred.get("CRYPTO", []))
         except Exception:
             self.logger.exception("Trading universe selection failed for eToro; keeping the previous valid universe")
             return {
