@@ -104,21 +104,14 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(summary["corrected"], 0)
         self.assertEqual(summary["unchanged"], 1)
 
-    def test_backfills_missing_closed_position(self):
+    def test_does_not_backfill_unknown_position(self):
         self.broker.list_trade_history.return_value = [
             hist("800", net_profit=271.49, close_rate=587.93, instrument_id=100000)
         ]
         summary = self.manager.reconcile_closed_trades(min_date="2026-06-01")
-        self.assertEqual(summary["backfilled"], 1)
-        rows = self._rows(position_id="800")
-        self.assertEqual(len(rows), 1)
-        r = rows[0]
-        self.assertEqual(r["status"], "CLOSED")
-        self.assertEqual(r["symbol"], "BTC")
-        self.assertEqual(r["category"], "CRYPTO")
-        self.assertAlmostEqual(r["pnl"], 271.49, places=2)
-        self.assertAlmostEqual(r["close_price"], 587.93, places=2)
-        self.assertTrue(r["close_reason"])
+        self.assertEqual(summary["ignored_unmanaged"], 1)
+        self.assertNotIn("backfilled", summary)
+        self.assertEqual(self._rows(position_id="800"), [])
 
     def test_idempotent_no_duplicate_on_rerun(self):
         self._insert(position_id="900", pnl=20.89, close_price=63558.66)
@@ -129,10 +122,10 @@ class ReconciliationTests(unittest.TestCase):
         first = self.manager.reconcile_closed_trades(min_date="2026-06-01")
         second = self.manager.reconcile_closed_trades(min_date="2026-06-01")
         self.assertEqual(first["corrected"], 1)
-        self.assertEqual(first["backfilled"], 1)
+        self.assertEqual(first["ignored_unmanaged"], 1)
         self.assertEqual(second["corrected"], 0)
-        self.assertEqual(second["backfilled"], 0)
-        self.assertEqual(len(self._rows()), 2)
+        self.assertEqual(second["ignored_unmanaged"], 1)
+        self.assertEqual(len(self._rows()), 1)
 
     def test_skips_open_trade_present_in_history(self):
         self._insert(position_id="700", status="OPEN", pnl=10.0, close_price=None, close_reason=None)
@@ -145,12 +138,12 @@ class ReconciliationTests(unittest.TestCase):
         row = self._rows(position_id="700")[0]
         self.assertEqual(row["status"], "OPEN")
 
-    def test_unmapped_instrument_is_not_backfilled(self):
+    def test_unknown_instrument_position_is_ignored(self):
         self.broker.list_trade_history.return_value = [
             hist("801", net_profit=10.0, close_rate=5.0, instrument_id=999999)
         ]
         summary = self.manager.reconcile_closed_trades(min_date="2026-06-01")
-        self.assertEqual(summary["backfilled"], 0)
+        self.assertEqual(summary["ignored_unmanaged"], 1)
         self.assertEqual(self._rows(position_id="801"), [])
 
     def test_no_broker_history_support_returns_empty_summary(self):
@@ -158,7 +151,7 @@ class ReconciliationTests(unittest.TestCase):
         mgr = TradeManager(self.config, logging.getLogger("t"), {PROVIDER_ETORO: broker}, self.data_manager, self.gpt)
         summary = mgr.reconcile_closed_trades(min_date="2026-06-01")
         self.assertEqual(summary["corrected"], 0)
-        self.assertEqual(summary["backfilled"], 0)
+        self.assertEqual(summary["ignored_unmanaged"], 0)
 
 
 if __name__ == "__main__":

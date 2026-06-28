@@ -76,12 +76,13 @@ class ReconcileToMetricsIntegrationTests(unittest.TestCase):
 
         summary = self.manager.reconcile_closed_trades(min_date="2026-06-01")
         self.assertEqual(summary["corrected"], 1)
-        self.assertEqual(summary["backfilled"], 1)
+        self.assertEqual(summary["ignored_unmanaged"], 1)
 
         after = self.metrics.compute_metrics(None, None)
-        # realized now equals the broker's authoritative total: 537.80 + 271.49
-        self.assertAlmostEqual(after["realized_pnl_abs"], 809.29, places=2)
-        self.assertEqual(after["n_trades"], 2)
+        # Only the algorithm's own trade (900) is corrected to the broker value;
+        # the unmanaged position (800) is ignored, never imported.
+        self.assertAlmostEqual(after["realized_pnl_abs"], 537.80, places=2)
+        self.assertEqual(after["n_trades"], 1)
 
 
 if __name__ == "__main__":
