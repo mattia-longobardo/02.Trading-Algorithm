@@ -1399,8 +1399,6 @@ class TradeManager:
 
     # --- closed-trade reconciliation against the broker's realized history ----
 
-    RECONCILE_DEFAULT_LOOKBACK_DAYS = 30
-
     def reconcile_closed_trades(
         self,
         *,
@@ -1427,7 +1425,10 @@ class TradeManager:
             return summary
 
         if min_date is None:
-            min_date = (utc_now() - timedelta(days=self.RECONCILE_DEFAULT_LOOKBACK_DAYS)).date()
+            min_date = self._algorithm_start_cutoff(provider)
+            if min_date is None:
+                # Nessun trade aperto dall'algoritmo: niente da riconciliare.
+                return summary
 
         try:
             history = broker.list_trade_history(min_date)
@@ -1457,6 +1458,18 @@ class TradeManager:
         if summary["corrected"]:
             self.logger.info("Closed-trade reconciliation (%s): %s", provider, summary)
         return summary
+
+    def _algorithm_start_cutoff(self, provider: str) -> str | None:
+        """Earliest open_timestamp among the algorithm's own trades for a
+        provider — the moment trading actually started. ``None`` if the
+        algorithm has not opened any position yet."""
+        row = fetch_one(
+            self.config.db_trades,
+            "SELECT MIN(open_timestamp) AS cutoff FROM trades "
+            "WHERE provider = ? AND open_timestamp IS NOT NULL",
+            (provider,),
+        )
+        return row["cutoff"] if row and row["cutoff"] else None
 
     def _closed_trades_by_position_id(self, provider: str) -> dict[str, dict[str, Any]]:
         rows = fetch_all(

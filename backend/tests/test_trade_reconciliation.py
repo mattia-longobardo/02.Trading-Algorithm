@@ -153,6 +153,20 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(summary["corrected"], 0)
         self.assertEqual(summary["ignored_unmanaged"], 0)
 
+    def test_derived_cutoff_is_earliest_open_timestamp(self):
+        self._insert(position_id="900", open_timestamp="2026-06-27T14:00:00Z")
+        self._insert(position_id="901", open_timestamp="2026-06-10T09:00:00Z")
+        self.broker.list_trade_history.return_value = []
+        self.manager.reconcile_closed_trades()  # min_date=None -> derived
+        self.broker.list_trade_history.assert_called_once_with("2026-06-10T09:00:00Z")
+
+    def test_reconcile_is_noop_without_algorithm_trades(self):
+        self.broker.list_trade_history.return_value = []
+        summary = self.manager.reconcile_closed_trades()  # nessun trade in DB
+        self.broker.list_trade_history.assert_not_called()
+        self.assertEqual(summary["corrected"], 0)
+        self.assertEqual(summary["ignored_unmanaged"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
