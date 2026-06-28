@@ -167,6 +167,19 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(summary["corrected"], 0)
         self.assertEqual(summary["ignored_unmanaged"], 0)
 
+    def test_logs_summary_when_only_ignored_unmanaged(self):
+        self._insert(position_id="900", pnl=537.80, close_price=66393.87,
+                     open_timestamp="2026-06-10T09:00:00Z")
+        self.broker.list_trade_history.return_value = [
+            hist("900", net_profit=537.80, close_rate=66393.87),  # unchanged
+            hist("800", net_profit=271.49, close_rate=587.93),    # unknown -> ignored
+        ]
+        with self.assertLogs("t", level="INFO") as cm:
+            summary = self.manager.reconcile_closed_trades(min_date="2026-06-01")
+        self.assertEqual(summary["corrected"], 0)
+        self.assertEqual(summary["ignored_unmanaged"], 1)
+        self.assertTrue(any("Closed-trade reconciliation" in m for m in cm.output))
+
 
 if __name__ == "__main__":
     unittest.main()

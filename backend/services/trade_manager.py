@@ -1455,7 +1455,7 @@ class TradeManager:
             else:
                 summary["unchanged"] += 1
 
-        if summary["corrected"]:
+        if summary["corrected"] or summary["ignored_unmanaged"]:
             self.logger.info("Closed-trade reconciliation (%s): %s", provider, summary)
         return summary
 
