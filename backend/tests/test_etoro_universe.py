@@ -199,6 +199,27 @@ class CheapPrefilterHelperTests(unittest.TestCase):
         self.assertFalse(manager._passes_cheap_filter("STOCK", self._stock("X", tradable=False)))
         self.assertFalse(manager._passes_cheap_filter("STOCK", self._stock("X", name="Big Index Fund")))
 
+    def test_passes_cheap_filter_stock_allows_unknown_fundamentals(self):
+        """Popularity-ranked search candidates carry no market_cap/country (the
+        instruments lookup exposes identity only), so unknown fundamentals must
+        pass the cheap filter — popularity already pre-qualified them. Values
+        that ARE present and below threshold still reject.
+        """
+        manager, _ = self._manager()
+        self.assertTrue(
+            manager._passes_cheap_filter(
+                "STOCK", self._stock("AAPL", country="", market_cap=None, dollar_volume=None)
+            )
+        )
+        # present-but-low market cap is still rejected
+        self.assertFalse(
+            manager._passes_cheap_filter("STOCK", self._stock("X", country="", market_cap=1e8))
+        )
+        # a known non-target country is still rejected
+        self.assertFalse(
+            manager._passes_cheap_filter("STOCK", self._stock("X", country="CN", market_cap=None))
+        )
+
     def test_passes_cheap_filter_crypto_rules(self):
         manager, _ = self._manager()
         self.assertTrue(manager._passes_cheap_filter("CRYPTO", self._crypto("ETH.SPOT")))
@@ -221,6 +242,14 @@ class CheapPrefilterHelperTests(unittest.TestCase):
         self.assertEqual(len(shortlist), 2)
         self.assertEqual(symbols, ["BBB", "CCC"])   # ranked by liquidity, capped
         self.assertNotIn("FOREIGN", symbols)         # wrong country filtered out
+
+    def test_build_cheap_shortlist_stock_allows_missing_discover_volume(self):
+        manager, broker = self._manager()
+        broker.discover_instruments.return_value = [
+            self._stock("AAPL", dollar_volume=None, market_cap=3e12),
+        ]
+        shortlist = manager._build_cheap_shortlist(broker, "STOCK", [])
+        self.assertEqual([a["symbol"] for a in shortlist], ["AAPL"])
 
     def test_build_cheap_shortlist_pins_preferred(self):
         manager, broker = self._manager()

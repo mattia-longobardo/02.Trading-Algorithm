@@ -638,7 +638,7 @@ class EToroDiscoverTests(unittest.TestCase):
         row = {
             "instrumentId": 101, "symbol": "AAPL", "displayName": "Apple Inc",
             "isin": "US0378331005", "assetClass": "Stocks", "exchangeName": "Nasdaq",
-            "countryCode": "US", "marketCapInUSD": 4.5e12, "currentRate": 200.0,
+            "countryCode": "US", "marketCap": 4.5e12, "currentRate": 200.0,
             "popularityUniques": 5000, "isBuyEnabled": True, "isDelisted": False,
             "daysSinceFirstTrade": 5000, "averageDailyVolumeLast3Months-TTM": 1_000_000.0,
             "tipranksAllConsensus": "StrongBuy", "tipranksAllUpside": 20.0,
@@ -674,22 +674,132 @@ class EToroDiscoverTests(unittest.TestCase):
         self.assertEqual(params["assetClass"], "Stocks")
         self.assertEqual(params["sort"], "-marketCap")
         self.assertIn("marketCapMin", params)
-        self.assertIn("marketCapInUSD", params["fields"])
+        self.assertIn("marketCap", params["fields"])
 
     def test_discover_instruments_crypto_uses_crypto_params(self):
         client, session = make_client()
         session.request.side_effect = [self._discover_page([
             {"instrumentId": 1, "symbol": "BTC", "displayName": "Bitcoin",
              "assetClass": "Crypto", "isBuyEnabled": True, "currentRate": 60000.0,
-             "marketCapInUSD": 1.2e12, "popularityUniques": 10},
+             "cryptoMarketCap": 1.2e12, "popularityUniques": 10},
         ])]
         rows = client.discover_instruments("CRYPTO")
         self.assertEqual(rows[0]["symbol"], "BTC")
         self.assertEqual(rows[0]["asset_class"], "Crypto")
+        self.assertEqual(rows[0]["market_cap"], 1.2e12)
         params = session.request.call_args_list[0].kwargs["params"]
         self.assertEqual(params["assetClass"], "Crypto")
-        self.assertEqual(params["sort"], "-popularityUniques")
+        self.assertEqual(params["sort"], "-cryptoMarketCap")
         self.assertNotIn("marketCapMin", params)
+
+    def test_discover_instruments_supports_legacy_market_cap_field(self):
+        client, session = make_client()
+        session.request.side_effect = [self._discover_page([
+            self._stock_row(marketCap=None, marketCapInUSD=4.5e12),
+        ])]
+        rows = client.discover_instruments("STOCK")
+        self.assertEqual(rows[0]["market_cap"], 4.5e12)
+
+    def _instruments_meta(self, rows):
+        return make_response(200, {"instrumentDisplayDatas": rows})
+
+    def test_discover_instruments_404_falls_back_to_popularity_search(self):
+        """When Asset Explorer 404s, rank candidates via market-data/search by
+        popularity and resolve their metadata via /market-data/instruments.
+
+        eToro's search endpoint returns ONLY ``instrumentId`` per item and sorts
+        most-popular-first with the ascending ``popularityUniques`` key (the
+        ``-popularityUniques`` descending key surfaces dated-future junk). The
+        IDs are then resolved to symbols in a batch instruments lookup, and only
+        rows matching the requested asset class's instrument types are kept.
+        """
+        client, session = make_client()
+        session.request.side_effect = [
+            make_response(404, {"errorCode": "RouteNotFound", "errorMessage": "Route not found"}),
+            make_response(200, {"instrumentTypes": [
+                {"instrumentTypeID": 10, "instrumentTypeDescription": "Crypto"},
+                {"instrumentTypeID": 5, "instrumentTypeDescription": "Stocks"},
+            ]}),
+            # search page 1: popularity order (BTC then a stock); short page stops paging
+            make_response(200, {"items": [{"instrumentId": 100000}, {"instrumentId": 1001}]}),
+            # batch metadata lookup for both ids
+            self._instruments_meta([
+                {"instrumentID": 100000, "symbolFull": "BTC", "instrumentDisplayName": "Bitcoin",
+                 "instrumentTypeID": 10, "exchangeID": 8, "isInternalInstrument": False},
+                {"instrumentID": 1001, "symbolFull": "AAPL", "instrumentDisplayName": "Apple",
+                 "instrumentTypeID": 5, "exchangeID": 4, "isInternalInstrument": False},
+            ]),
+        ]
+        rows = client.discover_instruments("CRYPTO")
+        # only the crypto-type row survives the type filter
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["symbol"], "BTC")
+        self.assertEqual(rows[0]["instrument_id"], 100000)
+        self.assertEqual(rows[0]["name"], "Bitcoin")
+        self.assertTrue(rows[0]["tradable"])
+        calls = session.request.call_args_list
+        self.assertEqual(calls[0].args[1], "https://public-api.etoro.com/api/v1/instruments/discover")
+        self.assertEqual(calls[1].args[1], "https://public-api.etoro.com/api/v1/market-data/instrument-types")
+        self.assertEqual(calls[2].args[1], "https://public-api.etoro.com/api/v1/market-data/search")
+        search_params = calls[2].kwargs["params"]
+        self.assertEqual(search_params["sort"], "popularityUniques")
+        self.assertEqual(search_params["pageNumber"], 1)
+        self.assertIn("instrumentId", search_params["fields"])
+        # metadata lookup must reach eToro with LITERAL commas (the gateway 500s
+        # on %2C-encoded commas), in popularity order, not via encodable params
+        lookup_url = calls[3].args[1]
+        self.assertIn("instrumentIds=100000,1001", lookup_url)
+        self.assertNotIn("instrumentIds", str(calls[3].kwargs.get("params") or ""))
+
+    def test_discover_instruments_search_fallback_keeps_stock_types(self):
+        client, session = make_client()
+        session.request.side_effect = [
+            make_response(404, {"errorCode": "RouteNotFound", "errorMessage": "Route not found"}),
+            make_response(200, {"instrumentTypes": [
+                {"instrumentTypeID": 10, "instrumentTypeDescription": "Crypto"},
+                {"instrumentTypeID": 5, "instrumentTypeDescription": "Stocks"},
+            ]}),
+            make_response(200, {"items": [{"instrumentId": 1001}, {"instrumentId": 100000}]}),
+            self._instruments_meta([
+                {"instrumentID": 1001, "symbolFull": "AAPL", "instrumentDisplayName": "Apple",
+                 "instrumentTypeID": 5, "exchangeID": 4, "isInternalInstrument": False},
+                {"instrumentID": 100000, "symbolFull": "BTC", "instrumentDisplayName": "Bitcoin",
+                 "instrumentTypeID": 10, "exchangeID": 8, "isInternalInstrument": False},
+            ]),
+        ]
+        rows = client.discover_instruments("STOCK")
+        self.assertEqual([r["symbol"] for r in rows], ["AAPL"])
+
+    def test_discover_instruments_search_fallback_skips_internal(self):
+        client, session = make_client()
+        session.request.side_effect = [
+            make_response(404, {"errorCode": "RouteNotFound", "errorMessage": "Route not found"}),
+            make_response(200, {"instrumentTypes": [
+                {"instrumentTypeID": 10, "instrumentTypeDescription": "Crypto"},
+            ]}),
+            make_response(200, {"items": [{"instrumentId": 100000}, {"instrumentId": 222}]}),
+            self._instruments_meta([
+                {"instrumentID": 100000, "symbolFull": "BTC", "instrumentDisplayName": "Bitcoin",
+                 "instrumentTypeID": 10, "isInternalInstrument": False},
+                {"instrumentID": 222, "symbolFull": "INT", "instrumentDisplayName": "Internal",
+                 "instrumentTypeID": 10, "isInternalInstrument": True},
+            ]),
+        ]
+        rows = client.discover_instruments("CRYPTO")
+        self.assertEqual([r["symbol"] for r in rows], ["BTC"])
+
+    def test_discover_instruments_returns_empty_when_search_fallback_is_unavailable(self):
+        client, session = make_client()
+        session.request.side_effect = [
+            make_response(404, {"errorCode": "RouteNotFound", "errorMessage": "Route not found"}),
+            make_response(200, {"instrumentTypes": [
+                {"instrumentTypeID": 10, "instrumentTypeDescription": "Crypto"},
+            ]}),
+            make_response(404, {"message": "An error has occurred."}),
+        ]
+        rows = client.discover_instruments("CRYPTO")
+        self.assertEqual(rows, [])
+        self.assertEqual(session.request.call_count, 3)
 
     def test_discover_instruments_tradable_false_when_delisted(self):
         client, session = make_client()

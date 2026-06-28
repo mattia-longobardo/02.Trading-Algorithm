@@ -387,13 +387,18 @@ class UniverseManager:
             ):
                 return False
             countries = {code.upper() for code in (self.config.universe_countries or ())}
-            if countries and str(asset.get("country_code") or "").upper() not in countries:
+            country_code = str(asset.get("country_code") or "").upper()
+            # Popularity-ranked search candidates expose no country/market_cap
+            # (the instruments lookup is identity-only), so only reject on values
+            # we actually know; unknown fundamentals pass and are re-qualified by
+            # the bar-based liquidity prefilter during enrichment.
+            if countries and country_code and country_code not in countries:
                 return False
             market_cap = self._safe_float(asset.get("market_cap"))
-            if market_cap is None or market_cap < self.config.universe_stock_min_market_cap:
+            if market_cap is not None and market_cap < self.config.universe_stock_min_market_cap:
                 return False
             dollar_volume = self._safe_float(asset.get("dollar_volume"))
-            if dollar_volume is None or dollar_volume < self.config.universe_stock_min_dollar_volume:
+            if dollar_volume is not None and dollar_volume < self.config.universe_stock_min_dollar_volume:
                 return False
             return True
         # CRYPTO
@@ -868,10 +873,10 @@ class UniverseManager:
                     exc_info=True,
                 )
             if not base_stock_payload:
-                self.logger.warning("eToro discover STOCK prefilter empty; using legacy full scan for STOCK")
+                self.logger.info("eToro discover STOCK prefilter empty; using legacy full scan for STOCK")
                 base_stock_payload = self._get_etoro_stock_candidate_payload()
             if not base_crypto_payload:
-                self.logger.warning("eToro discover CRYPTO prefilter empty; using legacy full scan for CRYPTO")
+                self.logger.info("eToro discover CRYPTO prefilter empty; using legacy full scan for CRYPTO")
                 base_crypto_payload = self._get_etoro_crypto_candidate_payload()
 
             full_stock_payload = self._enrich_payload_with_market_metrics(

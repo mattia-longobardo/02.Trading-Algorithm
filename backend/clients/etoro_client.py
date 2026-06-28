@@ -98,13 +98,23 @@ class EToroClient:
         params: dict[str, Any] | None = None,
         json_body: dict[str, Any] | None = None,
     ) -> Any:
+        return self._perform_request(method, path, params=params, json_body=json_body)
+
+    def _perform_request(
+        self,
+        method: str,
+        path: str,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
         if method.upper() == "GET":
             self.rate_limiter.acquire()
         url = f"{ETORO_BASE_URL}{path}"
         response = self.session.request(
             method.upper(),
             url,
-            headers=self._headers(),
+            headers=headers or self._headers(),
             params=params,
             json=json_body,
             timeout=30,
@@ -118,6 +128,21 @@ class EToroClient:
             return {}
 
     @retry(should_retry=_is_transient_etoro_error)
+    def _request_or_none_on_404(
+        self,
+        method: str,
+        path: str,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> Any | None:
+        try:
+            return self._perform_request(method, path, params=params, json_body=json_body)
+        except EToroAPIError as exc:
+            if exc.status_code == 404:
+                return None
+            raise
+
+    @retry(should_retry=_is_transient_etoro_error)
     def _request_with_id(
         self,
         method: str,
@@ -127,17 +152,7 @@ class EToroClient:
     ) -> Any:
         headers = self._headers()
         headers["x-request-id"] = request_id
-        url = f"{ETORO_BASE_URL}{path}"
-        response = self.session.request(
-            method.upper(), url, headers=headers, json=json_body, timeout=30
-        )
-        status = int(getattr(response, "status_code", 0))
-        if status >= 400:
-            raise EToroAPIError(status, getattr(response, "text", "") or "request failed")
-        try:
-            return response.json()
-        except ValueError:
-            return {}
+        return self._perform_request(method, path, headers=headers, json_body=json_body)
 
     # --- market data --------------------------------------------------------
 
@@ -343,22 +358,29 @@ class EToroClient:
 
     DISCOVER_PAGE_SIZE = 200
     DISCOVER_MAX_ITEMS = 2500
-    # discover mixes all asset classes; the working server-side type filter is
-    # `assetClass` (NOT `instrumentTypeID`, which does not filter).
+    # Discover mixes all asset classes; the server-side filter documented for
+    # Asset Explorer is `assetClass`.
     _ASSET_CLASS_PARAM = {"US_EQUITY": "Stocks", "STOCK": "Stocks", "CRYPTO": "Crypto"}
     _DISCOVER_CAPS = {"STOCK": 2500, "CRYPTO": 1000}
-    # The default discover projection is minimal; requesting an explicit field
-    # list returns the full fundamentals object (incl. marketCap, liquidity,
-    # analyst consensus, growth/margin) with NO bar fetch.
+    # Asset Explorer field names are intentionally different from
+    # /market-data/search. Keep this projection aligned with the public
+    # AssetExplorer_Instrument schema; unsupported field names can make the
+    # endpoint brittle across eToro deployments.
     _DISCOVER_FIELDS = (
-        "symbol,isin,displayName,assetClass,exchangeName,countryCode,"
-        "marketCapInUSD,currentRate,popularityUniques,isBuyEnabled,isDelisted,"
-        "daysSinceFirstTrade,averageDailyVolumeLast3Months-TTM,"
-        "tipranksAllConsensus,tipranksAllUpside,tipranksAllTotalAnalysts,"
+        "instrumentId,symbol,displayName,assetClass,exchangeName,countryCode,"
+        "currentRate,marketCap,cryptoMarketCap,cryptoMarketCapRank,"
         "oneYearAnnualRevenueGrowthRate,netProfitMargin,"
-        "dailyPriceChange,weeklyPriceChange,monthlyPriceChange,"
-        "threeMonthPriceChange,sixMonthPriceChange"
+        "salesOrRevenue,ebitda,totalEnterpriseValue"
     )
+    # eToro's /market-data/search returns ONLY ``instrumentId`` per item
+    # regardless of the requested ``fields`` projection, and ranks
+    # most-popular-first with the *ascending* ``popularityUniques`` key (the
+    # ``-popularityUniques`` descending key surfaces dated-future junk first).
+    # So the search fallback just collects popular IDs and resolves their
+    # metadata in a separate batch instruments lookup.
+    _SEARCH_SORT = "popularityUniques"
+    _SEARCH_MAX_PAGES = 25
+    _INSTRUMENTS_LOOKUP_BATCH = 100
 
     def list_exchanges(self) -> dict[int, str]:
         """Return ``{exchangeID: exchangeDescription}`` (cached for the run)."""
@@ -374,8 +396,13 @@ class EToroClient:
         self._exchange_cache = out
         return out
 
-    def _instrument_type_ids(self, hints: tuple[str, ...]) -> list[int]:
-        payload = self._request("GET", "/api/v1/market-data/instrument-types")
+    def _instrument_type_ids(self, hints: tuple[str, ...], *, quiet_404: bool = False) -> list[int]:
+        if quiet_404:
+            payload = self._request_or_none_on_404("GET", "/api/v1/market-data/instrument-types")
+            if payload is None:
+                return []
+        else:
+            payload = self._request("GET", "/api/v1/market-data/instrument-types")
         out: list[int] = []
         for entry in payload.get("instrumentTypes") or []:
             desc = str(entry.get("instrumentTypeDescription") or "").lower()
@@ -417,20 +444,43 @@ class EToroClient:
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _first_present(row: dict[str, Any], *keys: str) -> Any:
+        for key in keys:
+            value = row.get(key)
+            if value is not None and value != "":
+                return value
+        return None
+
     def _normalize_discover_row(self, row: dict[str, Any], category: str) -> dict[str, Any]:
-        symbol = str(row.get("symbol") or "").upper().strip()
+        symbol = str(self._first_present(row, "symbol", "internalSymbolFull", "symbolFull") or "").upper().strip()
         instrument_id = int(row["instrumentId"])
-        name = str(row.get("displayName") or "")
+        name = str(
+            self._first_present(
+                row, "displayName", "displayname", "internalInstrumentDisplayName", "instrumentDisplayName"
+            )
+            or ""
+        )
         delisted = bool(row.get("isDelisted"))
-        tradable = bool(row.get("isBuyEnabled", True)) and not delisted
+        currently_tradable = self._first_present(row, "isCurrentlyTradable")
+        buy_enabled = self._first_present(row, "isBuyEnabled")
+        tradable = (
+            (bool(currently_tradable) if currently_tradable is not None else True)
+            and (bool(buy_enabled) if buy_enabled is not None else True)
+            and not delisted
+        )
         current_rate = self._discover_float(row.get("currentRate"))
-        avg_daily_volume = self._discover_float(row.get("averageDailyVolumeLast3Months-TTM"))
+        avg_daily_volume = self._discover_float(
+            self._first_present(row, "averageDailyVolumeLast3Months-TTM", "averageDailyVolumeLast3MonthsTTM")
+        )
         dollar_volume = (
             avg_daily_volume * current_rate
             if avg_daily_volume is not None and current_rate is not None
             else None
         )
         consensus = row.get("tipranksAllConsensus")
+        market_cap = self._discover_float(self._first_present(row, "marketCap", "marketCapInUSD", "cryptoMarketCap"))
+        asset_class = str(self._first_present(row, "assetClass", "internalAssetClassName", "instrumentType") or "")
         asset = {
             "symbol": symbol,
             "name": name,
@@ -440,11 +490,11 @@ class EToroClient:
             "delisted": delisted,
             "fractionable": False,
             "instrument_id": instrument_id,
-            "asset_class": str(row.get("assetClass") or ""),
-            "instrument_type": str(row.get("assetClass") or ""),
-            "exchange_name": str(row.get("exchangeName") or ""),
+            "asset_class": asset_class,
+            "instrument_type": str(self._first_present(row, "instrumentType", "assetClass", "internalAssetClassName") or ""),
+            "exchange_name": str(self._first_present(row, "exchangeName", "internalExchangeName") or ""),
             "country_code": str(row.get("countryCode") or "").upper(),
-            "market_cap": self._discover_float(row.get("marketCapInUSD")),
+            "market_cap": market_cap,
             "current_rate": current_rate,
             "avg_daily_volume": avg_daily_volume,
             "dollar_volume": dollar_volume,
@@ -467,14 +517,172 @@ class EToroClient:
             self.logger.debug("Failed to cache instrument mapping for %s", symbol)
         return asset
 
+    def _search_popular_instrument_ids(self, page: int) -> list[int] | None:
+        """One page of instrument IDs ranked most-popular-first, or ``None`` on 404.
+
+        The search projection is irrelevant (eToro returns only ``instrumentId``),
+        so we request just that field and let the ascending ``popularityUniques``
+        sort do the ranking. Non-positive IDs (synthetic aggregate rows like
+        ``-100000``) are dropped.
+        """
+        payload = self._request_or_none_on_404(
+            "GET",
+            "/api/v1/market-data/search",
+            params={
+                "fields": "instrumentId",
+                "pageSize": self.DISCOVER_PAGE_SIZE,
+                "pageNumber": page,
+                "sort": self._SEARCH_SORT,
+            },
+        )
+        if payload is None:
+            return None
+        ids: list[int] = []
+        for item in payload.get("items") or []:
+            raw = item.get("instrumentId")
+            if raw is None:
+                continue
+            try:
+                iid = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if iid > 0:
+                ids.append(iid)
+        return ids
+
+    def _resolve_instruments_metadata(self, instrument_ids: list[int]) -> dict[int, dict[str, Any]]:
+        """Batch-resolve instrument IDs to their metadata rows.
+
+        ``/market-data/instruments`` is the only endpoint that maps an ID to its
+        symbol/type, but eToro's gateway 500s on ``%2C``-encoded commas, so the
+        comma-joined ids must reach it literally (embedded in the path), exactly
+        like ``get_rates_by_instruments``.
+        """
+        out: dict[int, dict[str, Any]] = {}
+        for start in range(0, len(instrument_ids), self._INSTRUMENTS_LOOKUP_BATCH):
+            batch = instrument_ids[start : start + self._INSTRUMENTS_LOOKUP_BATCH]
+            ids_param = ",".join(str(int(i)) for i in batch)
+            payload = self._request(
+                "GET",
+                f"/api/v1/market-data/instruments?instrumentIds={ids_param}",
+            )
+            for row in payload.get("instrumentDisplayDatas") or []:
+                iid = row.get("instrumentID")
+                if iid is None:
+                    continue
+                out[int(iid)] = row
+        return out
+
+    def _normalize_search_row(self, row: dict[str, Any], category: str) -> dict[str, Any]:
+        """Shape an ``/market-data/instruments`` metadata row like a discover row.
+
+        This endpoint exposes identity + classification only (no fundamentals),
+        so the quality/liquidity fields are left unknown and filled later from
+        price bars during enrichment. Popularity already pre-qualified the row.
+        """
+        symbol = str(row.get("symbolFull") or "").upper().strip()
+        instrument_id = int(row["instrumentID"])
+        name = str(row.get("instrumentDisplayName") or "")
+        asset = {
+            "symbol": symbol,
+            "name": name,
+            "isin": "",
+            "status": "active",
+            "tradable": True,
+            "delisted": False,
+            "fractionable": False,
+            "instrument_id": instrument_id,
+            "asset_class": category,
+            "instrument_type": category,
+            "exchange_name": "",
+            "country_code": "",
+            "market_cap": None,
+            "current_rate": None,
+            "avg_daily_volume": None,
+            "dollar_volume": None,
+            "days_since_first_trade": None,
+            "popularity": 0,
+            "analyst_consensus": None,
+            "analyst_upside": None,
+            "analyst_count": 0,
+            "revenue_growth": None,
+            "net_margin": None,
+            "price_change_1d": None,
+            "price_change_1w": None,
+            "price_change_1m": None,
+            "price_change_3m": None,
+            "price_change_6m": None,
+        }
+        try:
+            upsert_instrument_mapping(self.config.db_market_data, symbol, instrument_id, category, name, True)
+        except Exception:
+            self.logger.debug("Failed to cache instrument mapping for %s", symbol)
+        return asset
+
+    def _search_instruments_for_prefilter(self, asset_class: str) -> list[dict[str, Any]]:
+        ac = str(asset_class).upper()
+        hints = self._ASSET_CLASS_HINTS.get(ac, (ac.lower(),))
+        category = "CRYPTO" if "crypto" in hints else "STOCK"
+        type_ids = set(self._instrument_type_ids(hints, quiet_404=True))
+        if not type_ids:
+            return []
+        # The search feed is popularity-ranked (best first) AND rate-limited, so
+        # collecting the full DISCOVER cap is wasteful: the universe only keeps a
+        # shortlist of a few hundred. Bound the pull to the configured shortlist
+        # plus headroom for the downstream cheap filter / dedupe.
+        shortlist = (
+            self.config.universe_crypto_shortlist
+            if category == "CRYPTO"
+            else self.config.universe_stock_shortlist
+        )
+        cap = min(
+            self._DISCOVER_CAPS.get(category, self.DISCOVER_MAX_ITEMS),
+            max(int(shortlist) * 2, 200),
+        )
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        page = 1
+        while len(out) < cap and page <= self._SEARCH_MAX_PAGES:
+            ids = self._search_popular_instrument_ids(page)
+            if ids is None:
+                self.logger.info(
+                    "eToro market-data search returned 404; using legacy universe fallback for %s",
+                    category,
+                )
+                return []
+            if not ids:
+                break
+            metadata = self._resolve_instruments_metadata(ids)
+            # iterate in the popularity order returned by search
+            for iid in ids:
+                row = metadata.get(iid)
+                if row is None or row.get("isInternalInstrument"):
+                    continue
+                row_type_id = row.get("instrumentTypeID")
+                if row_type_id is None or int(row_type_id) not in type_ids:
+                    continue
+                symbol = str(row.get("symbolFull") or "").upper().strip()
+                if not symbol or symbol in seen:
+                    continue
+                seen.add(symbol)
+                out.append(self._normalize_search_row(row, category))
+                if len(out) >= cap:
+                    break
+            if len(ids) < self.DISCOVER_PAGE_SIZE:
+                break
+            page += 1
+        return out
+
     def discover_instruments(self, asset_class: str) -> list[dict[str, Any]]:
         """Cheap metadata discovery for the universe prefilter.
 
         Uses ``/api/v1/instruments/discover`` with the ``assetClass`` server-side
-        filter and an explicit ``fields`` projection to return rich fundamentals
-        (market cap, liquidity, analyst consensus, growth/margin, momentum)
+        filter and an explicit ``fields`` projection to return fundamentals
         WITHOUT fetching any price bars. Stocks are filtered to
         ``universe_stock_min_market_cap`` server-side and sorted by market cap.
+        If a key/deployment does not expose Asset Explorer and returns a 404,
+        falls back to ``/api/v1/market-data/search`` so the bootstrap run does
+        not emit a traceback before the legacy universe fallback.
 
         Note: each accepted row is upserted into the local ``instrument_map``
         cache individually; O(rows) SQLite writes per run, bounded by the
@@ -494,15 +702,21 @@ class EToroClient:
             if min_cap and min_cap > 0:
                 params_base["marketCapMin"] = int(min_cap)
         else:
-            params_base["sort"] = "-popularityUniques"
+            params_base["sort"] = "-cryptoMarketCap"
         cap = self._DISCOVER_CAPS.get(category, self.DISCOVER_MAX_ITEMS)
         out: list[dict[str, Any]] = []
         seen: set[str] = set()
         page = 1
         while len(out) < cap:
-            payload = self._request(
+            payload = self._request_or_none_on_404(
                 "GET", "/api/v1/instruments/discover", params={**params_base, "page": page}
             )
+            if payload is None:
+                self.logger.info(
+                    "eToro Asset Explorer discover returned 404; using market-data search fallback for %s",
+                    category,
+                )
+                return self._search_instruments_for_prefilter(asset_class)
             items = payload.get("items") or []
             if not items:
                 break
