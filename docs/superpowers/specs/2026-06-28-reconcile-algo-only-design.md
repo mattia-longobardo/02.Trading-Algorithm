@@ -155,8 +155,8 @@ re-inserito, perché non esiste più alcun percorso di backfill.
 - Nessuna modifica al calcolo delle metriche/dashboard oltre all'effetto della
   pulizia dei dati.
 
-## Open Questions
+## Decisioni risolte
 
-- Endpoint manuale `/api/trades/reconcile`: il parametro `lookback_days` va
-  rimosso del tutto o mantenuto come no-op per non rompere chiamate esistenti?
-  (Default proposto: rimuoverlo, è interno/admin.)
+- Endpoint manuale `/api/trades/reconcile`: il parametro `lookback_days` viene
+  **rimosso** del tutto (endpoint interno/admin). `run_manual_reconcile_closed_trades`
+  non accetta più `lookback_days` e chiama `reconcile_closed_trades(min_date=None)`.
