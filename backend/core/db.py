@@ -226,6 +226,17 @@ def _ensure_optional_trade_columns(connection: sqlite3.Connection) -> None:
         alter_cursor.close()
 
 
+def _purge_backfilled_trades(connection: sqlite3.Connection) -> None:
+    """One-time cleanup: drop rows that earlier runs imported from the broker's
+    trade history. Identified by the unique backfill marker in ``reasoning``;
+    legitimate algorithm trades (including externally-closed ones) are untouched.
+    Idempotent."""
+    cursor = connection.execute(
+        "DELETE FROM trades WHERE reasoning = 'Backfilled from eToro trade history'"
+    )
+    cursor.close()
+
+
 def initialize_databases(market_db_path: str, trades_db_path: str) -> None:
     """Create all SQLite tables if missing."""
 
@@ -242,6 +253,7 @@ def initialize_databases(market_db_path: str, trades_db_path: str) -> None:
     try:
         trade_conn.executescript(TRADES_SCHEMA)
         _ensure_optional_trade_columns(trade_conn)
+        _purge_backfilled_trades(trade_conn)
         trade_conn.commit()
     finally:
         trade_conn.close()
