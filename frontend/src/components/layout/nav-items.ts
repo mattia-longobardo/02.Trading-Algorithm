@@ -4,6 +4,7 @@ import {
   FileText,
   Globe,
   LineChart,
+  Scale,
   Settings,
   ShieldAlert,
   Terminal,
@@ -20,6 +21,7 @@ export interface NavItem {
 
 export const NAV: NavItem[] = [
   { href: "/", label: "Dashboard", icon: LineChart },
+  { href: "/benchmark", label: "Benchmark", icon: Scale },
   { href: "/positions", label: "Posizioni", icon: Activity },
   { href: "/risk", label: "Rischio", icon: ShieldAlert },
   { href: "/trades", label: "Trade", icon: ClipboardList },

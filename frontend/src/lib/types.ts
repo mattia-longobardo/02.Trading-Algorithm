@@ -92,6 +92,27 @@ export interface EquityPoint {
   equity: number;
 }
 
+export interface BenchmarkPoint {
+  t: string;
+  portfolio_pct: number | null;
+  benchmark_pct: number | null;
+}
+
+export interface BenchmarkSummary {
+  portfolio_pct: number;
+  benchmark_pct: number | null;
+  alpha_pct: number | null;
+  portfolio_base: number;
+  portfolio_latest: number;
+  currency: string;
+}
+
+export interface BenchmarkResponse {
+  points: BenchmarkPoint[];
+  summary: BenchmarkSummary | null;
+  benchmark: { symbol: string; points_count: number; error: string | null };
+}
+
 export interface PnlBySymbolRow {
   symbol: string;
   pnl_abs: number;

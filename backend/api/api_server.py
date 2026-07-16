@@ -51,6 +51,7 @@ from core.utils import (
     parse_datetime,
     utc_now,
 )
+from services.benchmark import DEFAULT_BENCHMARK_SYMBOL, BenchmarkService
 from services.equity_snapshots import equity_curve_for_api, record_snapshots_all
 from services.live_snapshot import LiveSnapshotCache
 from services.metrics_service import MetricsService, parse_named_window, parse_window
@@ -266,6 +267,7 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
     brokers: dict[str, Any] = dict(getattr(scheduler.trade_manager, "brokers", {}) or {})
     metrics = MetricsService(config, api_logger, broker_clients=brokers)
     live_cache = LiveSnapshotCache(metrics, brokers, config, api_logger)
+    benchmark_service = BenchmarkService(config, api_logger)
 
     # Snapshot the restart-only settings as they were when this process booted
     # (main() applies the overlay before constructing the API). A restart is
@@ -771,6 +773,28 @@ def create_app(scheduler: TradingScheduler, logger: logging.Logger) -> FastAPI:
             )
         _audit(admin, entity="equity_snapshot", entity_id=None, action="manual_snapshot")
         return {"snapshots": snapshots}
+
+    @app.get("/api/benchmark")
+    def get_benchmark(
+        _user: auth_lib.AuthenticatedUser = Depends(get_current_user),
+        window: str | None = Query(default=None),
+        from_iso: str | None = Query(default=None, alias="from"),
+        to_iso: str | None = Query(default=None, alias="to"),
+        symbol: str = Query(default=DEFAULT_BENCHMARK_SYMBOL),
+    ) -> dict[str, Any]:
+        """Andamento del conto vs benchmark (default S&P 500), normalizzato in %.
+
+        Il portafoglio viene dai daily bucket degli snapshot equity; il
+        benchmark dalle candele daily eToro. Se il broker non è disponibile
+        la serie benchmark resta vuota e ``benchmark.error`` spiega perché,
+        così la pagina può comunque mostrare la curva del conto.
+        """
+        if window:
+            from_dt, to_dt = parse_named_window(window)
+        else:
+            from_dt, to_dt = parse_window(from_iso, to_iso)
+        broker = _resolve_brokers().get(PROVIDER_ETORO)
+        return benchmark_service.comparison(broker, from_dt=from_dt, to_dt=to_dt, symbol=symbol)
 
     @app.get("/api/returns-distribution")
     def get_returns_distribution(

@@ -143,3 +143,15 @@ differenze osservabili dal bot:
   riavvio (eccezione: `LOG_LEVEL`/`LOG_PROFILE`, marcati "restart
   required" dalla UI).
 - L'API ora richiede autenticazione e i job manuali sono admin-only.
+
+## Licenza
+
+Copyright (c) 2026 Mattia Longobardo. Tutti i diritti riservati.
+
+Questo repository è distribuito sotto **[PolyForm Strict License 1.0.0](LICENSE.md)**
+(<https://polyformproject.org/licenses/strict/1.0.0>): sono vietati la
+ridistribuzione, la copia, la creazione di opere derivate e qualsiasi uso
+commerciale del codice. È consentita esclusivamente la consultazione e
+l'esecuzione per scopi personali non commerciali, come definito dalla licenza.
+
+Required Notice: Copyright (c) Mattia Longobardo

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.parse import quote
 from uuid import uuid4
 
 import requests
@@ -304,10 +305,10 @@ class EToroClient:
             payload = self._request("GET", f"/api/v1/instruments/{normalized}")
         except EToroAPIError as exc:
             if exc.status_code == 404:
-                return None
+                return self._resolve_instrument_via_search(normalized)
             raise
         if not payload or payload.get("instrumentId") is None:
-            return None
+            return self._resolve_instrument_via_search(normalized)
         return {
             "symbol": str(payload.get("symbol") or normalized).upper().strip(),
             "instrument_id": int(payload["instrumentId"]),
@@ -315,6 +316,52 @@ class EToroClient:
             "name": str(payload.get("displayname") or ""),
             "tradable": bool(payload.get("isCurrentlyTradable")) and bool(payload.get("isBuyEnabled", True)),
         }
+
+    def _resolve_instrument_via_search(self, normalized: str) -> dict[str, Any] | None:
+        """Fallback lookup: exact ``internalSymbolFull`` match via ``/market-data/search``.
+
+        The direct ``/api/v1/instruments/{symbol}`` route answers 404
+        ("RouteNotFound") for some symbols the platform does list — indices
+        like SPX500 above all — while the search endpoint finds them. Search
+        results carry no instrument type, so the category is derived from the
+        batch-metadata ``instrumentTypeID`` compared against the crypto type ids.
+        """
+
+        # Comma-separated ``fields`` must reach the gateway literally: eToro
+        # rejects ``%2C``-encoded commas (same quirk as get_rates_by_instruments).
+        fields = "instrumentId,internalSymbolFull,displayname,isCurrentlyTradable,isBuyEnabled"
+        payload = self._request_or_none_on_404(
+            "GET",
+            f"/api/v1/market-data/search?internalSymbolFull={quote(normalized)}&fields={fields}",
+        )
+        if payload is None:
+            return None
+        for item in payload.get("items") or []:
+            item_symbol = str(item.get("internalSymbolFull") or "").upper().strip()
+            if item_symbol != normalized or item.get("instrumentId") is None:
+                continue
+            instrument_id = int(item["instrumentId"])
+            category = "STOCK"
+            try:
+                crypto_type_ids = set(self._instrument_type_ids(self._CRYPTO_TYPE_HINTS))
+                meta = self._resolve_instruments_metadata([instrument_id]).get(instrument_id) or {}
+                if int(meta.get("instrumentTypeID", -1)) in crypto_type_ids:
+                    category = "CRYPTO"
+            except Exception:
+                self.logger.debug(
+                    "resolve via search: type lookup failed for %s, defaulting to STOCK",
+                    normalized,
+                    exc_info=True,
+                )
+            return {
+                "symbol": item_symbol,
+                "instrument_id": instrument_id,
+                "category": category,
+                "name": str(item.get("displayname") or ""),
+                "tradable": bool(item.get("isCurrentlyTradable"))
+                and bool(item.get("isBuyEnabled", True)),
+            }
+        return None
 
     def instrument_id_for_symbol(self, symbol: str) -> int | None:
         """Resolve a ticker to an eToro instrumentId, caching in instrument_map."""

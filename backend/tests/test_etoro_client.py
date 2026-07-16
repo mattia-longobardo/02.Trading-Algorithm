@@ -187,6 +187,83 @@ class EToroInstrumentTests(unittest.TestCase):
         session.request.return_value = make_response(404, {})
         self.assertIsNone(client.resolve_instrument("NOPE"))
 
+    def test_resolve_falls_back_to_search_when_direct_route_404s(self):
+        # eToro's /instruments/{symbol} route 404s for indices like SPX500;
+        # the client must fall back to an exact-match /market-data/search.
+        client, session = make_client()
+
+        def fake_request(*args, **kwargs):
+            url = "".join(str(a) for a in args) + str(kwargs.get("url", ""))
+            if "/market-data/search" in url:
+                return make_response(200, {
+                    "items": [
+                        {
+                            "internalSymbolFull": "SPX500.FUT",
+                            "instrumentId": 254,
+                            "displayname": "SPX500 Future",
+                            "isCurrentlyTradable": True,
+                            "isBuyEnabled": True,
+                        },
+                        {
+                            "internalSymbolFull": "SPX500",
+                            "instrumentId": 27,
+                            "displayname": "SPX500 Index (Non Expiry)",
+                            "isCurrentlyTradable": True,
+                            "isBuyEnabled": True,
+                        },
+                    ]
+                })
+            if "/market-data/instrument-types" in url:
+                return make_response(200, {
+                    "instrumentTypes": [
+                        {"instrumentTypeID": 10, "instrumentTypeDescription": "Cryptocurrencies"},
+                        {"instrumentTypeID": 4, "instrumentTypeDescription": "Indices"},
+                    ]
+                })
+            if "/market-data/instruments" in url:
+                return make_response(200, {
+                    "instrumentDisplayDatas": [{"instrumentID": 27, "instrumentTypeID": 4}]
+                })
+            return make_response(404, {})
+
+        session.request.side_effect = fake_request
+        asset = client.resolve_instrument("SPX500")
+        self.assertEqual(asset["instrument_id"], 27)
+        self.assertEqual(asset["symbol"], "SPX500")
+        self.assertEqual(asset["category"], "STOCK")
+        self.assertTrue(asset["tradable"])
+
+    def test_resolve_search_fallback_detects_crypto_category(self):
+        client, session = make_client()
+
+        def fake_request(*args, **kwargs):
+            url = "".join(str(a) for a in args) + str(kwargs.get("url", ""))
+            if "/market-data/search" in url:
+                return make_response(200, {
+                    "items": [{
+                        "internalSymbolFull": "NEWCOIN",
+                        "instrumentId": 100777,
+                        "displayname": "New Coin",
+                        "isCurrentlyTradable": True,
+                        "isBuyEnabled": True,
+                    }]
+                })
+            if "/market-data/instrument-types" in url:
+                return make_response(200, {
+                    "instrumentTypes": [
+                        {"instrumentTypeID": 10, "instrumentTypeDescription": "Cryptocurrencies"},
+                    ]
+                })
+            if "/market-data/instruments" in url:
+                return make_response(200, {
+                    "instrumentDisplayDatas": [{"instrumentID": 100777, "instrumentTypeID": 10}]
+                })
+            return make_response(404, {})
+
+        session.request.side_effect = fake_request
+        asset = client.resolve_instrument("NEWCOIN")
+        self.assertEqual(asset["category"], "CRYPTO")
+
 
 class EToroAccountTests(unittest.TestCase):
     def _portfolio_response(self):
