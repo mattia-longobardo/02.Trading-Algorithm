@@ -1,8 +1,11 @@
 node_modules
 .next
 .git
-.env
-.env.local
+.gitignore
 Dockerfile
 .dockerignore
+npm-debug.log*
 README.md
+CLAUDE.md
+AGENTS.md
+.env*

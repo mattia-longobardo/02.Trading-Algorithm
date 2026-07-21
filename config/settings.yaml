@@ -1,0 +1,72 @@
+# Default di configurazione. Precedenza a runtime: app_settings (DB) > questo file > env.
+# Le chiavi API vivono SOLO in .env, mai qui.
+environment: demo          # demo | real
+schedule_utc: "08:30"      # SEMPRE UTC: lo scheduler non usa `timezone`
+timezone: Europe/Rome      # solo presentazione: orari mostrati in questo fuso
+currency: USD              # valuta di visualizzazione; i dati restano in USD
+news_fetch_utc: "08:15"
+weekdays_only: true
+risk_free_rate_pct: 5.0    # T-bill 3M, usato da Sharpe/Sortino
+benchmark_symbol: SPY
+
+watchlist:
+  - AAPL
+  - MSFT
+  - NVDA
+  - GOOGL
+  - AMZN
+  - META
+  - TSLA
+  - JPM
+  - V
+  - UNH
+  - XOM
+  - SPY
+  - QQQ
+
+max_candidates_per_run: 6
+debate_rounds: 2
+
+# Scoperta dinamica dell'universo: titoli citati nelle news recenti che
+# superano uno screening di affidabilità (prezzo, storico, liquidità,
+# volatilità, spread). Si sommano alla watchlist, non la sostituiscono.
+universe_discovery:
+  enabled: true
+  size: 5                            # titoli dinamici oltre alla watchlist
+  min_mentions: 2                    # item news distinti per candidarsi
+  max_evaluated: 20                  # candidati ammessi allo screening
+  min_price_usd: 5.0                 # niente penny stock
+  min_history_days: 120              # niente IPO fresche
+  min_avg_dollar_volume_usd: 20000000
+  max_annualized_vol_pct: 60
+  max_spread_pct: 1.0
+  news_half_life_days: 3.0           # peso citazioni: dimezza ogni 3 giorni
+
+knowledge:
+  news_half_life_days: 7.0           # in ricerca le news dimezzano peso ogni 7g
+  news_max_age_days: 45              # oltre: eliminate dalla KB (i documenti restano)
+  ticker_memory:
+    enabled: true
+    retention_days: 30               # le notizie escono dalla memoria dopo 30g
+    max_entries: 40
+    use_llm: true                    # sintesi evolutiva via LLM (fallback: headline)
+
+llm:
+  model: gpt-5.6-terra
+  max_tokens: 2048
+
+news_feeds:
+  generic:
+    - https://feeds.content.dowjones.io/public/rss/mw_topstories
+    - https://www.cnbc.com/id/100003114/device/rss/rss.html
+    # Fintech e mercati tech (contesto per analista sentiment/macro)
+    - https://techcrunch.com/category/fintech/feed/
+    - https://www.cnbc.com/id/19854910/device/rss/rss.html   # CNBC Technology
+    # Avanzamento tecnologico generale (scoperte, ricerca, prodotto)
+    - https://techcrunch.com/feed/
+    - https://www.technologyreview.com/feed/                  # MIT Technology Review
+    - https://www.wired.com/feed/rss
+    - https://feeds.arstechnica.com/arstechnica/index
+    - https://hnrss.org/frontpage                             # Hacker News, prima pagina
+  per_ticker:
+    - "https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"

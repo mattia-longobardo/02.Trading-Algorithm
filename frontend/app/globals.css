@@ -1,0 +1,182 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-instrument-sans);
+  --font-mono: var(--font-geist-mono);
+  /* Newsreader è riservata ai titoli di pagina e al claim (classe font-display) */
+  --font-display: var(--font-newsreader);
+  --font-heading: var(--font-instrument-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-benchmark: var(--benchmark);
+  --color-benchmark-alt: var(--benchmark-alt);
+  --color-positive: var(--positive);
+  --color-negative: var(--negative);
+  --color-caution: var(--caution);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  /* Raggio piccolo ovunque: precisione da registro, niente pill morbide */
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 6px;
+  --radius-2xl: 8px;
+  --radius-3xl: 8px;
+  --radius-4xl: 6px;
+}
+
+:root {
+  /* "Registro di borsa in pieno giorno" — light di default */
+  --background: #fafaf8;
+  --foreground: #17181a;
+  --card: #ffffff;
+  --card-foreground: #17181a;
+  --popover: #ffffff;
+  --popover-foreground: #17181a;
+  --primary: #2440b3; /* cobalto inchiostro di registro */
+  --primary-foreground: #ffffff;
+  --secondary: #f1f1ee;
+  --secondary-foreground: #17181a;
+  --muted: #f2f2f0;
+  --muted-foreground: #6e7073;
+  --accent: #eef1fb; /* velo cobalto per hover/selezioni */
+  --accent-foreground: #2440b3;
+  --destructive: #c2372e; /* rosso da stampa */
+  --border: #e4e4e0; /* hairline */
+  --input: #d8d8d4;
+  --ring: #2440b3;
+  --positive: #0f7b4d; /* verde da stampa (PnL > 0) */
+  --negative: #c2372e; /* rosso da stampa (PnL < 0) */
+  --caution: #a66a00; /* ambra da stampa (breaker, live) */
+  --risk-high: #b4530f; /* fascia "alto" del risk score */
+  /* Palette categorica validata (validate_palette.js, superficie #ffffff):
+     lightness band, chroma, CVD ΔE >= 8, contrasto >= 3:1 — tutti PASS */
+  --chart-1: #2440b3;
+  --chart-2: #b05c10;
+  --chart-3: #00875c;
+  --chart-4: #a03d96;
+  --chart-5: #7a6a00;
+  --benchmark: #9a9c9f; /* SPY lump-sum, tratteggiato */
+  --benchmark-alt: #6e7073; /* SPY cash-flow matched */
+  --radius: 6px;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #17181a;
+  --sidebar-primary: #2440b3;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f2f2f0;
+  --sidebar-accent-foreground: #17181a;
+  --sidebar-border: #e4e4e0;
+  --sidebar-ring: #2440b3;
+}
+
+.dark {
+  --background: #141517;
+  --foreground: #ececea;
+  --card: #1c1d20;
+  --card-foreground: #ececea;
+  --popover: #1c1d20;
+  --popover-foreground: #ececea;
+  --primary: #8ca2f0; /* cobalto schiarito */
+  --primary-foreground: #141517;
+  --secondary: #232428;
+  --secondary-foreground: #ececea;
+  --muted: #232428;
+  --muted-foreground: #9a9c9f;
+  --accent: #1f2330;
+  --accent-foreground: #a9baf4;
+  --destructive: #e2705f;
+  --border: #2a2b2f;
+  --input: #35363b;
+  --ring: #8ca2f0;
+  --positive: #3fa97a;
+  --negative: #e2705f;
+  --caution: #cf9436;
+  --risk-high: #d0784a;
+  /* Palette categorica validata (superficie #1c1d20): tutti i check PASS */
+  --chart-1: #5e7adf;
+  --chart-2: #c0742e;
+  --chart-3: #12996e;
+  --chart-4: #b457aa;
+  --chart-5: #948520;
+  --benchmark: #7c7e82;
+  --benchmark-alt: #9a9c9f;
+  --sidebar: #1c1d20;
+  --sidebar-foreground: #ececea;
+  --sidebar-primary: #8ca2f0;
+  --sidebar-primary-foreground: #141517;
+  --sidebar-accent: #232428;
+  --sidebar-accent-foreground: #ececea;
+  --sidebar-border: #2a2b2f;
+  --sidebar-ring: #8ca2f0;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "ss01";
+  }
+  html {
+    @apply font-sans;
+  }
+  /* La precisione è il design: micro-transizioni uniformi da 150ms */
+  a,
+  button,
+  [role="button"] {
+    transition-duration: 150ms;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* Eyebrow: il dispositivo strutturale ricorrente — mono, maiuscolo,
+     tracking largo, con hairline rule che riempie lo spazio a destra */
+  .eyebrow {
+    @apply text-muted-foreground flex items-center gap-3 font-mono text-[11px] font-medium tracking-[0.18em] uppercase;
+  }
+  .eyebrow::after {
+    content: "";
+    @apply bg-border h-px flex-1;
+  }
+}
