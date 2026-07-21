@@ -1,21 +1,14 @@
-# Dockerfile for Trading Algorithm
-FROM python:3.14-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# bcrypt's wheel covers cpython 3.14 on linux/amd64 already, but git is still
-# needed for the toon-format VCS dependency. Build deps for bcrypt are
-# included in case the wheel is unavailable for the target platform.
-COPY requirements.txt .
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        git \
-        build-essential \
-        libffi-dev \
-    && pip install --no-cache-dir -r requirements.txt \
-    && apt-get purge -y git build-essential libffi-dev \
-    && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
+COPY pyproject.toml ./
+COPY etoro_bot ./etoro_bot
+COPY alembic.ini ./
 
-COPY . .
+RUN pip install --no-cache-dir -e ".[api,rag]"
 
-CMD ["python", "main.py"]
+EXPOSE 8000
+
+# Migrazioni all'avvio, poi API. Il kill switch resta azionabile anche a DB giù.
+CMD ["sh", "-c", "alembic upgrade head && uvicorn etoro_bot.api.server:app --host 0.0.0.0 --port 8000"]

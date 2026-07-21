@@ -1,0 +1,33 @@
+<!-- @dsCard group="Components" viewport="700x330" name="Forms — Button, Input, Select, Checkbox, Switch" subtitle="Controlli 36px, focus ring cobalto" -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../../styles.css"><style>body{margin:0;padding:20px;background:var(--background)}</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script></head><body><div id="root"></div>
+<script type="text/babel">
+const { Stamp, DotIndicator, Eyebrow, Button, Input, Select, Checkbox, Switch, Card, Table, Dialog, Toast, Skeleton, AppHeader, SidebarNav } = window.EToroBotDesignSystem_9cb9fa;
+
+function Demo() {
+  const [dark, setDark] = React.useState(false);
+  return (
+    <div style={{ display: 'grid', gap: 16 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <Button variant="primary">Esegui run ora</Button>
+        <Button>Avvia dry-run</Button>
+        <Button variant="ghost">Dettagli</Button>
+        <Button variant="destructive">Kill switch</Button>
+        <Button variant="primary" disabled>Esegui run ora</Button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, maxWidth: 520 }}>
+        <Input id="cap" label="Capitale iniziale (USD)" placeholder="10000" />
+        <Select id="env" label="Ambiente" options={[{ value: 'demo', label: 'Demo' }, { value: 'real', label: 'Reale' }]} />
+      </div>
+      <div style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
+        <Checkbox label="Includi posizioni chiuse" defaultChecked />
+        <Switch checked={dark} onChange={setDark} label="Tema scuro" />
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo />);
+</script></body></html>

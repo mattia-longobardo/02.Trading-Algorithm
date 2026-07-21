@@ -1,0 +1,21 @@
+:root{
+--font-display:'Newsreader',Georgia,serif; /* SOLO h1 di pagina + claim sidebar (corsivo) */
+--font-sans:'Instrument Sans',system-ui,sans-serif; /* UI / body */
+--font-mono:'Geist Mono',ui-monospace,monospace; /* ogni numero, timestamp, eyebrow, timbro */
+/* Scala */
+--text-h1:30px; /* Newsreader 500, 28–32px */
+--text-card-title:16px; /* sans 600 */
+--text-body:14px; /* sans 400 */
+--text-note:13px; /* sans 400, muted-foreground */
+--text-data-hero:30px; /* mono 600, tabular */
+--text-data:13px; /* mono 400–500, tabular, right-aligned */
+--text-label:11px; /* mono 500, uppercase, tracking .18em, muted — header colonna + eyebrow */
+--text-stamp:10px; /* mono 500, uppercase, tracking .08em */
+--tracking-label:0.18em;
+--tracking-stamp:0.08em;
+}
+body{font-family:var(--font-sans);font-size:var(--text-body);color:var(--foreground);background:var(--background);-webkit-font-smoothing:antialiased}
+.font-data,.tabular{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+a{color:var(--primary);text-decoration:none;transition:opacity 150ms}
+a:hover{opacity:.8}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}}

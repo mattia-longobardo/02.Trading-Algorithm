@@ -30,3 +30,15 @@ frontend/*.tsbuildinfo
 # AI tooling
 .claude/
 .superpowers/
+
+# Runtime v3
+state/*
+!state/.gitkeep
+# Report generati a runtime (per utente): dati, non sorgenti
+reports/*
+!reports/.gitkeep
+data/
+backend/.venv/
+backend/*.egg-info/
+backend/.pytest_cache/
+backend/.ruff_cache/

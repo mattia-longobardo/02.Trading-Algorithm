@@ -1,0 +1,25 @@
+<!-- @dsCard group="Components" viewport="700x380" name="Navigation — AppHeader, SidebarNav" subtitle="Sicurezza sempre visibile; voce attiva con regola cobalto" -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../../styles.css"><style>body{margin:0;padding:20px;background:var(--background)}</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script></head><body><div id="root"></div>
+<script type="text/babel">
+const { Stamp, DotIndicator, Eyebrow, Button, Input, Select, Checkbox, Switch, Card, Table, Dialog, Toast, Skeleton, AppHeader, SidebarNav } = window.EToroBotDesignSystem_9cb9fa;
+
+function Demo() {
+  const [page, setPage] = React.useState('dash');
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', background: 'var(--background)' }}>
+      <AppHeader environment="real" mode="live" killSwitch="ok" breaker="triggered" nextRun="2026-07-21 09:30" />
+      <div style={{ display: 'flex', height: 230 }}>
+        <SidebarNav activeId={page} onSelect={setPage} items={[
+          { id: 'dash', label: 'Dashboard' }, { id: 'runs', label: 'Run' }, { id: 'pos', label: 'Posizioni' }, { id: 'perf', label: 'Performance' }, { id: 'risk', label: 'Rischio' },
+        ]} />
+        <div style={{ flex: 1, padding: 20 }}><Eyebrow>Dashboard</Eyebrow></div>
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo />);
+</script></body></html>
