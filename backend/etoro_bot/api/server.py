@@ -664,7 +664,9 @@ async def knowledge_ingest(
 
 
 @app.get("/knowledge/ticker-memory")
-def knowledge_ticker_memory(ticker: str | None = Query(None)) -> dict[str, Any]:
+def knowledge_ticker_memory(
+    ticker: str | None = Query(None), identity: UserIdentity = Depends(current_user)
+) -> dict[str, Any]:
     from etoro_bot.knowledge.ticker_memory import all_memories, load_memory
 
     if ticker:
@@ -677,7 +679,7 @@ def knowledge_ticker_memory(ticker: str | None = Query(None)) -> dict[str, Any]:
 
 
 @app.get("/universe")
-def universe_view() -> dict[str, Any]:
+def universe_view(identity: UserIdentity = Depends(current_user)) -> dict[str, Any]:
     from etoro_bot.services.universe import discovery_config, load_discovery_state
 
     settings = get_settings_service().get_effective()
@@ -691,8 +693,19 @@ def universe_view() -> dict[str, Any]:
 
 
 @app.post("/universe/refresh", status_code=202)
-def universe_refresh() -> dict[str, Any]:
-    """Discovery on-demand (fetch news + screening); gira in background."""
+def universe_refresh(identity: UserIdentity = Depends(current_user)) -> dict[str, Any]:
+    """Discovery on-demand (fetch news + screening); gira in background.
+
+    Usa le chiavi eToro del proprietario: se un proprietario esiste, solo lui
+    (o il job di sistema) può forzare la discovery. Come per il resto
+    dell'API, l'identità arriva dagli header del proxy interno.
+    """
+    try:
+        owner = get_repo().owner_user_id()
+    except Exception:
+        owner = None
+    if owner and identity.user_id not in ("system", owner):
+        raise HTTPException(403, "solo il proprietario può forzare la discovery")
 
     def _job() -> None:
         try:
