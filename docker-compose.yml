@@ -1,61 +1,131 @@
 services:
-  backend:
-    build: ./backend
-    container_name: trading-backend
-    user: 1000:1000
-    init: true
-    restart: always
+
+# Trading Postgres # --------------------------------------------------------------------------------------------------------------
+
+  trading-postgres:
+    image: postgres:18-alpine
+    container_name: trading-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${DB_TRADING_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      TZ: ${TZ}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql   # path PG18 (PGDATA version-specific in /var/lib/postgresql/18/docker)
+    restart: unless-stopped
     mem_limit: 1g
     cpus: "1.0"
-    stop_signal: SIGTERM
-    stop_grace_period: 20s
-    volumes:
-      - ./backend/logs:/app/logs
-      - ./backend/data:/app/data
-      - ./backend/run:/app/run
-      - ./backend/.env:/app/.env
-    environment:
-      - TZ=Europe/Rome
-    # The backend lives only on the private internal network. The frontend
-    # service reaches it as http://backend:8000 (Docker DNS) and the browser
-    # never sees this host directly.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - trading_internal
 
-  frontend:
+# Trading Qdrant # --------------------------------------------------------------------------------------------------------------
+
+  trading-qdrant:
+    image: qdrant/qdrant:latest
+    container_name: trading-qdrant
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ./data/qdrant:/qdrant/storage
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: "1.0"
+    networks:
+      - trading_internal
+
+# Trading Backend # --------------------------------------------------------------------------------------------------------------
+
+  trading-backend:
+    build: ./backend
+    image: trading-backend:latest
+    container_name: trading-backend
+    user: "1000:1000"
+    depends_on:
+      trading-postgres:
+        condition: service_healthy
+      trading-qdrant:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${DB_TRADING_PASSWORD}@trading-postgres:5432/${POSTGRES_DB}
+      QDRANT_URL: http://trading-qdrant:6333
+      CONFIG_DIR: /app/config
+      KILL_SWITCH_DIR: /app/state
+      KNOWLEDGE_BASE_DIR: /app/knowledge_base
+      FASTEMBED_CACHE_DIR: /app/state/fastembed_cache
+      HF_HOME: /app/state/huggingface
+      XDG_CACHE_HOME: /app/state/.cache
+      STATE_DIR: /app/state
+      # Chiavi eToro/OpenAI: nessuna variabile d'ambiente — sono credenziali
+      # personali cifrate su Postgres, inserite da Impostazioni nella UI.
+      TRADING_CREDENTIALS_SECRET: ${AUTH_SECRET}
+      REPORTS_DIR: /app/reports
+      TZ: ${TZ}
+    volumes:
+      - ./config:/app/config:ro
+      - ./state:/app/state
+      - ./knowledge_base:/app/knowledge_base
+      - ./reports:/app/reports
+    restart: unless-stopped
+    init: true
+    mem_limit: 2g
+    cpus: "2.0"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks:
+      - trading_internal
+
+# Trading Frontend # --------------------------------------------------------------------------------------------------------------
+
+  trading-frontend:
     build:
       context: ./frontend
+      args:
+        BACKEND_URL: http://trading-backend:8000
+    image: trading-frontend:latest
     container_name: trading-frontend
-    user: 1000:1000
-    init: true
-    restart: always
-    mem_limit: 512m
-    cpus: "0.5"
+    user: "1000:1000"
     depends_on:
-      - backend
+      - trading-backend
     environment:
-      - TZ=Europe/Rome
-      - NODE_ENV=production
-      # Next.js Route Handlers proxy all /api/proxy/* calls here.
-      - BACKEND_INTERNAL_URL=http://backend:8000
-    # Frontend is on both networks: trading_internal to talk to the backend,
-    # proxy_public so Traefik can expose it at trading.local. The browser
-    # only ever talks to this service.
-    networks:
-      - proxy_public
-      - trading_internal
+      BACKEND_URL: http://trading-backend:8000
+      TZ: ${TZ}
+      # Login SSO via Authentik (Auth.js v5) — vedi Application "trading" in Authentik
+      AUTH_SECRET: ${AUTH_SECRET}
+      AUTH_TRUST_HOST: "true"
+      # Dominio fisso: esplicito invece di affidarsi al rilevamento da
+      # X-Forwarded-Host (dietro Traefik + tunnel Cloudflare non è affidabile
+      # con il server Next standalone).
+      AUTH_URL: https://${TRADING_HOST}
+      AUTH_AUTHENTIK_ID: ${AUTH_AUTHENTIK_ID}
+      AUTH_AUTHENTIK_SECRET: ${AUTH_AUTHENTIK_SECRET}
+      AUTH_AUTHENTIK_ISSUER: https://${AUTHENTIK_HOST}/application/o/trading/
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: "1.0"
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy_public"
-      - "traefik.http.routers.trading-frontend-router.rule=Host(`trading.longobardo.me`)"
+      - "traefik.http.routers.trading-frontend-router.rule=Host(`${TRADING_HOST}`)"
       - "traefik.http.routers.trading-frontend-router.entrypoints=web"
       - "traefik.http.services.trading-frontend-service.loadbalancer.server.port=3000"
+      - "traefik.http.middlewares.trading-frontend-https.headers.customrequestheaders.X-Forwarded-Proto=https"
+      - "traefik.http.routers.trading-frontend-router.middlewares=trading-frontend-https"
+    networks:
+      - proxy_public
+      - trading_internal
 
 networks:
-  # Public Traefik network — only the user-facing frontend is attached.
   proxy_public:
     external: true
-  # Private network for backend ⇄ frontend traffic. Bridge driver, not
-  # external: docker compose creates and destroys it with the stack.
   trading_internal:
-    driver: bridge
+    name: trading_internal

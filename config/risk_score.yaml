@@ -1,0 +1,27 @@
+# Soglie di normalizzazione 0-10 per il risk score composito (services/risk_score.py).
+# Ogni componente mappa una misura grezza su [0,10] con interpolazione lineare tra low (→0) e high (→10).
+weights:
+  position_concentration: 0.20   # HHI sui pesi delle posizioni
+  sector_concentration: 0.15     # HHI sui pesi per settore
+  exposure: 0.15                 # exposure/equity vs max_total_exposure_pct
+  cash_buffer: 0.10              # distanza dal min_cash_buffer_pct
+  realized_volatility_90d: 0.15  # vol annualizzata equity curve bot
+  current_drawdown: 0.10         # distanza dal massimo storico
+  beta_vs_spy: 0.10              # beta della curva bot
+  safety_state: 0.05             # breaker scattato / perdite consecutive
+
+thresholds:
+  position_concentration: {low: 0.10, high: 1.00}   # HHI: 0.10 (10 pos. equal-weight) → 1.0 (tutto in una)
+  sector_concentration: {low: 0.15, high: 1.00}
+  exposure: {low: 0.0, high: 1.0}                   # frazione del limite max_total_exposure_pct usata
+  cash_buffer: {low: 0.0, high: 1.0}                # 0 = cash ben oltre il buffer, 1 = al/sotto il minimo
+  realized_volatility_90d: {low: 0.05, high: 0.40}  # vol annualizzata
+  current_drawdown: {low: 0.0, high: 0.20}          # drawdown corrente frazionario
+  beta_vs_spy: {low: 0.5, high: 2.0}
+  safety_state: {low: 0.0, high: 1.0}               # frazione perdite consecutive vs soglia breaker (1 = scattato)
+
+bands:
+  low: [1, 3]
+  medium: [4, 6]
+  high: [7, 8]
+  extreme: [9, 10]

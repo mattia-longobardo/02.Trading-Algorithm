@@ -1,0 +1,31 @@
+<!-- @dsCard group="Components" viewport="700x400" name="Surfaces — Card, Table, Toast, Skeleton" subtitle="Estratto conto: hairline, mono, stati a timbro" -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../../styles.css"><style>body{margin:0;padding:20px;background:var(--background)}</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script></head><body><div id="root"></div>
+<script type="text/babel">
+const { Stamp, DotIndicator, Eyebrow, Button, Input, Select, Checkbox, Switch, Card, Table, Dialog, Toast, Skeleton, AppHeader, SidebarNav } = window.EToroBotDesignSystem_9cb9fa;
+
+function Demo() {
+  const pnl = (v) => <span style={{ color: v >= 0 ? 'var(--positive)' : 'var(--negative)' }}>{v >= 0 ? '+' : '−'}{Math.abs(v).toFixed(2)}</span>;
+  return (
+    <div style={{ display: 'grid', gap: 16 }}>
+      <Card title="Run recenti" description="Ultime 3 esecuzioni" action={<a href="#">Tutte →</a>} bodyStyle={{ paddingTop: 12 }}>
+        <Table
+          columns={[{ key: 't', label: 'Ticker' }, { key: 'q', label: 'Qty', align: 'right' }, { key: 'p', label: 'PnL USD', align: 'right' }, { key: 's', label: 'Esito' }]}
+          rows={[
+            { t: 'AAPL', q: '12', p: pnl(312.4), s: <Stamp tone="approved">Filled</Stamp> },
+            { t: 'NVDA', q: '4', p: pnl(-88.15), s: <Stamp tone="rejected">Respinto</Stamp> },
+            { t: 'MSFT', q: '—', p: <span style={{ color: 'var(--muted-foreground)' }}>n/d</span>, s: <Stamp tone="neutral">Skipped</Stamp> },
+          ]} />
+      </Card>
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+        <Toast tone="error" title="Ordine respinto dal broker" description="Margine insufficiente: riduci la size o libera capitale." />
+        <div style={{ display: 'grid', gap: 8, flex: 1 }}><Skeleton width="70%" /><Skeleton width="100%" /><Skeleton width="45%" /></div>
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo />);
+</script></body></html>

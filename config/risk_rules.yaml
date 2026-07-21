@@ -1,0 +1,15 @@
+# Limiti del risk manager deterministico — applicati SOLO da codice puro (risk/rules.py).
+# Nessun LLM legge o scrive questo file a runtime.
+# Il massimo per trade è dinamico: credit eToro / max_open_positions.
+max_position_pct_equity: 5.0     # % equity max per posizione (esistente + nuovo)
+max_total_exposure_pct: 60.0     # % equity investita complessivamente
+max_sector_exposure_pct: 20.0    # % equity per settore
+max_open_positions: 10
+max_orders_per_run: 3
+max_orders_per_day: 5            # conteggio dal journal (solo esecuzioni filled)
+min_cash_buffer_pct: 20.0        # liquidità minima sempre mantenuta
+allowed_asset_types: [stock, etf]
+circuit_breaker:
+  max_daily_loss_pct: 2.0
+  max_consecutive_losses: 4
+  cooloff_hours: 24
