@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Trading Bot">
+  <title>Trading Bot</title>
+  <!-- Tile cobalto #2440B3: unico accent del design system, leggibile
+       sia su tab chiare sia scure senza varianti. -->
+  <rect width="32" height="32" rx="8" fill="#2440B3"/>
+  <!-- Filo di registro: la riga di base della pagina contabile. -->
+  <path d="M6 24.5h20" stroke="#FFFFFF" stroke-opacity="0.4" stroke-width="1.5" stroke-linecap="round"/>
+  <!-- Andamento in tre gambe: resta leggibile anche a 16px. -->
+  <path d="M7 19.5 13.5 13 18 17 25.5 8.5" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

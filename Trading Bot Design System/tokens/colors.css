@@ -1,0 +1,60 @@
+:root{
+/* Tema light (default) — "registro di borsa in pieno giorno" */
+--background:#FAFAF8;
+--card:#FFFFFF;
+--popover:#FFFFFF;
+--foreground:#17181A;
+--muted-foreground:#6E7073;
+--muted:#F2F2F0;
+--secondary:#F1F1EE;
+--secondary-foreground:#17181A;
+--primary:#2440B3; /* cobalto "inchiostro di registro" — unico accent */
+--primary-foreground:#FFFFFF;
+--accent:#EEF1FB;
+--accent-foreground:#2440B3;
+--border:#E4E4E0;
+--input:#D8D8D4;
+--ring:#2440B3;
+--positive:#0F7B4D;
+--negative:#C2372E;
+--destructive:#C2372E;
+--caution:#A66A00;
+--risk-high:#B4530F;
+--benchmark:#9A9C9F;
+--benchmark-alt:#6E7073;
+/* Palette categorica grafici (validata CVD, contrasto ≥3:1 su #FFFFFF) */
+--chart-1:#2440B3; /* cobalto — serie principale */
+--chart-2:#0E8FB0; /* teal acceso */
+--chart-3:#6D4BD4; /* indaco vivo */
+--chart-4:#12A06E; /* verde smeraldo */
+--chart-5:#C24E7A; /* magenta-rosa */
+}
+.dark{
+--background:#141517;
+--card:#1C1D20;
+--popover:#1C1D20;
+--foreground:#ECECEA;
+--muted-foreground:#9A9C9F;
+--muted:#232428;
+--secondary:#232428;
+--secondary-foreground:#ECECEA;
+--primary:#8CA2F0;
+--primary-foreground:#141517;
+--accent:#1F2330;
+--accent-foreground:#A9BAF4;
+--border:#2A2B2F;
+--input:#35363B;
+--ring:#8CA2F0;
+--positive:#3FA97A;
+--negative:#E2705F;
+--destructive:#E2705F;
+--caution:#CF9436;
+--risk-high:#D0784A;
+--benchmark:#7C7E82;
+--benchmark-alt:#9A9C9F;
+--chart-1:#6E86F0;
+--chart-2:#3FBEDC;
+--chart-3:#9E7BF0;
+--chart-4:#3FCB94;
+--chart-5:#EE7BA4;
+}

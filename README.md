@@ -1,157 +1,77 @@
-# Trading Monorepo
+# eToro Multi-Agent Trading Bot (v3)
 
-Monorepository del progetto trading. Contiene due servizi orchestrati da un unico `docker-compose.yml`:
+Bot di **swing trading long-only** (solo stock ed ETF) su eToro. Il cuore è una
+pipeline multi-agente **LangGraph**: agenti LLM (OpenAI) analizzano i candidati
+e propongono operazioni; un **risk manager deterministico in codice puro**
+approva o respinge; un executor idempotente invia gli ordini.
 
-- [`backend/`](backend/) — bot Python (eToro + OpenAI), scheduler APScheduler, app database SQLite e API HTTP FastAPI. Vedi [backend/README.md](backend/README.md) per i dettagli del trading bot.
-- [`frontend/`](frontend/) — applicazione Next.js 15 (App Router + TypeScript + Tailwind v4 + shadcn/ui) con autenticazione, dashboard, console editabile, gestione report, prompt modifier e settings. Vedi [frontend/README.md](frontend/README.md).
+Principio fondante: nessun LLM può
+autorizzare, dimensionare oltre i limiti o eseguire un ordine.
 
-## Layout
+## Architettura
 
-```
-.
-├── backend/           # Python (eToro, OpenAI, scheduler) + Dockerfile + .env.example + tests/ + data/
-├── frontend/          # Next.js (App Router) + shadcn/ui + Recharts + TanStack Query
-├── docker-compose.yml # backend ⇄ frontend su rete privata, frontend esposto via Traefik
-└── README.md
-```
+- `backend/` — FastAPI :8000 · pipeline LangGraph (reconcile → screener →
+  4 analisti in parallelo → debate → portfolio manager → risk gate → executor →
+  journal) · scheduler **sempre in UTC** (news 08:15, run 08:30, lun–ven) ·
+  backtest TWR + benchmark SPY · risk score 1–10 · settings runtime con guardrail
+- `frontend/` — Next.js 16 (App Router) + shadcn/ui, dark mode, 8 pagine
+  (dashboard, run, portfolio, backtest, risk, knowledge, settings)
+- `postgres` — PostgreSQL 18 (journal, registry posizioni bot, checkpoint LangGraph)
+- `qdrant` — vector DB per RAG (news + trade memory, embeddings locali fastembed)
+- `config/` — `risk_rules.yaml` (limiti), `settings.yaml` (default), `risk_score.yaml`
+- `state/` — safety layer su file: `KILL_SWITCH` e `circuit_breaker.json`
+  (funzionano anche a database giù)
+- `knowledge_base/` — playbook e documenti ingeribili nella KB; i titoli
+  impattati da un documento sono **rilevati automaticamente** dal contenuto
+- `reports/` — report periodici generati a runtime, una cartella per utente
 
-## Avvio rapido
-
-1. Crea il file `.env` del backend a partire dall'esempio:
-
-   ```bash
-   cp backend/.env.example backend/.env
-   # Compila OpenAI / eToro, e impostazioni aziendali
-   # ADMIN_USERNAME e ADMIN_PASSWORD sono usati SOLO al primo avvio per
-   # creare l'utente admin iniziale; cambia la password subito dopo dalla UI.
-   ```
-
-2. Assicurati che la rete esterna `proxy_public` esista e che Traefik
-   instradi l'host `trading.local` verso il container frontend.
-
-3. Avvia lo stack:
-
-   ```bash
-   docker compose up -d --build
-   ```
-
-4. Apri `http://trading.local` e accedi con `ADMIN_USERNAME` /
-   `ADMIN_PASSWORD`. Cambia subito la password dalla pagina Impostazioni.
-
-## Topologia di rete
-
-```
-                     ┌──────────────────────────────┐
-                     │           Internet           │
-                     └──────────────┬───────────────┘
-                                    │
-                              proxy_public (Traefik)
-                                    │
-                                    ▼
-                       ┌──────────────────────┐
-                       │   frontend (Next.js) │  trading.local
-                       │  /api/proxy/* → ⤵    │
-                       └──────────┬───────────┘
-                                  │
-                          trading_internal (privata)
-                                  │
-                                  ▼
-                       ┌──────────────────────┐
-                       │   backend (FastAPI)  │  http://backend:8000
-                       └──────────────────────┘
-```
-
-- Il backend è **solo** su `trading_internal`: non passa più da Traefik e
-  non ha più un host pubblico.
-- Il frontend è su entrambe le reti. Traefik lo espone a `trading.local`,
-  e da lì le Route Handler `/api/proxy/[...path]/route.ts` proxyano ogni
-  richiesta verso `BACKEND_INTERNAL_URL=http://backend:8000`.
-- Il browser dell'utente parla **solo** col frontend: stesso origin, una
-  sola cookie domain, niente CORS da configurare.
-- I segreti (chiavi OpenAI/eToro, hash password, sessioni) vivono solo
-  nel backend e non transitano mai via il browser.
-
-## Autenticazione
-
-- Cookie di sessione opaco `trading_session`, `httponly` + `samesite=lax`
-  (Secure quando in produzione su HTTPS — vedi `SESSION_COOKIE_SECURE`).
-- Sessioni tracciate in `data/app.sqlite` (`sessions`); si revocano in
-  modo immediato (logout, reset password admin, disabilitazione utente)
-  cancellando o segnando la riga.
-- Ruoli: `admin` e `user`. Il prompt modifier e la gestione utenti sono
-  riservati ad `admin`.
-- Tutti gli endpoint (eccetto `/`, `/api/auth/login`) richiedono il
-  cookie. Lo stream SSE dei log usa lo stesso cookie.
-
-## Frontend pages
-
-| Path | Auth | Contenuto |
-|---|---|---|
-| `/login` | pubblica | form di accesso |
-| `/` | utente | dashboard: KPI, equity curve, PnL/simbolo, allocazione, distribuzione rendimenti, tabella ultimi trade |
-| `/console` | utente | trade editabili (PATCH), legenda colonne, **trigger manuali admin-only** |
-| `/reports` | utente | report JSON/PDF con cartelle virtuali, ricerca full-text JSON, anteprima PDF |
-| `/prompts` | admin | editor degli 8 prompt GPT con storico versioni e rollback |
-| `/logs` | utente | tail live SSE dei log del bot |
-| `/settings` | utente (env tab admin-only) | parametri runtime + gestione utenti |
-
-## Database e file
-
-- `backend/data/trades.sqlite` — trade gestiti dal bot (immutato)
-- `backend/data/market_data.sqlite` — OHLCV cache (immutato)
-- `backend/data/app.sqlite` — **nuovo** DB applicativo:
-  `users`, `sessions`, `app_settings`, `prompts`, `prompt_versions`,
-  `report_folders`, `reports` (indice metadati), `audit_log`
-- `backend/data/reports/` — report JSON e PDF su disco. Il bot scrive qui
-  esattamente come prima; l'indice in `app.sqlite` viene riallineato a
-  ogni `GET /api/reports`.
-
-## Sviluppo locale fuori da Docker
-
-Backend (Python 3.14):
+## Avvio
 
 ```bash
-cd backend
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env  # poi compila OpenAI/eToro + ADMIN_*
-python main.py
+cp .env.example .env   # compila DB_TRADING_PASSWORD, TRADING_HOST, AUTH_*
+docker compose up -d --build
 ```
 
-Frontend (Node 22):
+Le migrazioni Alembic girano automaticamente all'avvio del backend.
+UI su http://localhost:3000. Default sicuro: **ambiente demo**.
+
+Le chiavi **eToro e OpenAI non stanno nel `.env`**: sono credenziali personali,
+si inseriscono da *Impostazioni → Chiavi API personali* e il backend le cifra
+con `AUTH_SECRET` su Postgres, legate alla tua identità Authentik.
+
+## Sicurezza operativa
+
+- **Kill switch**: file `state/KILL_SWITCH` o `ETORO_BOT_KILL=1` — controllato
+  prima di ogni singolo ordine, mai disattivabile da un LLM.
+- **Circuit breaker** persistente: blocca le aperture (mai le chiusure) per
+  perdita giornaliera oltre soglia o perdite consecutive.
+- **Solo trade del bot**: le posizioni aperte a mano su eToro sono ignorate
+  ovunque (registry `bot_positions`).
+- **Passaggio a `real`**: richiede chiavi eToro configurate, kill switch non
+  attivo, circuit breaker non scattato e una conferma esplicita
+  (enforced dal backend, 422 senza). Gli ordini approvati
+  dal risk gate vengono sempre eseguiti per davvero, nell'ambiente scelto —
+  non esiste una modalità dry-run separata.
+
+## Fuso orario e valuta
+
+Due impostazioni sono di **sola presentazione** e non toccano l'esecuzione:
+
+- **Fuso orario** — l'orario della run è sempre UTC, così non si sposta con
+  l'ora legale; la timezone scelta cambia solo come date e orari appaiono
+  nell'app (barra in alto compresa).
+- **Valuta** — eToro ragiona in dollari: il journal resta in USD e la
+  conversione avviene al rendering, con i tassi di riferimento BCE
+  ([Frankfurter](https://frankfurter.dev), nessuna API key). Se il tasso non è
+  raggiungibile la UI mostra dollari e lo dichiara, invece di inventare un cambio.
+
+## Sviluppo
 
 ```bash
-cd frontend
-npm install
-cp .env.example .env.local
-# Imposta BACKEND_INTERNAL_URL=http://localhost:8000 quando il backend
-# gira sulla tua macchina e non in Docker.
-npm run dev
+cd backend && python3.12 -m venv .venv && .venv/bin/pip install -e ".[api,dev]"
+.venv/bin/python -m pytest        # i test DB usano un Postgres 18 effimero via Docker
+cd frontend && npm install && BACKEND_URL=http://localhost:8000 npm run dev
 ```
 
-## Logica di trading
-
-La logica del bot (universe selection, scheduler, GPT calls, lifecycle
-trade, gestione TP/SL/TTP/TSL, report) **non è cambiata**. Vedi
-[backend/README.md](backend/README.md) per il dettaglio. Le uniche
-differenze osservabili dal bot:
-
-- I prompt GPT vengono letti dall'`app.sqlite` (con fallback alle
-  costanti `INSTRUCTIONS_*` di `clients/gpt_client.py`).
-- I parametri operativi (`MAX_OPEN_TRADES_*`, `RISK_TOLERANCE`, ecc.)
-  possono essere sovrascritti da overlay in `app_settings` senza
-  riavvio (eccezione: `LOG_LEVEL`/`LOG_PROFILE`, marcati "restart
-  required" dalla UI).
-- L'API ora richiede autenticazione e i job manuali sono admin-only.
-
-## Licenza
-
-Copyright (c) 2026 Mattia Longobardo. Tutti i diritti riservati.
-
-Questo repository è distribuito sotto **[PolyForm Strict License 1.0.0](LICENSE.md)**
-(<https://polyformproject.org/licenses/strict/1.0.0>): sono vietati la
-ridistribuzione, la copia, la creazione di opere derivate e qualsiasi uso
-commerciale del codice. È consentita esclusivamente la consultazione e
-l'esecuzione per scopi personali non commerciali, come definito dalla licenza.
-
-Required Notice: Copyright (c) Mattia Longobardo
+La reference dell'API eToro verificata via MCP è in `backend/docs/etoro_api.md`.
+La specifica completa del progetto è in `CLAUDE.md`.
