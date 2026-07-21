@@ -15,7 +15,13 @@ from pydantic import ValidationError
 from etoro_bot.domain import AnalystReport
 from etoro_bot.graph.deps import GraphDeps
 from etoro_bot.graph.llm import extract_json
-from etoro_bot.graph.nodes.common import kb_search_news, llm_config, resolve_llm, system_blocks
+from etoro_bot.graph.nodes.common import (
+    kb_search_news,
+    llm_config,
+    resolve_llm,
+    system_blocks,
+    ticker_memory_context,
+)
 from etoro_bot.graph.state import BotState
 
 logger = logging.getLogger(__name__)
@@ -58,14 +64,19 @@ def _technical_context(candidate: dict, deps: GraphDeps) -> str:
 
 
 def _sentiment_context(candidate: dict, deps: GraphDeps) -> str:
+    """Memoria evolutiva del titolo + news recenti dalla KB (già pesate per età)."""
+    parts: list[str] = []
+    memory = ticker_memory_context(candidate["symbol"])
+    if memory:
+        parts.append(f"memoria del titolo: {memory}")
     news = kb_search_news(
         deps, f"news su {candidate['symbol']}", tickers=[candidate["symbol"]], limit=5
     )
-    if not news:
-        return "nessuna news in knowledge base"
-    return " | ".join(
-        f"[{item.get('source', '?')}] {str(item.get('text', ''))[:200]}" for item in news
-    )
+    if news:
+        parts.append(" | ".join(
+            f"[{item.get('source', '?')}] {str(item.get('text', ''))[:200]}" for item in news
+        ))
+    return "\n  ".join(parts) or "nessuna news in knowledge base"
 
 
 def _candidate_lines(analyst: str, candidates: list[dict], deps: GraphDeps) -> str:

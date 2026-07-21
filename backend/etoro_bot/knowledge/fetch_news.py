@@ -96,6 +96,7 @@ def parse_feed(xml_text: str, source: str, tickers: list[str] | None = None) -> 
                 "tickers": list(tickers or []),
                 "published_at": _child_text(entry, "pubDate", "published", "updated"),
                 "url": _entry_link(entry),
+                "kind": "news",
             }
         )
     return items
@@ -115,11 +116,18 @@ def fetch_all(settings: dict[str, Any] | None = None) -> list[dict]:
     """Scarica tutti i feed configurati; un feed che fallisce logga e continua."""
     cfg = settings if settings is not None else load_settings()
     feeds_cfg = cfg.get("news_feeds") or {}
-    watchlist = [str(t) for t in (cfg.get("watchlist") or [])]
+    # I feed per-ticker coprono l'universo effettivo: watchlist + titoli
+    # scoperti dinamicamente. Import lazy per evitare il ciclo con universe.
+    try:
+        from etoro_bot.services.universe import effective_universe
+
+        universe = effective_universe(cfg)
+    except Exception:
+        universe = [str(t) for t in (cfg.get("watchlist") or [])]
 
     plan: list[tuple[str, list[str]]] = [(url, []) for url in (feeds_cfg.get("generic") or [])]
     for template in feeds_cfg.get("per_ticker") or []:
-        plan.extend((template.format(ticker=ticker), [ticker]) for ticker in watchlist)
+        plan.extend((template.format(ticker=ticker), [ticker]) for ticker in universe)
 
     items: list[dict] = []
     for url, tickers in plan:

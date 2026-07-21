@@ -59,11 +59,28 @@ def kb_search_news(
     kb = _get_kb(deps)
     if kb is None:
         return []
+    knowledge_cfg = deps.settings.get("knowledge") or {}
+    half_life = float(knowledge_cfg.get("news_half_life_days", 7.0))
     try:
+        return kb.search_news(
+            query, tickers=tickers or [], limit=limit, half_life_days=half_life
+        ) or []
+    except TypeError:  # KB fake nei test con la firma storica
         return kb.search_news(query, tickers=tickers or [], limit=limit) or []
     except Exception as exc:
         logger.warning("ricerca news KB fallita (degradazione senza RAG): %s", exc)
         return []
+
+
+def ticker_memory_context(symbol: str) -> str:
+    """Memoria evolutiva del titolo per i prompt; "" se assente o su errore."""
+    try:
+        from etoro_bot.knowledge.ticker_memory import memory_context
+
+        return memory_context(symbol)
+    except Exception as exc:
+        logger.debug("memoria ticker %s non disponibile: %s", symbol, exc)
+        return ""
 
 
 def kb_search_trade_memory(deps: GraphDeps, query: str, limit: int = 3) -> list[dict]:

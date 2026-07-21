@@ -90,8 +90,8 @@ _BARE_SYMBOL_RE = re.compile(r"(?<![A-Za-z0-9$.])([A-Z]{3,5})(?![A-Za-z0-9])")
 
 
 @lru_cache(maxsize=1)
-def default_universe() -> tuple[str, ...]:
-    """Universo investibile da settings.yaml; vuoto se il file non c'è."""
+def _watchlist_universe() -> tuple[str, ...]:
+    """Watchlist da settings.yaml; vuota se il file non c'è."""
     try:
         from etoro_bot.config import load_settings
 
@@ -101,11 +101,39 @@ def default_universe() -> tuple[str, ...]:
     return tuple(str(s).strip().upper() for s in watchlist if str(s).strip())
 
 
-def _alias_pattern(symbols: frozenset[str]) -> re.Pattern[str] | None:
-    pairs: list[tuple[str, str]] = []
-    for symbol in symbols:
-        for alias in COMPANY_ALIASES.get(symbol, ()):
-            pairs.append((alias, symbol))
+def default_universe() -> tuple[str, ...]:
+    """Universo investibile: watchlist + titoli scoperti dinamicamente.
+
+    La parte dinamica è riletta a ogni chiamata (il file di stato cambia a
+    ogni discovery, senza riavvio); la watchlist resta cachata.
+    """
+    universe = list(_watchlist_universe())
+    for symbol in _discovered_symbols_and_aliases()[0]:
+        if symbol not in universe:
+            universe.append(symbol)
+    return tuple(universe)
+
+
+def _discovered_symbols_and_aliases() -> tuple[
+    tuple[str, ...], tuple[tuple[str, tuple[str, ...]], ...]
+]:
+    """Simboli e alias dell'universo dinamico; vuoto su qualsiasi errore."""
+    try:
+        from etoro_bot.services.universe import discovered_aliases, discovered_instruments
+
+        symbols = tuple(
+            s for s in (
+                str(row.get("symbol") or "").strip().upper()
+                for row in discovered_instruments()
+            ) if s
+        )
+        aliases = tuple(sorted(discovered_aliases().items()))
+        return symbols, aliases
+    except Exception:
+        return (), ()
+
+
+def _alias_pattern(pairs: list[tuple[str, str]]) -> re.Pattern[str] | None:
     if not pairs:
         return None
     # Alias più lunghi per primi: «exxon mobil» deve vincere su «exxon».
@@ -115,12 +143,18 @@ def _alias_pattern(symbols: frozenset[str]) -> re.Pattern[str] | None:
 
 
 @lru_cache(maxsize=32)
-def _compiled(symbols: frozenset[str]) -> tuple[re.Pattern[str] | None, dict[str, str]]:
+def _compiled(
+    symbols: frozenset[str],
+    extra_aliases: tuple[tuple[str, tuple[str, ...]], ...] = (),
+) -> tuple[re.Pattern[str] | None, dict[str, str]]:
+    extra = dict(extra_aliases)
+    pairs: list[tuple[str, str]] = []
     lookup: dict[str, str] = {}
     for symbol in symbols:
-        for alias in COMPANY_ALIASES.get(symbol, ()):
+        for alias in (*COMPANY_ALIASES.get(symbol, ()), *extra.get(symbol, ())):
+            pairs.append((alias, symbol))
             lookup.setdefault(alias.lower(), symbol)
-    return _alias_pattern(symbols), lookup
+    return _alias_pattern(pairs), lookup
 
 
 def detect_tickers(text: str, universe: tuple[str, ...] | None = None) -> list[str]:
@@ -148,7 +182,14 @@ def detect_tickers(text: str, universe: tuple[str, ...] | None = None) -> list[s
         if symbol in symbols and len(symbol) > _AMBIGUOUS_MAX_LEN:
             hits.append((match.start(), symbol))
 
-    alias_re, lookup = _compiled(symbols)
+    if universe is None:
+        _, extra_aliases = _discovered_symbols_and_aliases()
+        extra_aliases = tuple(
+            (symbol, aliases) for symbol, aliases in extra_aliases if symbol in symbols
+        )
+    else:  # universo esplicito (test/chiamate dirette): solo alias statici
+        extra_aliases = ()
+    alias_re, lookup = _compiled(symbols, extra_aliases)
     if alias_re is not None:
         for match in alias_re.finditer(text):
             symbol = lookup.get(match.group(0).lower())

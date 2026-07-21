@@ -12,7 +12,10 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import time
 import uuid
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +27,97 @@ VECTOR_SIZE = 384
 
 NEWS_COLLECTION = "news_kb"
 TRADE_MEMORY_COLLECTION = "trade_memory"
+
+# Decadimento temporale delle news in ricerca: il peso dimezza ogni half-life.
+DEFAULT_NEWS_HALF_LIFE_DAYS = 7.0
+# Punti indicizzati prima dell'introduzione di published_ts: età convenzionale.
+_LEGACY_AGE_HALF_LIVES = 2.0
+
+
+def parse_published_ts(value: str) -> float | None:
+    """Timestamp epoch da una data RSS (RFC 822) o Atom/ISO 8601; None se illeggibile."""
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        parsed = None
+    if parsed is None:
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def news_payload(item: dict, now: float | None = None) -> dict:
+    """Payload Qdrant di un item: testo, fonte, ticker, tipo e timestamp.
+
+    `kind` distingue le news dei feed ("news", soggette a decadimento e purge)
+    dai documenti caricati dall'utente ("document", che non scadono).
+    Per le news senza data pubblicazione si usa il momento dell'indicizzazione:
+    un feed appena scaricato è per definizione recente.
+    """
+    now = now if now is not None else time.time()
+    kind = str(item.get("kind") or "news")
+    published_ts = parse_published_ts(str(item.get("published_at") or ""))
+    if published_ts is None and kind == "news":
+        published_ts = now
+    return {
+        "text": str(item.get("text") or "").strip(),
+        "source": item.get("source", ""),
+        "tickers": list(item.get("tickers") or []),
+        "published_at": item.get("published_at", ""),
+        "kind": kind,
+        "published_ts": published_ts,
+        "indexed_ts": now,
+    }
+
+
+def recency_weight(
+    payload: dict, half_life_days: float, now: float | None = None
+) -> float:
+    """Peso ∈ (0,1] del punto in ricerca: le news vecchie contano meno.
+
+    I documenti utente non decadono (peso 1). Le news senza alcun timestamp
+    (indicizzate prima di questa versione) ricevono un'età convenzionale di
+    due half-life, così non sovrastano le notizie datate correttamente.
+    """
+    if str(payload.get("kind") or "news") == "document":
+        return 1.0
+    now = now if now is not None else time.time()
+    half_life = max(float(half_life_days), 0.1)
+    ts = payload.get("published_ts") or payload.get("indexed_ts")
+    if ts is None:
+        return 0.5 ** _LEGACY_AGE_HALF_LIVES
+    age_days = max(0.0, (now - float(ts)) / 86400.0)
+    return 0.5 ** (age_days / half_life)
+
+
+def rerank_by_recency(
+    results: list[dict], half_life_days: float, now: float | None = None
+) -> list[dict]:
+    """Riordina i risultati per score semantico × peso di recency.
+
+    `score` diventa lo score effettivo (usato dai chiamanti per l'ordine);
+    l'originale resta in `raw_score`, il peso in `recency_weight`.
+    """
+    reranked = []
+    for item in results:
+        weight = recency_weight(item, half_life_days, now)
+        reranked.append(
+            {
+                **item,
+                "raw_score": item.get("score"),
+                "recency_weight": round(weight, 4),
+                "score": (item.get("score") or 0.0) * weight,
+            }
+        )
+    reranked.sort(key=lambda r: r["score"], reverse=True)
+    return reranked
 
 
 def point_id_for_text(text: str) -> str:
@@ -153,24 +247,20 @@ class KnowledgeBase:
         except Exception as exc:
             self._degrade(f"qdrant-client non disponibile: {exc}")
             return 0
+        now = time.time()
         points = []
         for item in items:
-            text = str(item.get("text") or "").strip()
-            if not text:
+            payload = news_payload(item, now)
+            if not payload["text"]:
                 continue
-            vector = self._embed(text)
+            vector = self._embed(payload["text"])
             if vector is None:
                 return 0
             points.append(
                 models.PointStruct(
-                    id=point_id_for_text(text),
+                    id=point_id_for_text(payload["text"]),
                     vector=vector,
-                    payload={
-                        "text": text,
-                        "source": item.get("source", ""),
-                        "tickers": list(item.get("tickers") or []),
-                        "published_at": item.get("published_at", ""),
-                    },
+                    payload=payload,
                 )
             )
         if points:
@@ -178,9 +268,18 @@ class KnowledgeBase:
         return len(points) if self.available else 0
 
     def search_news(
-        self, query: str, tickers: list[str] | None = None, limit: int = 5
+        self,
+        query: str,
+        tickers: list[str] | None = None,
+        limit: int = 5,
+        half_life_days: float = DEFAULT_NEWS_HALF_LIFE_DAYS,
     ) -> list[dict]:
-        """Ricerca semantica in `news_kb`, filtrata per ticker se richiesto."""
+        """Ricerca semantica in `news_kb`, filtrata per ticker se richiesto.
+
+        Le news vecchie contano meno: si recupera un pool più ampio e lo si
+        riordina per score × peso di recency (dimezza ogni `half_life_days`).
+        I documenti caricati dall'utente non decadono.
+        """
         query_filter = None
         if tickers:
             try:
@@ -192,7 +291,45 @@ class KnowledgeBase:
             except Exception as exc:
                 self._degrade(f"qdrant-client non disponibile: {exc}")
                 return []
-        return self._search(NEWS_COLLECTION, query, limit, query_filter)
+        pool = self._search(NEWS_COLLECTION, query, max(limit * 4, 20), query_filter)
+        return rerank_by_recency(pool, half_life_days)[:limit]
+
+    def purge_old_news(self, max_age_days: float) -> int:
+        """Elimina da `news_kb` le news più vecchie di `max_age_days` giorni.
+
+        Tocca SOLO i punti `kind == "news"` con `published_ts` sotto la soglia:
+        i documenti caricati dall'utente (e i punti legacy senza timestamp)
+        restano. Ritorna quanti punti sono stati eliminati; 0 in degradata.
+        """
+        if not self.available:
+            self._degrade("purge_old_news ignorata (KB non disponibile)")
+            return 0
+        try:
+            from qdrant_client import models
+
+            cutoff = time.time() - float(max_age_days) * 86400.0
+            old_filter = models.Filter(
+                must=[
+                    models.FieldCondition(key="kind", match=models.MatchValue(value="news")),
+                    models.FieldCondition(key="published_ts", range=models.Range(lt=cutoff)),
+                ]
+            )
+            if not self._client.collection_exists(NEWS_COLLECTION):
+                return 0
+            count = self._client.count(
+                NEWS_COLLECTION, count_filter=old_filter, exact=True
+            ).count
+            if count:
+                self._client.delete(
+                    collection_name=NEWS_COLLECTION,
+                    points_selector=models.FilterSelector(filter=old_filter),
+                )
+                logger.info("news_kb: eliminate %d news più vecchie di %s giorni",
+                            count, max_age_days)
+            return int(count)
+        except Exception as exc:
+            self._degrade(f"purge news fallita: {exc}")
+            return 0
 
     def add_trade_memory(self, text: str, payload: dict) -> None:
         """Indicizza un trade chiuso (tesi + esito + pnl) in `trade_memory`."""

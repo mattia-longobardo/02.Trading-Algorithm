@@ -42,10 +42,27 @@ def build_static_context() -> str:
     if risk_raw:
         parts.append("## Default dei limiti di rischio (config/risk_rules.yaml)\n" + risk_raw)
 
-    watchlist = load_settings().get("watchlist") or []
+    settings = load_settings()
+    watchlist = settings.get("watchlist") or []
     if watchlist:
         parts.append("## Watchlist (universo investibile: solo stock ed ETF)\n"
                      + ", ".join(str(t) for t in watchlist))
+
+    # Universo dinamico: cambia al più una volta al giorno (refresh col fetch
+    # news), quindi il blocco resta byte-identico fra le run della giornata.
+    try:
+        from etoro_bot.services.universe import discovered_instruments
+
+        discovered = discovered_instruments(settings)
+    except Exception:
+        discovered = []
+    if discovered:
+        parts.append(
+            "## Universo dinamico (titoli scoperti dalle news, screening di affidabilità superato)\n"
+            + ", ".join(
+                f"{row.get('symbol')} ({row.get('display_name')})" for row in discovered
+            )
+        )
 
     playbook = _read_text(KNOWLEDGE_BASE_DIR / PLAYBOOK_FILENAME)
     if playbook:

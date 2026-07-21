@@ -85,9 +85,13 @@ def _start_scheduler() -> None:
                 log.warning("run schedulata saltata: run già in corso")
 
         def _news_job() -> None:
-            from etoro_bot.knowledge.fetch_news import fetch_and_index
+            from etoro_bot.knowledge.pipeline import run_news_pipeline
 
-            fetch_and_index(_kb())
+            run_news_pipeline(
+                kb=_kb(),
+                settings=get_settings_service().get_effective(),
+                client=_system_etoro_client(),
+            )
             _mark_fetch(UserIdentity("system"))
 
         start_scheduler(
@@ -481,6 +485,30 @@ def _kb():
     return KnowledgeBase()
 
 
+def _system_etoro_client():
+    """Client eToro con le chiavi dell'account proprietario, per i job di
+    sistema (discovery universo). None se le chiavi non sono configurate:
+    la pipeline news degrada senza refresh dell'universo."""
+    try:
+        from etoro_bot.etoro.client import EtoroClient
+        from etoro_bot.services.user_credentials import get_user_keys
+
+        repo = get_repo()
+        user_id = repo.owner_user_id() or "system"
+        keys = get_user_keys(repo, user_id)
+        if not keys.etoro_api_key or not keys.etoro_user_key:
+            return None
+        settings = get_settings_service().get_effective()
+        return EtoroClient(
+            api_key=keys.etoro_api_key,
+            user_key=keys.etoro_user_key,
+            environment=str(settings.get("environment", "demo")),
+        )
+    except Exception:
+        log.warning("client eToro di sistema non disponibile", exc_info=True)
+        return None
+
+
 def _user_setting_key(prefix: str, user_id: str) -> str:
     digest = hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:32]
     return f"{prefix}:{digest}"
@@ -577,13 +605,14 @@ def knowledge_fetch_news(identity: UserIdentity = Depends(current_user)) -> dict
     def _job() -> None:
         try:
             from etoro_bot.knowledge.fetch_news import fetch_all
+            from etoro_bot.knowledge.pipeline import run_news_pipeline
 
             settings = load_settings()
             settings["news_feeds"] = {"generic": _rss_feeds(identity), "per_ticker": []}
             items = fetch_all(settings)
-            if items:
-                _kb().ensure_collections()
-                _kb().add_news(items)
+            run_news_pipeline(
+                kb=_kb(), settings=settings, items=items, client=_system_etoro_client()
+            )
             updated_at = datetime.now(timezone.utc).isoformat()
             _news_file(identity).write_text(
                 json.dumps({"items": items[:60], "updated_at": updated_at}, ensure_ascii=False),
@@ -632,6 +661,55 @@ async def knowledge_ingest(
         "chunks_indexed": outcome.chunks,
         "tickers": outcome.tickers,
     }
+
+
+@app.get("/knowledge/ticker-memory")
+def knowledge_ticker_memory(ticker: str | None = Query(None)) -> dict[str, Any]:
+    from etoro_bot.knowledge.ticker_memory import all_memories, load_memory
+
+    if ticker:
+        memory = load_memory(ticker)
+        return {"memories": [memory] if memory else []}
+    return {"memories": all_memories()}
+
+
+# --- universo dinamico ------------------------------------------------------
+
+
+@app.get("/universe")
+def universe_view() -> dict[str, Any]:
+    from etoro_bot.services.universe import discovery_config, load_discovery_state
+
+    settings = get_settings_service().get_effective()
+    state = load_discovery_state(settings)
+    return {
+        "watchlist": [str(s).upper() for s in settings.get("watchlist") or []],
+        "discovered": (state or {}).get("tickers") or [],
+        "generated_at": (state or {}).get("generated_at"),
+        "enabled": bool(discovery_config(settings)["enabled"]),
+    }
+
+
+@app.post("/universe/refresh", status_code=202)
+def universe_refresh() -> dict[str, Any]:
+    """Discovery on-demand (fetch news + screening); gira in background."""
+
+    def _job() -> None:
+        try:
+            from etoro_bot.knowledge.fetch_news import fetch_all
+            from etoro_bot.services.universe import refresh_universe
+
+            client = _system_etoro_client()
+            if client is None:
+                log.warning("refresh universo saltato: chiavi eToro non configurate")
+                return
+            settings = get_settings_service().get_effective()
+            refresh_universe(client, settings, fetch_all(settings))
+        except Exception:
+            log.exception("refresh universo fallito")
+
+    threading.Thread(target=_job, daemon=True).start()
+    return {"status": "accepted"}
 
 
 # --- trade operativi e storico --------------------------------------------

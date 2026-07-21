@@ -61,7 +61,15 @@ def _momentum(deps: GraphDeps, instrument_id: int) -> float:
 
 
 def screener(state: BotState, deps: GraphDeps) -> dict:
-    watchlist = [str(s).upper() for s in deps.settings.get("watchlist") or []]
+    # Universo effettivo: watchlist + titoli scoperti dinamicamente dalle news
+    # (services.universe). Se la discovery non ha mai girato resta la watchlist.
+    try:
+        from etoro_bot.services.universe import effective_universe
+
+        watchlist = [str(s).upper() for s in effective_universe(deps.settings)]
+    except Exception as exc:
+        logger.warning("screener: universo dinamico non disponibile: %s", exc)
+        watchlist = [str(s).upper() for s in deps.settings.get("watchlist") or []]
     max_candidates = int(deps.settings.get("max_candidates_per_run", 6))
 
     errors: list[str] = []

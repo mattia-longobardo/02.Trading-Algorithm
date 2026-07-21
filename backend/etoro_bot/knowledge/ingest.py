@@ -100,7 +100,10 @@ def _build_items(body: str, source: str, manual: list[str] | None) -> tuple[list
         tickers = _merge(manual, detect_tickers(chunk))
         document_tickers = _merge(document_tickers, tickers)
         items.append(
-            {"text": chunk, "source": source, "tickers": tickers, "published_at": ""}
+            # kind="document": i documenti caricati dall'utente non decadono
+            # in ricerca e non vengono mai eliminati dalla purge delle news.
+            {"text": chunk, "source": source, "tickers": tickers,
+             "published_at": "", "kind": "document"}
         )
     return items, document_tickers
 
