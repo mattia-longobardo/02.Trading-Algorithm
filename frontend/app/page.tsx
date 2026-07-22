@@ -33,6 +33,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { EquityChart } from "@/components/charts/equity-chart";
+import {
+  MobileField,
+  MobileFields,
+  MobileItem,
+  MobileItemHeader,
+  MobileList,
+} from "@/components/mobile-list";
 import { SectorDonut } from "@/components/charts/sector-donut";
 import { ExecutionStatusBadge, SideBadge } from "@/components/status-badges";
 import { EnvBadge } from "@/components/site-header";
@@ -152,17 +159,17 @@ function NewsCard() {
 }
 
 function MetricCard({ label, value, hint, tone }: { label: string; value: string; hint: string; tone?: string }) {
-  return <Card><CardContent className="p-4"><p className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">{label}</p><p className={`mt-2 font-mono text-2xl font-semibold tabular-nums ${tone ?? ""}`}>{value}</p><p className="text-muted-foreground mt-1 text-[11px]">{hint}</p></CardContent></Card>;
+  return <Card><CardContent className="p-4"><p className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground uppercase">{label}</p><p className={`mt-2 font-mono text-xl font-semibold tabular-nums sm:text-2xl ${tone ?? ""}`}>{value}</p><p className="text-muted-foreground mt-1 text-[11px]">{hint}</p></CardContent></Card>;
 }
 
 function MetricsStrip({ range }: { range: DateRangeValue }) {
   const { data, isLoading, error } = useBacktestSummary(range);
   const d = useDisplay();
-  if (isLoading) return <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{Array.from({ length: 8 }, (_, i) => <CardSkeleton key={i} className="h-28 w-full" />)}</div>;
+  if (isLoading) return <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">{Array.from({ length: 8 }, (_, i) => <CardSkeleton key={i} className="h-28 w-full" />)}</div>;
   if (error || !data) return <ErrorState error={error} title="Indicatori non disponibili" />;
   const m = data.metrics;
   const n = (v: number | null, digits = 2) => v == null ? "n/d" : v.toFixed(digits);
-  return <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+  return <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
     <MetricCard label="Sharpe ratio" value={n(m.sharpe)} hint={`${data.n_days} giorni nel campione`} />
     <MetricCard label="Max drawdown" value={m.max_drawdown_pct == null ? "n/d" : `${m.max_drawdown_pct.toFixed(2)}%`} hint="Perdita dal picco massimo" tone="text-negative" />
     <MetricCard label="Win rate" value={m.win_rate_pct == null ? "n/d" : `${m.win_rate_pct.toFixed(1)}%`} hint={`${data.n_closed_trades} trade chiusi`} />
@@ -296,39 +303,69 @@ function RecentRunsCard() {
             Nessuna run ancora — avvia la prima dalle Azioni
           </p>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Avvio</TableHead>
-                <TableHead>Ambiente</TableHead>
-                <TableHead className="text-right">Candidati</TableHead>
-                <TableHead className="text-right">Eseguiti</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+          <>
+            <div className="max-md:hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Avvio</TableHead>
+                    <TableHead>Ambiente</TableHead>
+                    <TableHead className="text-right">Candidati</TableHead>
+                    <TableHead className="text-right">Eseguiti</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data!.runs.map((run) => (
+                    <TableRow key={run.run_id}>
+                      <TableCell className="font-mono text-[13px] tabular-nums">
+                        <Link
+                          href={`/runs/${run.run_id}`}
+                          className="hover:text-primary transition-colors"
+                        >
+                          {d.dateTime(run.started_at)}
+                        </Link>
+                      </TableCell>
+                      <TableCell>
+                        <EnvBadge environment={run.environment} />
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {run.summary?.candidates ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {run.summary?.executed ?? "—"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            <MobileList>
               {data!.runs.map((run) => (
-                <TableRow key={run.run_id}>
-                  <TableCell className="font-mono text-[13px] tabular-nums">
-                    <Link
-                      href={`/runs/${run.run_id}`}
-                      className="hover:text-primary transition-colors"
-                    >
-                      {d.dateTime(run.started_at)}
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    <EnvBadge environment={run.environment} />
-                  </TableCell>
-                  <TableCell className="text-right font-mono tabular-nums">
-                    {run.summary?.candidates ?? "—"}
-                  </TableCell>
-                  <TableCell className="text-right font-mono tabular-nums">
-                    {run.summary?.executed ?? "—"}
-                  </TableCell>
-                </TableRow>
+                <MobileItem key={run.run_id}>
+                  <Link href={`/runs/${run.run_id}`} className="block">
+                    <MobileItemHeader>
+                      <span className="font-mono text-[13px] font-medium tabular-nums">
+                        {d.dateTime(run.started_at)}
+                      </span>
+                      <EnvBadge environment={run.environment} />
+                    </MobileItemHeader>
+                    <MobileFields>
+                      <MobileField label="Candidati">
+                        <span className="font-mono tabular-nums">
+                          {run.summary?.candidates ?? "—"}
+                        </span>
+                      </MobileField>
+                      <MobileField label="Eseguiti">
+                        <span className="font-mono tabular-nums">
+                          {run.summary?.executed ?? "—"}
+                        </span>
+                      </MobileField>
+                    </MobileFields>
+                  </Link>
+                </MobileItem>
               ))}
-            </TableBody>
-          </Table>
+            </MobileList>
+          </>
         )}
       </CardContent>
     </Card>
@@ -355,38 +392,69 @@ function RecentExecutionsCard() {
             Nessuna esecuzione registrata — il registro si popola a ogni run
           </p>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Data</TableHead>
-                <TableHead>Simbolo</TableHead>
-                <TableHead>Lato</TableHead>
-                <TableHead className="text-right">Importo</TableHead>
-                <TableHead>Esito</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+          <>
+            <div className="max-md:hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Data</TableHead>
+                    <TableHead>Simbolo</TableHead>
+                    <TableHead>Lato</TableHead>
+                    <TableHead className="text-right">Importo</TableHead>
+                    <TableHead>Esito</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data!.executions.map((ex) => (
+                    <TableRow key={ex.id}>
+                      <TableCell className="font-mono text-[13px] tabular-nums">
+                        {d.dateTime(ex.created_at)}
+                      </TableCell>
+                      <TableCell className="font-mono font-medium">
+                        {ex.symbol}
+                      </TableCell>
+                      <TableCell>
+                        <SideBadge side={ex.side} />
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {d.money(ex.amount_usd)}
+                      </TableCell>
+                      <TableCell>
+                        <ExecutionStatusBadge status={ex.status} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            <MobileList>
               {data!.executions.map((ex) => (
-                <TableRow key={ex.id}>
-                  <TableCell className="font-mono text-[13px] tabular-nums">
-                    {d.dateTime(ex.created_at)}
-                  </TableCell>
-                  <TableCell className="font-mono font-medium">
-                    {ex.symbol}
-                  </TableCell>
-                  <TableCell>
-                    <SideBadge side={ex.side} />
-                  </TableCell>
-                  <TableCell className="text-right font-mono tabular-nums">
-                    {d.money(ex.amount_usd)}
-                  </TableCell>
-                  <TableCell>
-                    <ExecutionStatusBadge status={ex.status} />
-                  </TableCell>
-                </TableRow>
+                <MobileItem key={ex.id}>
+                  <MobileItemHeader>
+                    <span className="font-mono text-sm font-medium">
+                      {ex.symbol}
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <SideBadge side={ex.side} />
+                      <ExecutionStatusBadge status={ex.status} />
+                    </span>
+                  </MobileItemHeader>
+                  <MobileFields>
+                    <MobileField label="Importo">
+                      <span className="font-mono tabular-nums">
+                        {d.money(ex.amount_usd)}
+                      </span>
+                    </MobileField>
+                    <MobileField label="Data">
+                      <span className="font-mono text-xs tabular-nums">
+                        {d.dateTime(ex.created_at)}
+                      </span>
+                    </MobileField>
+                  </MobileFields>
+                </MobileItem>
               ))}
-            </TableBody>
-          </Table>
+            </MobileList>
+          </>
         )}
       </CardContent>
     </Card>

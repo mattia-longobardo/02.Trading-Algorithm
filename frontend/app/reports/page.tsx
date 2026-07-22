@@ -5,6 +5,13 @@ import { DownloadIcon, FileTextIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  MobileField,
+  MobileFields,
+  MobileItem,
+  MobileItemHeader,
+  MobileList,
+} from "@/components/mobile-list";
 import { PageHeader } from "@/components/page-header";
 import { ErrorState, CardSkeleton } from "@/components/query-states";
 import { useReports } from "@/lib/queries";
@@ -21,6 +28,11 @@ export default function ReportsPage() {
 
   async function openReport(id: string) {
     setSelected(id);
+    // Su telefono l'anteprima sta sopra lo storico: senza scroll il tap
+    // su "Apri" non produrrebbe alcun effetto visibile.
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      document.getElementById("report-preview")?.scrollIntoView({ behavior: "smooth" });
+    }
     const response = await fetch(`/api/reports/${id}`);
     const data = (await response.json()) as { content: string };
     setContent(data.content);
@@ -42,13 +54,35 @@ export default function ReportsPage() {
               return <section key={cadence} className="flex flex-col gap-2"><h2 className="font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase">{label}</h2>{report ? <button type="button" onClick={() => void openReport(report.id)} className="hover:bg-accent focus-visible:ring-ring flex w-full items-start gap-3 rounded-md border p-3 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none"><FileTextIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" /><span className="min-w-0"><span className="block truncate text-sm font-medium">{report.name}</span><span className="text-muted-foreground mt-1 block font-mono text-[10px]">{d.dateTime(report.updated_at)}</span></span></button> : <p className="text-muted-foreground text-xs">Nessun report</p>}</section>;
             })}
           </CardContent></Card>
-          <Card><CardHeader><CardTitle>{selected ? selected.split("/").at(-1)?.replace(/\.md$/, "") : "Anteprima report"}</CardTitle><CardDescription>{selected ? "File Markdown sul server" : "Seleziona un report dalla cartella"}</CardDescription></CardHeader><CardContent className="flex flex-col gap-4">{selected ? <><Button asChild variant="outline" size="sm" className="self-start"><a href={`/api/reports/${selected}?download=true`}><DownloadIcon data-icon="inline-start" aria-hidden="true" />Scarica file</a></Button><pre className="bg-muted max-h-[620px] overflow-auto rounded-md border p-5 font-mono text-xs leading-6 whitespace-pre-wrap">{content}</pre></> : <p className="text-muted-foreground py-20 text-center text-sm">Nessun report selezionato</p>}</CardContent></Card>
+          <Card id="report-preview" className="scroll-mt-16"><CardHeader><CardTitle>{selected ? selected.split("/").at(-1)?.replace(/\.md$/, "") : "Anteprima report"}</CardTitle><CardDescription>{selected ? "File Markdown sul server" : "Seleziona un report dalla cartella"}</CardDescription></CardHeader><CardContent className="flex flex-col gap-4">{selected ? <><Button asChild variant="outline" size="sm" className="self-start"><a href={`/api/reports/${selected}?download=true`}><DownloadIcon data-icon="inline-start" aria-hidden="true" />Scarica file</a></Button><pre className="bg-muted max-h-[620px] overflow-auto rounded-md border p-5 font-mono text-xs leading-6 whitespace-pre-wrap">{content}</pre></> : <p className="text-muted-foreground py-20 text-center text-sm">Nessun report selezionato</p>}</CardContent></Card>
         </div>
         <Card>
           <CardHeader><CardTitle>Storico report</CardTitle><CardDescription>{allReports.length} file conservati sul server</CardDescription></CardHeader>
-          <CardContent><Table><TableHeader><TableRow><TableHead>Report</TableHead><TableHead>Periodicità</TableHead><TableHead>Fine periodo</TableHead><TableHead>Aggiornato</TableHead><TableHead className="text-right">Dimensione</TableHead><TableHead className="text-right">Azioni</TableHead></TableRow></TableHeader>
+          <CardContent>
+            <div className="max-md:hidden">
+            <Table><TableHeader><TableRow><TableHead>Report</TableHead><TableHead>Periodicità</TableHead><TableHead>Fine periodo</TableHead><TableHead>Aggiornato</TableHead><TableHead className="text-right">Dimensione</TableHead><TableHead className="text-right">Azioni</TableHead></TableRow></TableHeader>
             <TableBody>{allReports.map((report) => <TableRow key={report.id}><TableCell className="font-medium">{report.name}</TableCell><TableCell>{labels[report.cadence]}</TableCell><TableCell className="font-mono text-xs tabular-nums">{report.period_end}</TableCell><TableCell className="font-mono text-xs tabular-nums">{d.dateTime(report.updated_at)}</TableCell><TableCell className="text-right font-mono text-xs tabular-nums">{(report.size_bytes / 1024).toFixed(1)} KB</TableCell><TableCell className="text-right"><div className="inline-flex gap-1"><Button variant="ghost" size="sm" onClick={() => void openReport(report.id)}>Apri</Button><Button asChild variant="ghost" size="sm"><a href={`/api/reports/${report.id}?download=true`} aria-label={`Scarica ${report.name}`}><DownloadIcon aria-hidden="true" /></a></Button></div></TableCell></TableRow>)}</TableBody>
-          </Table></CardContent>
+            </Table>
+            </div>
+            <MobileList>
+              {allReports.map((report) => (
+                <MobileItem key={report.id}>
+                  <MobileItemHeader>
+                    <span className="min-w-0 truncate text-sm font-medium">{report.name}</span>
+                    <span className="text-muted-foreground font-mono text-[10px] tracking-[0.08em] uppercase">{labels[report.cadence]}</span>
+                  </MobileItemHeader>
+                  <MobileFields>
+                    <MobileField label="Aggiornato"><span className="font-mono text-xs tabular-nums">{d.dateTime(report.updated_at)}</span></MobileField>
+                    <MobileField label="Dimensione"><span className="font-mono text-xs tabular-nums">{(report.size_bytes / 1024).toFixed(1)} KB</span></MobileField>
+                  </MobileFields>
+                  <div className="mt-2 flex items-center gap-1">
+                    <Button variant="outline" size="sm" onClick={() => void openReport(report.id)}>Apri</Button>
+                    <Button asChild variant="ghost" size="sm"><a href={`/api/reports/${report.id}?download=true`} aria-label={`Scarica ${report.name}`}><DownloadIcon data-icon="inline-start" aria-hidden="true" />Scarica</a></Button>
+                  </div>
+                </MobileItem>
+              ))}
+            </MobileList>
+          </CardContent>
         </Card></>
       )}
     </div>

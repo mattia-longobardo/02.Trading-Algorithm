@@ -18,6 +18,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SectorDonut } from "@/components/charts/sector-donut";
+import {
+  MobileField,
+  MobileFields,
+  MobileItem,
+  MobileItemHeader,
+  MobileList,
+} from "@/components/mobile-list";
 import { PageHeader } from "@/components/page-header";
 import { CardSkeleton, ErrorState, TableSkeleton } from "@/components/query-states";
 import { usePortfolio } from "@/lib/queries";
@@ -44,14 +51,14 @@ function SummaryTiles({
     },
   ];
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
       {tiles.map((t) => (
         <Card key={t.label} size="sm">
           <CardContent className="space-y-1">
             <p className="text-muted-foreground font-mono text-[10px] tracking-[0.14em] uppercase">
               {t.label}
             </p>
-            <p className="font-mono text-2xl font-semibold tracking-tight tabular-nums">
+            <p className="font-mono text-xl font-semibold tracking-tight tabular-nums sm:text-2xl">
               {t.value}
             </p>
           </CardContent>
@@ -134,6 +141,8 @@ export default function PortfolioPage() {
                     le run live
                   </p>
                 ) : (
+                  <>
+                  <div className="max-md:hidden">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -182,6 +191,30 @@ export default function PortfolioPage() {
                       ))}
                     </TableBody>
                   </Table>
+                  </div>
+                  <MobileList>
+                    {data.positions.map((p) => (
+                      <MobileItem key={String(p.etoro_position_id)}>
+                        <MobileItemHeader>
+                          <span className="flex min-w-0 items-baseline gap-2">
+                            <span className="font-mono text-sm font-medium">{p.symbol}</span>
+                            <span className="text-muted-foreground truncate text-xs">{p.sector ?? "n/d"}</span>
+                          </span>
+                          <span className={`font-mono text-sm font-medium tabular-nums ${pnlClass(p.unrealized_pnl_usd)}`}>
+                            {d.moneySigned(p.unrealized_pnl_usd)}
+                            <span className="ml-1.5 text-xs">{fmtPctSigned(p.unrealized_pnl_pct)}</span>
+                          </span>
+                        </MobileItemHeader>
+                        <MobileFields>
+                          <MobileField label="Importo"><span className="font-mono tabular-nums">{d.money(p.amount_usd)}</span></MobileField>
+                          <MobileField label="Apertura"><span className="font-mono text-xs tabular-nums">{d.date(p.opened_at)}</span></MobileField>
+                          <MobileField label="Entry"><span className="font-mono tabular-nums">{d.money(p.entry_price)}</span></MobileField>
+                          <MobileField label="Attuale"><span className="font-mono tabular-nums">{d.money(p.current_price)}</span></MobileField>
+                        </MobileFields>
+                      </MobileItem>
+                    ))}
+                  </MobileList>
+                  </>
                 )}
               </CardContent>
             </Card>
