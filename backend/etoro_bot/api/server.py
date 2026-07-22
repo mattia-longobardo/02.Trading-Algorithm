@@ -89,7 +89,7 @@ def _start_scheduler() -> None:
 
             run_news_pipeline(
                 kb=_kb(),
-                settings=get_settings_service().get_effective(),
+                settings=_full_settings(),
                 client=_system_etoro_client(),
                 llm=_system_llm(),
             )
@@ -119,6 +119,17 @@ def get_settings_service():
     from etoro_bot.services.app_settings import AppSettingsService
 
     return AppSettingsService(get_repo())
+
+
+def _full_settings() -> dict[str, Any]:
+    """Settings completi: default yaml + override runtime (DB > yaml).
+
+    get_effective() restituisce SOLO le chiavi runtime gestite dal DB
+    (environment, orari, valuta, risk_limits): per watchlist, news_feeds,
+    universe_discovery, knowledge e llm serve la base yaml — stesso pattern
+    di graph.runner._effective_settings.
+    """
+    return {**load_settings(), **get_settings_service().get_effective()}
 
 
 # --- health & status --------------------------------------------------------
@@ -707,7 +718,7 @@ def knowledge_ticker_memory(
 def universe_view(identity: UserIdentity = Depends(current_user)) -> dict[str, Any]:
     from etoro_bot.services.universe import discovery_config, load_discovery_state
 
-    settings = get_settings_service().get_effective()
+    settings = _full_settings()
     state = load_discovery_state(settings)
     return {
         "watchlist": [str(s).upper() for s in settings.get("watchlist") or []],
@@ -741,7 +752,7 @@ def universe_refresh(identity: UserIdentity = Depends(current_user)) -> dict[str
             if client is None:
                 log.warning("refresh universo saltato: chiavi eToro non configurate")
                 return
-            settings = get_settings_service().get_effective()
+            settings = _full_settings()
             refresh_universe(client, settings, fetch_all(settings), llm=_system_llm())
         except Exception:
             log.exception("refresh universo fallito")

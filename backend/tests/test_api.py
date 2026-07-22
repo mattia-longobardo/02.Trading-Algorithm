@@ -123,3 +123,16 @@ def test_delete_run_endpoint(client, repo):
 
 def test_delete_unknown_run_is_404(client):
     assert client.delete("/runs/inesistente").status_code == 404
+
+
+def test_universe_view_includes_yaml_watchlist(client):
+    """Regressione: /universe deve vedere i settings COMPLETI (yaml + runtime),
+    non solo le chiavi runtime di get_effective() — altrimenti watchlist vuota."""
+    body = client.get("/universe").json()
+    assert "AAPL" in body["watchlist"]
+    assert body["enabled"] is True
+    assert body["discovered"] == []
+
+
+def test_ticker_memory_endpoint_empty(client):
+    assert client.get("/knowledge/ticker-memory").json() == {"memories": []}
