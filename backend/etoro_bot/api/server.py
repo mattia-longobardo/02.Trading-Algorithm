@@ -91,6 +91,7 @@ def _start_scheduler() -> None:
                 kb=_kb(),
                 settings=get_settings_service().get_effective(),
                 client=_system_etoro_client(),
+                llm=_system_llm(),
             )
             _mark_fetch(UserIdentity("system"))
 
@@ -509,6 +510,29 @@ def _system_etoro_client():
         return None
 
 
+def _system_llm():
+    """call_llm con la chiave OpenAI del proprietario, per i job di sistema
+    (scout universo, sintesi memorie ticker). None se non configurata: i
+    consumatori degradano da soli (fallback regex/headline)."""
+    try:
+        from functools import partial
+
+        from etoro_bot.services.user_credentials import get_user_keys
+
+        repo = get_repo()
+        keys = get_user_keys(repo, repo.owner_user_id() or "system")
+        if not keys.openai_api_key:
+            return None
+        import openai
+
+        from etoro_bot.graph.llm import call_llm
+
+        return partial(call_llm, client=openai.OpenAI(api_key=keys.openai_api_key))
+    except Exception:
+        log.warning("LLM di sistema non disponibile", exc_info=True)
+        return None
+
+
 def _user_setting_key(prefix: str, user_id: str) -> str:
     digest = hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:32]
     return f"{prefix}:{digest}"
@@ -611,7 +635,8 @@ def knowledge_fetch_news(identity: UserIdentity = Depends(current_user)) -> dict
             settings["news_feeds"] = {"generic": _rss_feeds(identity), "per_ticker": []}
             items = fetch_all(settings)
             run_news_pipeline(
-                kb=_kb(), settings=settings, items=items, client=_system_etoro_client()
+                kb=_kb(), settings=settings, items=items,
+                client=_system_etoro_client(), llm=_system_llm(),
             )
             updated_at = datetime.now(timezone.utc).isoformat()
             _news_file(identity).write_text(
@@ -717,7 +742,7 @@ def universe_refresh(identity: UserIdentity = Depends(current_user)) -> dict[str
                 log.warning("refresh universo saltato: chiavi eToro non configurate")
                 return
             settings = get_settings_service().get_effective()
-            refresh_universe(client, settings, fetch_all(settings))
+            refresh_universe(client, settings, fetch_all(settings), llm=_system_llm())
         except Exception:
             log.exception("refresh universo fallito")
 

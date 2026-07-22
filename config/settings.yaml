@@ -27,13 +27,19 @@ watchlist:
 max_candidates_per_run: 6
 debate_rounds: 2
 
-# Scoperta dinamica dell'universo: titoli citati nelle news recenti che
-# superano uno screening di affidabilità (prezzo, storico, liquidità,
-# volatilità, spread). Si sommano alla watchlist, non la sostituiscono.
+# Scoperta dinamica dell'universo: uno scout LLM legge le news del giorno e
+# propone candidati (con tesi e confidence); le citazioni esplicite nelle news
+# corroborano il punteggio e fanno da fallback se l'LLM non è disponibile.
+# Ogni candidato deve superare uno screening di affidabilità deterministico
+# (prezzo, storico, liquidità, volatilità, spread). Si sommano alla watchlist.
 universe_discovery:
   enabled: true
+  mode: llm                          # llm (scout + fallback regex) | regex
   size: 5                            # titoli dinamici oltre alla watchlist
-  min_mentions: 2                    # item news distinti per candidarsi
+  llm_max_proposals: 10              # tetto alle proposte dello scout
+  min_confidence: 0.5                # confidence minima di una proposta
+  keep_misses: 3                     # refresh senza riconferma prima di uscire
+  min_mentions: 2                    # item news distinti per candidarsi (regex)
   max_evaluated: 20                  # candidati ammessi allo screening
   min_price_usd: 5.0                 # niente penny stock
   min_history_days: 120              # niente IPO fresche
@@ -68,5 +74,25 @@ news_feeds:
     - https://www.wired.com/feed/rss
     - https://feeds.arstechnica.com/arstechnica/index
     - https://hnrss.org/frontpage                             # Hacker News, prima pagina
+    # Mercati e macro (utili, economia, flash di mercato)
+    - https://www.cnbc.com/id/20910258/device/rss/rss.html    # CNBC Economy
+    - https://www.cnbc.com/id/15839135/device/rss/rss.html    # CNBC Earnings
+    - https://feeds.content.dowjones.io/public/rss/mw_marketpulse
+    # Finanza e banche
+    - https://www.cnbc.com/id/10000664/device/rss/rss.html    # CNBC Finance
+    - https://www.bankingdive.com/feeds/news/
+    # Energia, utility e materie prime
+    - https://www.cnbc.com/id/19836768/device/rss/rss.html    # CNBC Energy
+    - https://oilprice.com/rss/main
+    - https://www.utilitydive.com/feeds/news/
+    - https://www.mining.com/feed/
+    # Salute, pharma e biotech
+    - https://www.cnbc.com/id/10000108/device/rss/rss.html    # CNBC Health Care
+    - https://www.fiercepharma.com/rss/xml
+    - https://www.fiercebiotech.com/rss/xml
+    # Industria e difesa
+    - https://www.defensenews.com/arc/outboundfeeds/rss/?outputType=xml
+    # Consumo e retail
+    - https://www.retaildive.com/feeds/news/
   per_ticker:
     - "https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"

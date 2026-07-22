@@ -28,6 +28,7 @@ def run_news_pipeline(
     *,
     items: list[dict] | None = None,
     client: Any | None = None,
+    llm: Any | None = None,
 ) -> dict[str, Any]:
     from etoro_bot.config import load_settings
     from etoro_bot.knowledge.fetch_news import fetch_all
@@ -56,7 +57,7 @@ def run_news_pipeline(
     try:
         from etoro_bot.knowledge.ticker_memory import update_memories
 
-        summary["memories_updated"] = len(update_memories(items, settings))
+        summary["memories_updated"] = len(update_memories(items, settings, llm=llm))
     except Exception as exc:
         logger.warning("aggiornamento memorie ticker fallito, continuo: %s", exc)
 
@@ -64,7 +65,7 @@ def run_news_pipeline(
         try:
             from etoro_bot.services.universe import refresh_universe
 
-            state = refresh_universe(client, settings, items)
+            state = refresh_universe(client, settings, items, llm=llm)
             summary["universe"] = [t["symbol"] for t in state.get("tickers") or []]
         except Exception as exc:
             logger.warning("refresh universo dinamico fallito, continuo: %s", exc)

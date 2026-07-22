@@ -52,7 +52,9 @@ RATE_OK = {"lastExecution": 100.0, "bid": 99.9, "ask": 100.1}
 
 SETTINGS = {
     "watchlist": ["AAPL", "MSFT"],
-    "universe_discovery": {"enabled": True, "size": 3, "min_mentions": 2},
+    "universe_discovery": {
+        "enabled": True, "mode": "regex", "size": 3, "min_mentions": 2,
+    },
 }
 
 
@@ -161,6 +163,158 @@ def test_stale_state_is_ignored():
     path.write_text(json.dumps(state), encoding="utf-8")
     assert uni.load_discovery_state(SETTINGS) is None
     assert uni.effective_universe(SETTINGS) == ["AAPL", "MSFT"]
+
+
+# -- scout LLM ----------------------------------------------------------------
+
+
+def _fake_llm(response):
+    def llm(system_blocks, user_prompt, model, max_tokens):
+        return response
+    return llm
+
+
+LLM_SETTINGS = {
+    "watchlist": ["AAPL", "MSFT"],
+    "universe_discovery": {"enabled": True, "mode": "llm", "size": 3},
+}
+
+
+def test_news_digest_interleaves_sources():
+    items = [{"text": f"news {source} {i}", "source": source, "tickers": [],
+              "published_at": ""} for source in ("a", "b") for i in range(3)]
+    digest = uni._news_digest(items)
+    lines = digest.splitlines()
+    # round-robin: le fonti si alternano invece di esaurirsi in blocco
+    assert "(a)" in lines[0] and "(b)" in lines[1] and "(a)" in lines[2]
+    assert lines[0].startswith("[1] ")
+
+
+def test_llm_scout_parses_and_caps_proposals():
+    response = json.dumps(
+        [{"symbol": "pltr", "company": "Palantir", "thesis": "contratti difesa",
+          "news_refs": [1], "confidence": 0.8},
+         {"symbol": "SNOW", "confidence": 1.7},           # confidence fuori range → scartata
+         {"company": "senza symbol"}]                     # malformata → scartata
+    )
+    proposals = uni.llm_scout(_news("Una notizia"), LLM_SETTINGS, ["AAPL"],
+                              llm=_fake_llm(response))
+    assert [p.symbol for p in proposals] == ["PLTR"]
+    assert proposals[0].confidence == 0.8
+
+
+def test_resolve_proposal_by_symbol_and_company_name():
+    catalogue = {str(r["symbolFull"]): r for r in CATALOGUE}
+    by_name = uni._catalogue_by_name(catalogue)
+    direct = uni.ScoutProposal(symbol="PLTR", confidence=0.7)
+    by_company = uni.ScoutProposal(symbol="PLTR.X", company="Palantir Technologies, Inc.",
+                                   confidence=0.7)
+    ghost = uni.ScoutProposal(symbol="XYZ", company="Società Inventata", confidence=0.7)
+    assert uni.resolve_proposal(direct, catalogue, by_name) == "PLTR"
+    assert uni.resolve_proposal(by_company, catalogue, by_name) == "PLTR"
+    assert uni.resolve_proposal(ghost, catalogue, by_name) is None
+
+
+def test_refresh_llm_mode_selects_and_annotates():
+    response = json.dumps(
+        [{"symbol": "PLTR", "thesis": "boom contratti AI", "news_refs": [1],
+          "confidence": 0.9},
+         {"symbol": "SNOW", "thesis": "read-through dati", "confidence": 0.3},   # sotto soglia
+         {"symbol": "AAPL", "thesis": "già nota", "confidence": 0.9},            # watchlist
+         {"symbol": "GHOST", "company": "Non Esiste", "confidence": 0.9}]        # irrisolta
+    )
+    state = uni.refresh_universe(
+        _client(), LLM_SETTINGS, _news("$PLTR vola"), llm=_fake_llm(response)
+    )
+    assert state["mode"] == "llm"
+    assert [t["symbol"] for t in state["tickers"]] == ["PLTR"]
+    pltr = state["tickers"][0]
+    assert pltr["thesis"] == "boom contratti AI"
+    assert pltr["source"] == "llm+regex"     # citato anche esplicitamente nelle news
+    assert pltr["confidence"] == 0.9
+    assert pltr["misses"] == 0 and pltr["first_seen"] == pltr["last_confirmed"]
+    reasons = {r["symbol"]: r["reason"] for r in state["rejected"]}
+    assert "sotto soglia" in reasons["SNOW"]
+    assert reasons["AAPL"] == "già in watchlist"
+    assert "non risolto" in reasons["GHOST"]
+
+
+def test_refresh_llm_source_without_corroboration():
+    response = json.dumps(
+        [{"symbol": "SNOW", "thesis": "read-through", "confidence": 0.8}]
+    )
+    state = uni.refresh_universe(
+        _client(), LLM_SETTINGS, _news("news generica senza citazioni"),
+        llm=_fake_llm(response),
+    )
+    assert [t["symbol"] for t in state["tickers"]] == ["SNOW"]
+    assert state["tickers"][0]["source"] == "llm"
+    assert state["tickers"][0]["buzz"] == 0.0
+
+
+def test_refresh_llm_failure_falls_back_to_regex():
+    def broken_llm(**kwargs):
+        raise RuntimeError("chiave assente")
+
+    state = uni.refresh_universe(
+        _client(), LLM_SETTINGS,
+        _news("$PLTR sale", "Palantir Technologies vince"), llm=broken_llm,
+    )
+    assert state["mode"] == "regex"
+    assert [t["symbol"] for t in state["tickers"]] == ["PLTR"]
+    assert state["tickers"][0]["source"] == "regex"
+
+
+def test_refresh_llm_reliability_screen_still_applies():
+    response = json.dumps(
+        [{"symbol": "PENN", "thesis": "penny pump", "confidence": 0.95},
+         {"symbol": "FRSH", "thesis": "IPO calda", "confidence": 0.95}]
+    )
+    state = uni.refresh_universe(
+        _client(), LLM_SETTINGS, _news("notizia"), llm=_fake_llm(response)
+    )
+    assert state["tickers"] == []
+    reasons = {r["symbol"]: r["reason"] for r in state["rejected"]}
+    assert "affidabilità" in reasons["PENN"] and "affidabilità" in reasons["FRSH"]
+
+
+# -- isteresi -----------------------------------------------------------------
+
+
+def test_holdover_survives_missed_confirmations_then_exits():
+    keep = {"watchlist": ["AAPL", "MSFT"],
+            "universe_discovery": {"enabled": True, "mode": "llm", "size": 3,
+                                   "keep_misses": 3}}
+    seed = json.dumps([{"symbol": "PLTR", "thesis": "t", "confidence": 0.9}])
+    uni.refresh_universe(_client(), keep, _news("n"), llm=_fake_llm(seed))
+    # 2 refresh senza riconferma: resta come holdover con misses crescenti
+    for expected_misses in (1, 2):
+        state = uni.refresh_universe(_client(), keep, _news("n"), llm=_fake_llm("[]"))
+        assert [t["symbol"] for t in state["tickers"]] == ["PLTR"]
+        assert state["tickers"][0]["misses"] == expected_misses
+    # 3° refresh mancato: esce
+    state = uni.refresh_universe(_client(), keep, _news("n"), llm=_fake_llm("[]"))
+    assert state["tickers"] == []
+    assert any("nessuna riconferma" in r["reason"] for r in state["rejected"])
+
+
+def test_holdover_reconfirmation_resets_misses():
+    seed = json.dumps([{"symbol": "PLTR", "thesis": "t", "confidence": 0.9}])
+    uni.refresh_universe(_client(), LLM_SETTINGS, _news("n"), llm=_fake_llm(seed))
+    uni.refresh_universe(_client(), LLM_SETTINGS, _news("n"), llm=_fake_llm("[]"))
+    state = uni.refresh_universe(_client(), LLM_SETTINGS, _news("n"), llm=_fake_llm(seed))
+    assert state["tickers"][0]["misses"] == 0
+    assert state["tickers"][0]["last_confirmed"] == state["generated_at"]
+
+
+def test_holdover_dropped_when_no_longer_reliable():
+    seed = json.dumps([{"symbol": "PLTR", "thesis": "t", "confidence": 0.9}])
+    uni.refresh_universe(_client(), LLM_SETTINGS, _news("n"), llm=_fake_llm(seed))
+    # al refresh successivo PLTR è diventato un penny stock
+    broken = FakeClient(CATALOGUE, rates={1: {"lastExecution": 2.0}}, candles={})
+    state = uni.refresh_universe(broken, LLM_SETTINGS, _news("n"), llm=_fake_llm("[]"))
+    assert state["tickers"] == []
+    assert any("non più superato" in r["reason"] for r in state["rejected"])
 
 
 # -- integrazione col rilevamento ticker --------------------------------------
