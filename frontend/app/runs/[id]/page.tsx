@@ -45,6 +45,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { EnvBadge } from "@/components/site-header";
+import {
+  MobileField,
+  MobileFields,
+  MobileItem,
+  MobileItemHeader,
+  MobileList,
+} from "@/components/mobile-list";
 import { RunFunnel, type FunnelStep } from "@/components/runs/run-funnel";
 import {
   AnalystSection,
@@ -355,6 +362,8 @@ export default function RunDetailPage({
                   stato mosso denaro.
                 </p>
               ) : (
+                <>
+                <div className="max-md:hidden">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -395,6 +404,47 @@ export default function RunDetailPage({
                     ))}
                   </TableBody>
                 </Table>
+                </div>
+                <MobileList>
+                  {executions.map((execution) => (
+                    <MobileItem key={execution.id}>
+                      <MobileItemHeader>
+                        <span className="font-mono text-sm font-medium">
+                          {execution.symbol}
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <SideBadge side={execution.side} />
+                          <ExecutionStatusBadge status={execution.status} />
+                        </span>
+                      </MobileItemHeader>
+                      <MobileFields>
+                        <MobileField label="Importo">
+                          <span className="font-mono tabular-nums">
+                            {display.money(execution.amount_usd)}
+                          </span>
+                        </MobileField>
+                        <MobileField label="Prezzo">
+                          <span className="font-mono tabular-nums">
+                            {display.money(execution.execution_price)}
+                          </span>
+                        </MobileField>
+                        <MobileField label="Data" wide>
+                          <span className="font-mono text-xs tabular-nums">
+                            {display.dateTime(execution.created_at)}
+                          </span>
+                        </MobileField>
+                        {execution.detail ? (
+                          <MobileField label="Dettaglio" wide>
+                            <span className="text-muted-foreground text-xs">
+                              {execution.detail}
+                            </span>
+                          </MobileField>
+                        ) : null}
+                      </MobileFields>
+                    </MobileItem>
+                  ))}
+                </MobileList>
+                </>
               )}
             </CardContent>
           </Card>

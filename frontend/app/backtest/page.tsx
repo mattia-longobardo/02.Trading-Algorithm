@@ -38,6 +38,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { EquityChart } from "@/components/charts/equity-chart";
+import {
+  MobileField,
+  MobileFields,
+  MobileItem,
+  MobileItemHeader,
+  MobileList,
+} from "@/components/mobile-list";
 import { PageHeader } from "@/components/page-header";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MonthlyHeatmap } from "@/components/monthly-heatmap";
@@ -379,6 +386,8 @@ function TradesTable({ trades }: { trades: ClosedTrade[] }) {
   });
 
   return (
+    <>
+    <div className="max-md:hidden">
     <Table>
       <TableHeader>
         {table.getHeaderGroups().map((hg) => (
@@ -447,6 +456,38 @@ function TradesTable({ trades }: { trades: ClosedTrade[] }) {
         ))}
       </TableBody>
     </Table>
+    </div>
+    <MobileList>
+      {table.getRowModel().rows.map((row) => {
+        const t = row.original;
+        return (
+          <MobileItem key={row.id}>
+            <MobileItemHeader>
+              <span className="font-mono text-sm font-medium">{t.symbol}</span>
+              <span className={`font-mono text-sm font-medium tabular-nums ${pnlClass(t.realized_pnl_usd)}`}>
+                {display.moneySigned(t.realized_pnl_usd)}
+              </span>
+            </MobileItemHeader>
+            <MobileFields>
+              <MobileField label="Importo"><span className="font-mono tabular-nums">{display.money(t.amount_usd)}</span></MobileField>
+              <MobileField label="Entry → chiusura">
+                <span className="font-mono text-xs tabular-nums">
+                  {display.money(t.entry_price)} → {display.money(t.close_price)}
+                </span>
+              </MobileField>
+              <MobileField label="Aperto"><span className="font-mono text-xs tabular-nums">{display.date(t.opened_at)}</span></MobileField>
+              <MobileField label="Chiuso"><span className="font-mono text-xs tabular-nums">{display.date(t.closed_at)}</span></MobileField>
+              {t.close_reason ? (
+                <MobileField label="Motivo" wide>
+                  <span className="text-muted-foreground text-xs">{t.close_reason}</span>
+                </MobileField>
+              ) : null}
+            </MobileFields>
+          </MobileItem>
+        );
+      })}
+    </MobileList>
+    </>
   );
 }
 

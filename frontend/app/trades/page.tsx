@@ -22,8 +22,16 @@ import { PageHeader } from "@/components/page-header";
 import { ErrorState, TableSkeleton } from "@/components/query-states";
 import { Stamp } from "@/components/stamp";
 import { MultiStatusFilter } from "@/components/multi-status-filter";
+import {
+  MobileField,
+  MobileFields,
+  MobileItem,
+  MobileItemHeader,
+  MobileList,
+} from "@/components/mobile-list";
 import { useCancelExecution, useCloseTrade, useTrades } from "@/lib/queries";
 import { useDisplay } from "@/lib/money";
+import type { TradeItem } from "@/lib/types";
 
 const toneForStatus = (status: string) => {
   if (status === "open" || status === "filled") return "approved" as const;
@@ -31,6 +39,42 @@ const toneForStatus = (status: string) => {
   if (status === "failed" || status === "rejected") return "rejected" as const;
   return "neutral" as const;
 };
+
+/** Azione contestuale del trade (chiudi posizione / annulla ordine), condivisa
+    tra la riga di tabella e la scheda mobile. */
+function TradeAction({
+  trade,
+  closeTrade,
+  cancelExecution,
+}: {
+  trade: TradeItem;
+  closeTrade: ReturnType<typeof useCloseTrade>;
+  cancelExecution: ReturnType<typeof useCancelExecution>;
+}) {
+  if (trade.can_close && trade.position_id) {
+    return (
+      <AlertDialog>
+        <AlertDialogTrigger asChild><Button variant="outline" size="sm">Chiudi</Button></AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>Chiudere {trade.symbol}?</AlertDialogTitle>
+            <AlertDialogDescription>Verrà inviato a eToro un ordine di chiusura totale a mercato. L’operazione muove denaro nel conto configurato.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel>Annulla</AlertDialogCancel>
+            <AlertDialogAction onClick={() => closeTrade.mutate(trade.position_id!)}>Chiudi posizione</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    );
+  }
+  if (trade.can_cancel && trade.execution_id) {
+    return (
+      <Button variant="outline" size="sm" onClick={() => cancelExecution.mutate(trade.execution_id!)}>
+        <XIcon data-icon="inline-start" aria-hidden="true" />Annulla
+      </Button>
+    );
+  }
+  return <span className="text-muted-foreground text-xs">—</span>;
+}
 
 export default function TradesPage() {
   const [statuses, setStatuses] = React.useState<string[]>([]);
@@ -75,6 +119,8 @@ export default function TradesPage() {
           {trades.isLoading ? <TableSkeleton rows={8} /> : trades.error ? (
             <ErrorState error={trades.error} />
           ) : (
+            <>
+            <div className="max-md:hidden">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -94,28 +140,48 @@ export default function TradesPage() {
                     <TableCell className="font-mono text-xs whitespace-nowrap tabular-nums">{d.dateTime(trade.created_at)}</TableCell>
                     <TableCell className="text-muted-foreground max-w-56 truncate text-xs">{trade.detail ?? "n/d"}</TableCell>
                     <TableCell className="text-right">
-                      {trade.can_close && trade.position_id ? (
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild><Button variant="outline" size="sm">Chiudi</Button></AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader><AlertDialogTitle>Chiudere {trade.symbol}?</AlertDialogTitle>
-                              <AlertDialogDescription>Verrà inviato a eToro un ordine di chiusura totale a mercato. L’operazione muove denaro nel conto configurato.</AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter><AlertDialogCancel>Annulla</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => closeTrade.mutate(trade.position_id!)}>Chiudi posizione</AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      ) : trade.can_cancel && trade.execution_id ? (
-                        <Button variant="outline" size="sm" onClick={() => cancelExecution.mutate(trade.execution_id!)}>
-                          <XIcon data-icon="inline-start" aria-hidden="true" />Annulla
-                        </Button>
-                      ) : <span className="text-muted-foreground text-xs">—</span>}
+                      <TradeAction trade={trade} closeTrade={closeTrade} cancelExecution={cancelExecution} />
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
+            </div>
+            <MobileList>
+              {(trades.data?.trades ?? []).map((trade) => (
+                <MobileItem key={trade.id}>
+                  <MobileItemHeader>
+                    <span className="flex items-center gap-2">
+                      <span className="font-mono text-sm font-medium">{trade.symbol}</span>
+                      <span className="text-muted-foreground font-mono text-xs uppercase">{trade.side}</span>
+                    </span>
+                    <Stamp tone={toneForStatus(trade.status)}>{trade.status}</Stamp>
+                  </MobileItemHeader>
+                  <MobileFields>
+                    <MobileField label="Importo">
+                      <span className="font-mono tabular-nums">{d.money(trade.amount_usd)}</span>
+                    </MobileField>
+                    <MobileField label="Prezzo">
+                      <span className="font-mono tabular-nums">{d.money(trade.entry_price)}</span>
+                    </MobileField>
+                    <MobileField label="Data / ora" wide>
+                      <span className="font-mono text-xs tabular-nums">{d.dateTime(trade.created_at)}</span>
+                    </MobileField>
+                    {trade.detail ? (
+                      <MobileField label="Dettaglio" wide>
+                        <span className="text-muted-foreground text-xs">{trade.detail}</span>
+                      </MobileField>
+                    ) : null}
+                  </MobileFields>
+                  {(trade.can_close && trade.position_id) || (trade.can_cancel && trade.execution_id) ? (
+                    <div className="mt-3">
+                      <TradeAction trade={trade} closeTrade={closeTrade} cancelExecution={cancelExecution} />
+                    </div>
+                  ) : null}
+                </MobileItem>
+              ))}
+            </MobileList>
+            </>
           )}
         </CardContent>
       </Card>

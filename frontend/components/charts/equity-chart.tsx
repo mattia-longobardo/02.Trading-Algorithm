@@ -25,7 +25,7 @@ export function EquityChart({ points, benchmarkLabel = "SPY", showBenchmarks = t
   return (
     <ChartContainer
       config={chartConfig}
-      className="aspect-auto h-[320px] w-full [&_.recharts-cartesian-axis-tick_text]:font-mono [&_.recharts-cartesian-axis-tick_text]:text-[11px]"
+      className="aspect-auto h-[240px] w-full sm:h-[320px] [&_.recharts-cartesian-axis-tick_text]:font-mono [&_.recharts-cartesian-axis-tick_text]:text-[11px]"
     >
       <LineChart data={points} margin={{ left: 4, right: 12, top: 8 }}>
         <CartesianGrid vertical={false} stroke="var(--border)" strokeWidth={1} />

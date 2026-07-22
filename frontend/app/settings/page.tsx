@@ -33,6 +33,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  MobileField,
+  MobileFields,
+  MobileItem,
+  MobileItemHeader,
+  MobileList,
+} from "@/components/mobile-list";
 import { CardSkeleton, ErrorState, TableSkeleton } from "@/components/query-states";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import type { SearchableOption } from "@/components/ui/searchable-select";
@@ -477,6 +484,8 @@ function AuditCard() {
             Nessuna modifica registrata
           </p>
         ) : (
+          <>
+          <div className="max-md:hidden">
           <Table>
             <TableHeader>
               <TableRow>
@@ -507,6 +516,35 @@ function AuditCard() {
               ))}
             </TableBody>
           </Table>
+          </div>
+          <MobileList>
+            {data.entries.map((e) => (
+              <MobileItem key={String(e.id)}>
+                <MobileItemHeader>
+                  <span className="font-mono text-xs font-medium">{e.key}</span>
+                  <span className="text-muted-foreground text-xs">{e.source}</span>
+                </MobileItemHeader>
+                <MobileFields>
+                  <MobileField label="Da">
+                    <span className="text-muted-foreground font-mono text-xs break-all">
+                      {fmtAuditValue(e.old_value)}
+                    </span>
+                  </MobileField>
+                  <MobileField label="A">
+                    <span className="font-mono text-xs break-all">
+                      {fmtAuditValue(e.new_value)}
+                    </span>
+                  </MobileField>
+                  <MobileField label="Data" wide>
+                    <span className="font-mono text-xs tabular-nums">
+                      {display.dateTime(e.changed_at)}
+                    </span>
+                  </MobileField>
+                </MobileFields>
+              </MobileItem>
+            ))}
+          </MobileList>
+          </>
         )}
       </CardContent>
     </Card>

@@ -30,6 +30,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { EnvBadge } from "@/components/site-header";
+import {
+  MobileItem,
+  MobileItemHeader,
+  MobileList,
+} from "@/components/mobile-list";
 import { PageHeader } from "@/components/page-header";
 import { Stamp } from "@/components/stamp";
 import { ErrorState, TableSkeleton } from "@/components/query-states";
@@ -68,6 +73,52 @@ function Chain({ summary }: { summary: RunSummary | null }) {
   );
 }
 
+/** Dialogo di eliminazione run, condiviso tra riga di tabella e scheda mobile. */
+function DeleteRunDialog({
+  runId,
+  deleteRun,
+}: {
+  runId: string;
+  deleteRun: ReturnType<typeof useDeleteRun>;
+}) {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Elimina run"
+          // Solo la riga in cancellazione si disabilita: le altre restano usabili.
+          disabled={deleteRun.isPending && deleteRun.variables === runId}
+        >
+          <Trash2Icon aria-hidden="true" />
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Eliminare la run?</AlertDialogTitle>
+          <AlertDialogDescription>
+            L&apos;operazione è irreversibile e cancella anche le decisioni e le
+            esecuzioni collegate. Le posizioni già aperte su eToro non vengono
+            toccate.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Annulla</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={deleteRun.isPending}
+            onClick={() => deleteRun.mutate(runId)}
+          >
+            <Trash2Icon data-icon="inline-start" aria-hidden="true" />
+            Elimina run
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 export default function RunsPage() {
   const { data, isLoading, error } = useRuns(50);
   const deleteRun = useDeleteRun();
@@ -102,6 +153,8 @@ export default function RunsPage() {
               Nessuna run ancora — avvia la prima dalla Dashboard
             </p>
           ) : (
+            <>
+            <div className="max-md:hidden">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -155,49 +208,7 @@ export default function RunsPage() {
                               Dettaglio <ArrowRightIcon className="size-3.5" />
                             </Link>
                           </Button>
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                aria-label="Elimina run"
-                                // Solo la riga in cancellazione si disabilita: le altre restano usabili.
-                                disabled={
-                                  deleteRun.isPending &&
-                                  deleteRun.variables === run.run_id
-                                }
-                              >
-                                <Trash2Icon aria-hidden="true" />
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>
-                                  Eliminare la run?
-                                </AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  L&apos;operazione è irreversibile e cancella
-                                  anche le decisioni e le esecuzioni collegate.
-                                  Le posizioni già aperte su eToro non vengono
-                                  toccate.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Annulla</AlertDialogCancel>
-                                <AlertDialogAction
-                                  variant="destructive"
-                                  disabled={deleteRun.isPending}
-                                  onClick={() => deleteRun.mutate(run.run_id)}
-                                >
-                                  <Trash2Icon
-                                    data-icon="inline-start"
-                                    aria-hidden="true"
-                                  />
-                                  Elimina run
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
+                          <DeleteRunDialog runId={run.run_id} deleteRun={deleteRun} />
                         </div>
                       </TableCell>
                     </TableRow>
@@ -205,6 +216,48 @@ export default function RunsPage() {
                 })}
               </TableBody>
             </Table>
+            </div>
+            <MobileList>
+              {data!.runs.map((run) => {
+                const outcome = describeRun(run.summary);
+                const errors = run.summary?.errors?.length ?? 0;
+                return (
+                  <MobileItem key={run.run_id}>
+                    <MobileItemHeader>
+                      <Link
+                        href={`/runs/${run.run_id}`}
+                        className="font-mono text-[13px] font-medium tabular-nums"
+                      >
+                        {d.dateTime(run.started_at)}
+                      </Link>
+                      <EnvBadge environment={run.environment} />
+                    </MobileItemHeader>
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <Stamp tone={outcome.tone}>{outcome.label}</Stamp>
+                      {errors > 0 ? (
+                        <span
+                          title={`${errors} errori non bloccanti`}
+                          className="text-caution inline-flex items-center gap-1 font-mono text-[10px] tabular-nums"
+                        >
+                          <TriangleAlertIcon aria-hidden="true" className="size-3" />
+                          {errors}
+                        </span>
+                      ) : null}
+                      <span className="ml-auto"><Chain summary={run.summary} /></span>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between gap-1">
+                      <Button variant="ghost" size="sm" asChild className="-ml-2.5">
+                        <Link href={`/runs/${run.run_id}`}>
+                          Dettaglio <ArrowRightIcon className="size-3.5" />
+                        </Link>
+                      </Button>
+                      <DeleteRunDialog runId={run.run_id} deleteRun={deleteRun} />
+                    </div>
+                  </MobileItem>
+                );
+              })}
+            </MobileList>
+            </>
           )}
         </CardContent>
       </Card>
